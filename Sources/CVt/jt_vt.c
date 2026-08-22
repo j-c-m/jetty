@@ -112,11 +112,73 @@ static uint8_t priv_byte(const jt_vt *p) {
     return p->ni > 0 ? p->inter[0] : 0;
 }
 
+static int has_inter(const jt_vt *p, uint8_t b) {
+    for (int i = 0; i < p->ni; i++) {
+        if (p->inter[i] == b) return 1;
+    }
+    return 0;
+}
+
+static int dec_mode_state(const jt_scr *s, uint16_t mode) {
+    int on = 0, known = 1, perm_reset = 0;
+    switch (mode) {
+    case 1: on = s && s->decckm; break;
+    case 3: perm_reset = 1; break;
+    case 5: on = s && s->reverse_video; break;
+    case 6: on = s && s->origin_mode; break;
+    case 7: on = !s || s->auto_wrap; break;
+    case 9: on = s && s->mouse_event == 9; break;
+    case 12: on = s && s->cursor_blink; break;
+    case 25: on = !s || s->cursor_visible; break;
+    case 47:
+    case 1047:
+    case 1049:
+        on = s && s->in_alt;
+        break;
+    case 1000: on = s && s->mouse_event == 1000; break;
+    case 1002: on = s && s->mouse_event == 1002; break;
+    case 1003: on = s && s->mouse_event == 1003; break;
+    case 1004: on = s && s->focus_event; break;
+    case 1005: perm_reset = 1; break;
+    case 1006: on = s && s->mouse_sgr; break;
+    case 1007: on = !s || s->mouse_alt_scroll; break;
+    case 1016: perm_reset = 1; break;
+    case 1034: on = 0; break;
+    case 2004: on = s && s->bracketed_paste; break;
+    case 2026: on = s && s->sync_output; break;
+    case 2027: perm_reset = 1; break;
+    default: known = 0; break;
+    }
+    if (perm_reset) return 4;
+    if (!known) return 0;
+    return on ? 1 : 2;
+}
+
+static void reply_decrpm(const jt_vt_host *h, const jt_scr *s, int dec, uint16_t mode) {
+    int st;
+    if (!dec) {
+        st = mode == 4 ? ((s && s->insert_mode) ? 1 : 2) : 0;
+    } else {
+        st = dec_mode_state(s, mode);
+    }
+    char buf[48];
+    int n = dec
+        ? snprintf(buf, sizeof buf, "\033[?%u;%d$y", (unsigned)mode, st)
+        : snprintf(buf, sizeof buf, "\033[%u;%d$y", (unsigned)mode, st);
+    if (n > 0) write_str(h, buf);
+}
+
 static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final) {
     uint8_t priv = priv_byte(p);
+    if (final == 'p' && has_inter(p, '$')) {
+        uint16_t mode = p->np > 0 ? p->params[0] : 0;
+        reply_decrpm(h, scr, priv == '?', mode);
+        return;
+    }
     if (!scr) {
         if ((final == 'c' || final == 'n') && h && h->write_pty) {
             if (final == 'c' && priv == 0) write_str(h, "\033[?1;2c");
+            if (final == 'c' && priv == '>') write_str(h, "\033[>0;0;0c");
         }
         return;
     }
@@ -166,7 +228,7 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
     }
 
     if (priv == '>') {
-        /* DA2: ignore until PR 12 */
+        if (final == 'c') write_str(h, "\033[>0;0;0c");
         return;
     }
     if (priv == '=') return;

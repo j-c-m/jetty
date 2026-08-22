@@ -58,10 +58,75 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?1;2c")
     }
 
-    func testDA2Ignored() {
+    func testDA2() {
         let p = Parser()
         p.feed("\u{1B}[>c")
-        XCTAssertEqual(p.writes, [])
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[>0;0;0c")
+        p.writes.removeAll()
+        p.feed("\u{1B}[>0c")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[>0;0;0c")
+        p.writes.removeAll()
+        p.feed("\u{1B}[c")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?1;2c")
+    }
+
+    func testDECRQM2026() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?2026$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?2026;2$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?2026h")
+        p.feed("\u{1B}[?2026$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?2026;1$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?2026l")
+        p.feed("\u{1B}[?2026$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?2026;2$y")
+    }
+
+    func testDECRQMDefaultsAndPermanent() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?1007$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?1007;1$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?25$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?25;1$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?3$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?3;4$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?1005$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?1005;4$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?9999$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?9999;0$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[4$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[4;2$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[4h")
+        p.feed("\u{1B}[4$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[4;1$y")
+    }
+
+    func testDECRQMMouseAndAlt() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?1000;1006h")
+        p.feed("\u{1B}[?1000$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?1000;1$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?1006$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?1006;1$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?1049h")
+        p.feed("\u{1B}[?1049$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?1049;1$y")
     }
 
     func testUTF8Scalar() {
