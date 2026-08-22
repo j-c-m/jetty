@@ -119,12 +119,16 @@ public final class TerminalSession: @unchecked Sendable {
             off += n
             if off >= len { break }
             let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
-            if now &- t0 >= Self.parseBudgetNs || drawWaiting() {
+            let budget = now &- t0 >= Self.parseBudgetNs
+            if drawWaiting() {
                 scheduleRedraw()
                 lock.unlock()
                 yieldToDemand()
                 lock.lock()
                 t0 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+            } else if budget {
+                scheduleRedraw()
+                t0 = now
             }
         }
         lock.unlock()
