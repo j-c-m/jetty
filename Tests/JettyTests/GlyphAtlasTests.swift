@@ -1,7 +1,26 @@
+import CoreText
 import XCTest
 @testable import Jetty
 
 final class GlyphAtlasTests: XCTestCase {
+    func testBoldFaceIsExtraBold() {
+        let regular = EmbeddedFonts.font(size: 20, bold: false, italic: false)
+        let bold = EmbeddedFonts.font(size: 20, bold: true, italic: false)
+        let italic = EmbeddedFonts.font(size: 20, bold: false, italic: true)
+        let boldItalic = EmbeddedFonts.font(size: 20, bold: true, italic: true)
+        let rName = CTFontCopyPostScriptName(regular) as String
+        let bName = CTFontCopyPostScriptName(bold) as String
+        let iName = CTFontCopyPostScriptName(italic) as String
+        let biName = CTFontCopyPostScriptName(boldItalic) as String
+        XCTAssertTrue(rName.contains("Regular") || rName.contains("JetBrains"), rName)
+        XCTAssertTrue(bName.contains("ExtraBold"), bName)
+        XCTAssertFalse(bName.contains("ExtraBoldItalic"), bName)
+        XCTAssertTrue(iName.contains("Italic"), iName)
+        XCTAssertFalse(iName.contains("Bold"), iName)
+        XCTAssertTrue(biName.contains("ExtraBold") && biName.contains("Italic"), biName)
+        XCTAssertNotEqual(rName, bName)
+    }
+
     func testGrowsAndKeepsPackedInk() {
         let shelf = R8Shelf(edge: 8, maxEdge: 32)
         let a = [UInt8](repeating: 11, count: 8 * 4)
