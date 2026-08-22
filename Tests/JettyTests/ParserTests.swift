@@ -208,6 +208,33 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(p.osc52Reads.last, UInt8(ascii: "c"))
     }
 
+    func testOSC8And7And133() {
+        let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}]8;id=foo;https://example.com\u{07}A")
+        XCTAssertNotEqual(s.row(0)[0].extra, 0)
+        XCTAssertEqual(s.uri(at: 0, y: 0), "https://example.com")
+        p.feed("\u{1B}]8;;\u{07}B")
+        XCTAssertEqual(s.row(0)[1].extra, 0)
+        p.feed("\u{1B}]7;file://host/tmp\u{07}")
+        XCTAssertEqual(p.osc7.last, "file://host/tmp")
+        p.feed("\u{1B}]133;A\u{07}")
+        XCTAssertEqual(p.osc133.last?.0, UInt8(ascii: "A"))
+    }
+
+    func testCSI14And18t() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        var kinds: [Int32] = []
+        p.onSizeReport = { kinds.append($0) }
+        p.feed("\u{1B}[14t")
+        p.feed("\u{1B}[18t")
+        p.feed("\u{1B}[14;1t")
+        XCTAssertEqual(kinds, [14, 18])
+    }
+
     func testDECSCUSR() {
         let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
         let p = Parser()

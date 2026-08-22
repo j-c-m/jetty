@@ -185,6 +185,15 @@ void jt_rare_release(jt_scr *s, uint16_t id) {
     if (r->refs[id - 1] > 0) r->refs[id - 1]--;
 }
 
+void jt_scr_set_osc8(jt_scr *s, const char *id, const char *uri) {
+    if (!s) return;
+    free(s->osc8_id);
+    free(s->osc8_uri);
+    s->osc8_id = dup_str(id);
+    s->osc8_uri = dup_str(uri);
+    jt_pen_refresh_extra(s);
+}
+
 void jt_pen_refresh_extra(jt_scr *s) {
     if (!s) return;
     if (s->pen.extra) jt_rare_release(s, s->pen.extra);

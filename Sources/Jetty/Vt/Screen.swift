@@ -250,6 +250,16 @@ public final class Screen {
         return paletteColor(0)
     }
 
+    public func uri(at x: Int, y: Int) -> String? {
+        guard y >= 0, y < rows, x >= 0, x < cols else { return nil }
+        let extra = row(y)[x].extra
+        guard extra != 0 else { return nil }
+        var rare = jt_rare()
+        guard jt_rare_get(implPtr, extra, &rare) == 1, let p = rare.uri else { return nil }
+        let s = String(cString: p)
+        return s.isEmpty ? nil : s
+    }
+
     public func blitLiveGrid(to dest: UnsafeMutablePointer<Cell>) {
         let blank = spaceBlank
         let c = cols

@@ -45,3 +45,24 @@ func jtHostPaletteChanged(_ ctx: UnsafeMutableRawPointer?) {
     guard let ctx else { return }
     Unmanaged<ParserGlue>.fromOpaque(ctx).takeUnretainedValue().parser.handlePaletteChanged()
 }
+
+func jtHostOsc7(_ ctx: UnsafeMutableRawPointer?, _ p: UnsafePointer<UInt8>?, _ n: Int) {
+    guard let ctx else { return }
+    let bytes: [UInt8]
+    if let p, n > 0 { bytes = Array(UnsafeBufferPointer(start: p, count: n)) }
+    else { bytes = [] }
+    Unmanaged<ParserGlue>.fromOpaque(ctx).takeUnretainedValue().parser.handleOsc7(bytes)
+}
+
+func jtHostOsc133(_ ctx: UnsafeMutableRawPointer?, _ action: UInt8, _ p: UnsafePointer<UInt8>?, _ n: Int) {
+    guard let ctx else { return }
+    let bytes: [UInt8]
+    if let p, n > 0 { bytes = Array(UnsafeBufferPointer(start: p, count: n)) }
+    else { bytes = [] }
+    Unmanaged<ParserGlue>.fromOpaque(ctx).takeUnretainedValue().parser.handleOsc133(action, bytes)
+}
+
+func jtHostSizeReport(_ ctx: UnsafeMutableRawPointer?, _ kind: Int32) {
+    guard let ctx else { return }
+    Unmanaged<ParserGlue>.fromOpaque(ctx).takeUnretainedValue().parser.handleSizeReport(kind)
+}

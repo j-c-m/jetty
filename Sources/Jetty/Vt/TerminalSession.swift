@@ -20,6 +20,8 @@ public final class TerminalSession: @unchecked Sendable {
     public var onTitle: (@Sendable (String) -> Void)?
     public var osc52WriteAllow = true
     public var osc52ReadAsk = true
+    public private(set) var osc7: String = ""
+    public private(set) var osc133: [(line: UInt64, action: UInt8, opts: [UInt8])] = []
 
     private let redrawLock = NSLock()
     private var redrawPending = false
@@ -57,6 +59,22 @@ public final class TerminalSession: @unchecked Sendable {
         }
         parser.onPaletteChanged = { [weak self] in
             self?.scheduleRedraw()
+        }
+        parser.onOsc7 = { [weak self] uri in
+            self?.lock.lock()
+            self?.osc7 = uri
+            self?.lock.unlock()
+        }
+        parser.onOsc133 = { [weak self] action, opts in
+            guard let self else { return }
+            self.lock.lock()
+            let line = self.screen.linesScrolled + UInt64(max(0, self.screen.cursorY))
+            self.osc133.append((line, action, opts))
+            if self.osc133.count > 4096 { self.osc133.removeFirst(self.osc133.count - 4096) }
+            self.lock.unlock()
+        }
+        parser.onSizeReport = { [weak self] kind in
+            self?.replySizeReport(kind)
         }
     }
 
@@ -107,6 +125,24 @@ public final class TerminalSession: @unchecked Sendable {
             _ = jt_pty_set_winsize(fd, UInt16(max(2, cols)), UInt16(max(1, rows)), cw, ch)
         }
         scheduleRedraw()
+    }
+
+    private func replySizeReport(_ kind: Int32) {
+        lock.lock()
+        let cols = screen.cols
+        let rows = screen.rows
+        let cw = Int(cellWidthPx)
+        let ch = Int(cellHeightPx)
+        lock.unlock()
+        let seq: String
+        if kind == 14 {
+            seq = "\u{1B}[4;\(rows * ch);\(cols * cw)t"
+        } else if kind == 18 {
+            seq = "\u{1B}[8;\(rows);\(cols)t"
+        } else {
+            return
+        }
+        writeToPty(Array(seq.utf8))
     }
 
     @MainActor

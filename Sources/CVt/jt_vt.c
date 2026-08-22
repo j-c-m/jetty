@@ -376,6 +376,14 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
             if (n >= 0 && n <= 6) scr->cursor_style = (uint8_t)n;
         }
         break;
+    case 't':
+        if (p->np > 1) break;
+        {
+            int kind = pdef(p->params, p->np, 0, 0);
+            if ((kind == 14 || kind == 18) && h && h->size_report)
+                h->size_report(h->ctx, kind);
+        }
+        break;
     default:
         break;
     }

@@ -132,6 +132,7 @@ int jt_rare_get(const jt_scr *s, uint16_t id, jt_rare *out);
 void jt_rare_retain(jt_scr *s, uint16_t id);
 void jt_rare_release(jt_scr *s, uint16_t id);
 void jt_pen_refresh_extra(jt_scr *s);
+void jt_scr_set_osc8(jt_scr *s, const char *id, const char *uri);
 void jt_pools_init(jt_scr *s);
 void jt_pools_deinit(jt_scr *s);
 
@@ -159,6 +160,7 @@ typedef struct jt_vt_host {
     void (*osc7)(void *ctx, const uint8_t *uri, size_t n);
     void (*osc133)(void *ctx, uint8_t action, const uint8_t *opts, size_t n);
     void (*palette_changed)(void *ctx);
+    void (*size_report)(void *ctx, int kind);
 } jt_vt_host;
 
 void jt_osc_dispatch(jt_scr *s, const jt_vt_host *h, const uint8_t *p, int n);

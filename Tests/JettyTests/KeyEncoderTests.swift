@@ -3,6 +3,17 @@ import Carbon.HIToolbox
 import XCTest
 @testable import Jetty
 
+final class LinkURLTests: XCTestCase {
+    func testAllowHTTPAndMailto() {
+        XCTAssertNotNil(LinkURL.openable("https://example.com/x"))
+        XCTAssertNotNil(LinkURL.openable("mailto:a@b.c"))
+        XCTAssertNil(LinkURL.openable("file:///etc/passwd"))
+        XCTAssertNil(LinkURL.openable("javascript:alert(1)"))
+        XCTAssertNil(LinkURL.openable("https://"))
+        XCTAssertNil(LinkURL.openable("\u{202A}https://example.com"))
+    }
+}
+
 final class KeyEncoderTests: XCTestCase {
     func testAlternateScrollCSI() {
         var pending = 0.0

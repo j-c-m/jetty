@@ -182,6 +182,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             }
         }
         var graphemes: [UInt32: [UInt32]] = [:]
+        var ulColors: [UInt16: UInt32] = [:]
         for cell in paint {
             if (cell.content & CONTENT_KIND_MASK) == CONTENT_GRAPHEME {
                 let id = cell.contentPayload
@@ -190,6 +191,12 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                     if let cps = jt_grapheme_get(session.screen.implPtr, id, &n), n > 0 {
                         graphemes[id] = Array(UnsafeBufferPointer(start: cps, count: Int(n)))
                     }
+                }
+            }
+            if cell.extra != 0, ulColors[cell.extra] == nil {
+                var rare = jt_rare()
+                if jt_rare_get(session.screen.implPtr, cell.extra, &rare) == 1 {
+                    ulColors[cell.extra] = rare.ul_color
                 }
             }
         }
@@ -272,16 +279,31 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             }
         }
         var overlayN = 0
-        if vis, preedit.isEmpty, curY >= 0, curY < paintRows, blinkOn || !focused {
-            overlayN = fillCursorOverlay(
-                style: curStyle,
-                focused: focused,
-                ox: insetLeftPx + Float(cx) * cw,
-                oy: insetTopPx + Float(curY) * ch,
-                cw: cw,
-                ch: ch,
-                rgb: curRGB,
-                renderer: renderer
+        let ulNeed = underlineOverlayCount(cols: cols, paintRows: paintRows)
+        let curNeed = (vis && preedit.isEmpty && curY >= 0 && curY < paintRows && (blinkOn || !focused)) ? 4 : 0
+        if ulNeed + curNeed > 0, let ov = renderer.prepareOverlays(count: ulNeed + curNeed) {
+            if curNeed > 0 {
+                overlayN += writeCursorOverlay(
+                    dest: ov,
+                    at: overlayN,
+                    style: curStyle,
+                    focused: focused,
+                    ox: insetLeftPx + Float(cx) * cw,
+                    oy: insetTopPx + Float(curY) * ch,
+                    cw: cw,
+                    ch: ch,
+                    rgb: curRGB
+                )
+            }
+            overlayN += writeUnderlineOverlays(
+                dest: ov,
+                at: overlayN,
+                cols: cols,
+                paintRows: paintRows,
+                cellW: cw,
+                cellH: ch,
+                defFG: defFG,
+                ulColors: ulColors
             )
         }
         renderer.draw(
@@ -433,41 +455,96 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
-    private func fillCursorOverlay(
+    private func writeCursorOverlay(
+        dest: UnsafeMutablePointer<OverlayInstance>,
+        at: Int,
         style: UInt8,
         focused: Bool,
         ox: Float,
         oy: Float,
         cw: Float,
         ch: Float,
-        rgb: RGB,
-        renderer: TerminalRenderer
+        rgb: RGB
     ) -> Int {
         let r = Float(rgb.r) / 255
         let g = Float(rgb.g) / 255
         let b = Float(rgb.b) / 255
         let t: Float = max(1, ch * 0.08)
         let bar: Float = max(1, cw * 0.12)
-        func quad(_ i: Int, _ x: Float, _ y: Float, _ w: Float, _ h: Float, _ dest: UnsafeMutablePointer<OverlayInstance>) {
-            dest[i] = OverlayInstance(ox: x, oy: y, sx: w, sy: h, r: r, g: g, b: b, a: 1)
+        func quad(_ i: Int, _ x: Float, _ y: Float, _ w: Float, _ h: Float) {
+            dest[at + i] = OverlayInstance(ox: x, oy: y, sx: w, sy: h, r: r, g: g, b: b, a: 1)
         }
         let block = style <= 2
         if block && focused { return 0 }
         if block {
-            guard let dest = renderer.prepareOverlays(count: 4) else { return 0 }
-            quad(0, ox, oy, cw, t, dest)
-            quad(1, ox, oy + ch - t, cw, t, dest)
-            quad(2, ox, oy, t, ch, dest)
-            quad(3, ox + cw - t, oy, t, ch, dest)
+            quad(0, ox, oy, cw, t)
+            quad(1, ox, oy + ch - t, cw, t)
+            quad(2, ox, oy, t, ch)
+            quad(3, ox + cw - t, oy, t, ch)
             return 4
         }
-        guard let dest = renderer.prepareOverlays(count: 1) else { return 0 }
         if style == 3 || style == 4 {
-            quad(0, ox, oy + ch - t * 2, cw, t * 2, dest)
+            quad(0, ox, oy + ch - t * 2, cw, t * 2)
         } else {
-            quad(0, ox, oy, bar, ch, dest)
+            quad(0, ox, oy, bar, ch)
         }
         return 1
+    }
+
+    private func underlineOverlayCount(cols: Int, paintRows: Int) -> Int {
+        var n = 0
+        let cap = min(paint.count, cols * paintRows)
+        var i = 0
+        while i < cap {
+            let ul = paint[i].attrs & UInt16(ATTR_UL_MASK)
+            if ul != 0 && paint[i].wide != WIDE_TAIL && paint[i].wide != WIDE_HEAD {
+                n += ul == UInt16(UL_DOUBLE) ? 2 : 1
+            }
+            i += 1
+        }
+        return n
+    }
+
+    private func writeUnderlineOverlays(
+        dest: UnsafeMutablePointer<OverlayInstance>,
+        at: Int,
+        cols: Int,
+        paintRows: Int,
+        cellW: Float,
+        cellH: Float,
+        defFG: RGB,
+        ulColors: [UInt16: UInt32]
+    ) -> Int {
+        var w = 0
+        let cap = min(paint.count, cols * paintRows)
+        let t = max(1, cellH * 0.06)
+        var i = 0
+        while i < cap {
+            let cell = paint[i]
+            let ul = cell.attrs & UInt16(ATTR_UL_MASK)
+            if ul != 0 && cell.wide != WIDE_TAIL && cell.wide != WIDE_HEAD {
+                let x = i % cols
+                let y = i / cols
+                let ox = insetLeftPx + Float(x) * cellW
+                let oy = insetTopPx + Float(y) * cellH + cellH - t * 2
+                var rgb = defFG
+                if cell.extra != 0, let packed = ulColors[cell.extra],
+                   PackedColor.type(of: packed) == 2 {
+                    rgb = RGB.packed(packed)
+                }
+                let r = Float(rgb.r) / 255, g = Float(rgb.g) / 255, b = Float(rgb.b) / 255
+                dest[at + w] = OverlayInstance(ox: ox, oy: oy, sx: cellW, sy: t, r: r, g: g, b: b, a: 1)
+                w += 1
+                if ul == UInt16(UL_DOUBLE) {
+                    dest[at + w] = OverlayInstance(
+                        ox: ox, oy: oy - t * 2, sx: cellW, sy: t, r: r, g: g, b: b, a: 1
+                    )
+                    w += 1
+                }
+            }
+            i += 1
+        }
+        return w
     }
 
     private func armSyncTimeout() {
@@ -675,12 +752,33 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     public override func mouseMoved(with event: NSEvent) {
+        let cell = cellAt(event)
         session.lock.lock()
         let mode = session.screen.mouseEvent
+        let cmd = event.modifierFlags.contains(.command)
+        var hand = false
+        if (mode == 0 || cmd), cell.y >= 0,
+           let uri = session.screen.uri(at: cell.x, y: cell.y),
+           LinkURL.openable(uri) != nil {
+            hand = true
+        }
         session.lock.unlock()
+        if mode == 0 || cmd {
+            if hand { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
+        }
         if mode == 1003, !event.modifierFlags.contains(.shift) {
             _ = reportMouse(event, action: .motion, button: nil)
         }
+    }
+
+    private func openLink(at event: NSEvent) {
+        let cell = cellAt(event)
+        guard cell.y >= 0 else { return }
+        session.lock.lock()
+        let uri = session.screen.uri(at: cell.x, y: cell.y)
+        session.lock.unlock()
+        guard let uri, let url = LinkURL.openable(uri) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     @objc public func copy(_ sender: Any?) {
@@ -733,7 +831,10 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let mode = session.screen.mouseEvent
         session.lock.unlock()
         let flags = event.modifierFlags
-        if flags.contains(.command) { return }
+        if flags.contains(.command) {
+            openLink(at: event)
+            return
+        }
         let host = mode == 0 || flags.contains(.shift)
         mouseHostSelect = host && mode != 0
         if !host {

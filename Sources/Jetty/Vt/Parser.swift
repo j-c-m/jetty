@@ -11,7 +11,12 @@ public final class Parser {
     public var titles: [String] = []
     public var osc52Writes: [(kind: UInt8, b64: [UInt8])] = []
     public var osc52Reads: [UInt8] = []
+    public var osc7: [String] = []
+    public var osc133: [(UInt8, [UInt8])] = []
     public var ptyWriter: (([UInt8]) -> Void)?
+    public var onOsc7: ((String) -> Void)?
+    public var onOsc133: ((UInt8, [UInt8]) -> Void)?
+    public var onSizeReport: ((Int32) -> Void)?
     public var onTitle: ((String) -> Void)?
     public var onOsc52Write: ((UInt8, [UInt8]) -> Void)?
     public var onOsc52Read: ((UInt8) -> Void)?
@@ -34,6 +39,9 @@ public final class Parser {
         host.osc52_write = jtHostOsc52Write
         host.osc52_read = jtHostOsc52Read
         host.palette_changed = jtHostPaletteChanged
+        host.osc7 = jtHostOsc7
+        host.osc133 = jtHostOsc133
+        host.size_report = jtHostSizeReport
     }
 
     deinit {
@@ -47,6 +55,8 @@ public final class Parser {
         titles.removeAll()
         osc52Writes.removeAll()
         osc52Reads.removeAll()
+        osc7.removeAll()
+        osc133.removeAll()
     }
 
     public func feed(_ bytes: UnsafePointer<UInt8>, count: Int) {
@@ -98,5 +108,20 @@ public final class Parser {
 
     func handlePaletteChanged() {
         onPaletteChanged?()
+    }
+
+    func handleOsc7(_ bytes: [UInt8]) {
+        let s = String(bytes: bytes, encoding: .utf8) ?? ""
+        osc7.append(s)
+        onOsc7?(s)
+    }
+
+    func handleOsc133(_ action: UInt8, _ opts: [UInt8]) {
+        osc133.append((action, opts))
+        onOsc133?(action, opts)
+    }
+
+    func handleSizeReport(_ kind: Int32) {
+        onSizeReport?(kind)
     }
 }

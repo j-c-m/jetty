@@ -229,8 +229,52 @@ void jt_osc_dispatch(jt_scr *s, const jt_vt_host *h, const uint8_t *p, int n) {
     case 12:
         osc_dynamic(s, h, cmd, p, n, i);
         break;
+    case 7:
+        if (h && h->osc7) h->osc7(h->ctx, p + i, (size_t)(n - i));
+        break;
+    case 8: {
+        if (!s) break;
+        int split = i;
+        while (split < n && p[split] != ';') split++;
+        const uint8_t *kv = p + i;
+        int kn = split - i;
+        const char *uri = "";
+        char uribuf[4096];
+        uribuf[0] = 0;
+        if (split < n) {
+            int un = n - split - 1;
+            if (un > 4095) un = 4095;
+            memcpy(uribuf, p + split + 1, (size_t)un);
+            uribuf[un] = 0;
+            uri = uribuf;
+        }
+        char idbuf[256];
+        idbuf[0] = 0;
+        int k = 0;
+        while (k < kn) {
+            int eq = k;
+            while (eq < kn && kv[eq] != '=' && kv[eq] != ':') eq++;
+            int vend = eq;
+            while (vend < kn && kv[vend] != ':') vend++;
+            if (eq < kn && kv[eq] == '=' && eq - k == 2 && kv[k] == 'i' && kv[k + 1] == 'd') {
+                int vs = eq + 1;
+                int vl = vend - vs;
+                if (vl > 255) vl = 255;
+                memcpy(idbuf, kv + vs, (size_t)vl);
+                idbuf[vl] = 0;
+            }
+            k = vend + 1;
+        }
+        if (!uri[0] && !idbuf[0]) jt_scr_set_osc8(s, NULL, NULL);
+        else jt_scr_set_osc8(s, idbuf[0] ? idbuf : NULL, uri);
+        break;
+    }
     case 52:
         osc52(h, p, n, i);
+        break;
+    case 133:
+        if (h && h->osc133 && i < n)
+            h->osc133(h->ctx, p[i], p + i, (size_t)(n - i));
         break;
     case 104:
         if (s) {
