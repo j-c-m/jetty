@@ -36,6 +36,26 @@ public struct CellInstance {
     }
 }
 
+@frozen
+public struct OverlayInstance {
+    public var ox: Float, oy: Float, sx: Float, sy: Float
+    public var r: Float, g: Float, b: Float, a: Float
+
+    public static let floatCount = 8
+    public static var stride: Int { MemoryLayout<OverlayInstance>.stride }
+
+    public init(ox: Float, oy: Float, sx: Float, sy: Float, r: Float, g: Float, b: Float, a: Float) {
+        self.ox = ox
+        self.oy = oy
+        self.sx = sx
+        self.sy = sy
+        self.r = r
+        self.g = g
+        self.b = b
+        self.a = a
+    }
+}
+
 public struct FrameUniforms {
     public var viewportX: Float
     public var viewportY: Float

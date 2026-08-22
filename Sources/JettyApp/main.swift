@@ -213,6 +213,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.center()
         }
 
+        session.osc52WriteAllow = config.osc52Write == .allow
+        session.osc52ReadAsk = config.osc52Read == .ask
+        session.onTitle = { [weak window] title in
+            MainActor.assumeIsolated {
+                window?.title = title.isEmpty ? "jetty" : title
+            }
+        }
         let term = TermWindow(session: session, view: view, window: window)
         term.onClose = { [weak self, weak term] in
             self?.terms.removeAll { $0 === term }

@@ -7,6 +7,7 @@ public final class TerminalRenderer {
     public let device: MTLDevice
     public let queue: MTLCommandQueue
     public let pipeline: MTLRenderPipelineState
+    public let overlayPipeline: MTLRenderPipelineState
     public let sampler: MTLSamplerState
     public var atlas: GlyphAtlas
 
@@ -14,6 +15,9 @@ public final class TerminalRenderer {
     private var instanceBuffers: [MTLBuffer?] = [nil, nil, nil]
     private var instanceCaps: [Int] = [0, 0, 0]
     private var instanceSlot = 0
+    private var overlayBuffers: [MTLBuffer?] = [nil, nil, nil]
+    private var overlayCaps: [Int] = [0, 0, 0]
+    private var overlaySlot = 0
     private var uniformBuffers: [MTLBuffer?] = [nil, nil, nil]
     private var uniformSlot = 0
 
@@ -44,6 +48,23 @@ public final class TerminalRenderer {
             fputs("jetty: pipeline: \(error)\n", stderr)
             return nil
         }
+        guard let ovfn = lib.makeFunction(name: "overlay_vertex"),
+              let offn = lib.makeFunction(name: "overlay_fragment") else { return nil }
+        let odesc = MTLRenderPipelineDescriptor()
+        odesc.vertexFunction = ovfn
+        odesc.fragmentFunction = offn
+        odesc.colorAttachments[0].pixelFormat = .bgra8Unorm
+        odesc.colorAttachments[0].isBlendingEnabled = true
+        odesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        odesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        odesc.colorAttachments[0].sourceAlphaBlendFactor = .one
+        odesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        do {
+            self.overlayPipeline = try device.makeRenderPipelineState(descriptor: odesc)
+        } catch {
+            fputs("jetty: overlay pipeline: \(error)\n", stderr)
+            return nil
+        }
         let s = MTLSamplerDescriptor()
         s.minFilter = .nearest
         s.magFilter = .nearest
@@ -72,10 +93,26 @@ public final class TerminalRenderer {
         return buf.contents().assumingMemoryBound(to: CellInstance.self)
     }
 
+    public func prepareOverlays(count: Int) -> UnsafeMutablePointer<OverlayInstance>? {
+        overlaySlot = (overlaySlot + 1) % Self.ringCount
+        let need = max(count, 1)
+        if overlayBuffers[overlaySlot] == nil || overlayCaps[overlaySlot] < need {
+            let cap = max(need, 16)
+            overlayBuffers[overlaySlot] = device.makeBuffer(
+                length: cap * OverlayInstance.stride,
+                options: .storageModeShared
+            )
+            overlayCaps[overlaySlot] = cap
+        }
+        guard let buf = overlayBuffers[overlaySlot] else { return nil }
+        return buf.contents().assumingMemoryBound(to: OverlayInstance.self)
+    }
+
     @MainActor
     public func draw(
         view: MTKView,
         instanceCount: Int,
+        overlayCount: Int = 0,
         viewport: SIMD2<Float>,
         contentOffsetY: Float = 0
     ) {
@@ -99,6 +136,12 @@ public final class TerminalRenderer {
         enc.setFragmentSamplerState(sampler, index: 0)
         if instanceCount > 0 {
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: instanceCount)
+        }
+        if overlayCount > 0, let obuf = overlayBuffers[overlaySlot] {
+            enc.setRenderPipelineState(overlayPipeline)
+            enc.setVertexBuffer(obuf, offset: 0, index: 0)
+            enc.setVertexBuffer(uniformBuffers[uniformSlot], offset: 0, index: 1)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: overlayCount)
         }
         enc.endEncoding()
         cmd.present(drawable)
@@ -177,6 +220,38 @@ public final class TerminalRenderer {
         }
         float3 rgb = mix(in.bg.rgb, in.fg.rgb, saturate(a));
         return float4(rgb, 1.0);
+    }
+
+    struct OverlayInstance {
+        float2 origin;
+        float2 size;
+        float4 color;
+    };
+
+    struct OverlayOut {
+        float4 position [[position]];
+        float4 color;
+    };
+
+    vertex OverlayOut overlay_vertex(uint vid [[vertex_id]],
+                                     uint iid [[instance_id]],
+                                     const device OverlayInstance *quads [[buffer(0)]],
+                                     constant FrameUniforms &uni [[buffer(1)]]) {
+        OverlayInstance c = quads[iid];
+        float2 corner = corners[vid];
+        float2 px = c.origin + corner * c.size;
+        px.y += uni.contentOffsetY;
+        float2 ndc;
+        ndc.x = (px.x / uni.viewport.x) * 2.0 - 1.0;
+        ndc.y = 1.0 - (px.y / uni.viewport.y) * 2.0;
+        OverlayOut o;
+        o.position = float4(ndc, 0.0, 1.0);
+        o.color = c.color;
+        return o;
+    }
+
+    fragment float4 overlay_fragment(OverlayOut in [[stage_in]]) {
+        return in.color;
     }
     """
 }

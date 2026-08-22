@@ -6,6 +6,16 @@ public struct AppConfig: Sendable {
     public var copyOnSelect: Bool = true
     public var launchCols: Int = 105
     public var launchRows: Int = 35
+    public var osc52Write: Osc52Write = .allow
+    public var osc52Read: Osc52Read = .ask
+
+    public enum Osc52Write: Sendable {
+        case allow, deny
+    }
+
+    public enum Osc52Read: Sendable {
+        case ask, deny
+    }
 
     public static func load() -> AppConfig {
         var c = AppConfig()
@@ -25,6 +35,10 @@ public struct AppConfig: Sendable {
                 if let n = Int(parts[1]), n >= 0 { c.scrollbackLines = n }
             case "copy-on-select":
                 c.copyOnSelect = ["true", "1", "yes"].contains(parts[1].lowercased())
+            case "osc52-write":
+                c.osc52Write = parts[1] == "deny" ? .deny : .allow
+            case "osc52-read":
+                c.osc52Read = parts[1] == "deny" ? .deny : .ask
             default:
                 break
             }

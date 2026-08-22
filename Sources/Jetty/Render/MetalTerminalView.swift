@@ -38,6 +38,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var imeInsert = false
     private var syncHoldStart: UInt64 = 0
     private var syncTimeoutWork: DispatchWorkItem?
+    private var cursorBlinkWork: DispatchWorkItem?
 
     public init(session: TerminalSession, config: AppConfig, device: MTLDevice, backingScale: CGFloat) {
         self.session = session
@@ -110,6 +111,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let cx = session.screen.cursorX
         let cy = session.screen.cursorY
         let vis = session.screen.cursorVisible
+        let curStyle = session.screen.cursorStyle
+        let curRGB = session.screen.cursorRGB
         let rev = session.screen.reverseVideo
         let inAlt = session.screen.inAlt
         if inAlt != lastInAlt {
@@ -203,7 +206,12 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             sel = (s.x0, s.y0 + liveOrigin, s.x1, s.y1 + liveOrigin)
         }
         let curY = cy + liveOrigin
-        let cursorOn = vis && window?.isKeyWindow == true && curY >= 0 && curY < paintRows
+        let focused = window?.isKeyWindow == true
+        let blinks = curStyle == 0 || curStyle == 1 || curStyle == 3 || curStyle == 5
+        let blinkOn = !blinks || Int(dtNow * 2) % 2 == 0
+        let blockStyle = curStyle <= 2
+        let cursorOn = vis && focused && blockStyle && blinkOn && curY >= 0 && curY < paintRows
+        if vis, blinks, focused { armCursorBlink() }
         let preedit = preeditRuns()
         var ulSlots = 0
         for run in preedit { ulSlots += run.width }
@@ -263,9 +271,23 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 }
             }
         }
+        var overlayN = 0
+        if vis, preedit.isEmpty, curY >= 0, curY < paintRows, blinkOn || !focused {
+            overlayN = fillCursorOverlay(
+                style: curStyle,
+                focused: focused,
+                ox: insetLeftPx + Float(cx) * cw,
+                oy: insetTopPx + Float(curY) * ch,
+                cw: cw,
+                ch: ch,
+                rgb: curRGB,
+                renderer: renderer
+            )
+        }
         renderer.draw(
             view: self,
             instanceCount: drawn,
+            overlayCount: overlayN,
             viewport: SIMD2(Float(dw), Float(dh)),
             contentOffsetY: Float(visRows) * ch
         )
@@ -399,6 +421,53 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         syncTimeoutWork?.cancel()
         syncTimeoutWork = nil
         return false
+    }
+
+    private func armCursorBlink() {
+        if cursorBlinkWork != nil { return }
+        let work = DispatchWorkItem { [weak self] in
+            self?.cursorBlinkWork = nil
+            self?.needsDisplay = true
+        }
+        cursorBlinkWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
+    private func fillCursorOverlay(
+        style: UInt8,
+        focused: Bool,
+        ox: Float,
+        oy: Float,
+        cw: Float,
+        ch: Float,
+        rgb: RGB,
+        renderer: TerminalRenderer
+    ) -> Int {
+        let r = Float(rgb.r) / 255
+        let g = Float(rgb.g) / 255
+        let b = Float(rgb.b) / 255
+        let t: Float = max(1, ch * 0.08)
+        let bar: Float = max(1, cw * 0.12)
+        func quad(_ i: Int, _ x: Float, _ y: Float, _ w: Float, _ h: Float, _ dest: UnsafeMutablePointer<OverlayInstance>) {
+            dest[i] = OverlayInstance(ox: x, oy: y, sx: w, sy: h, r: r, g: g, b: b, a: 1)
+        }
+        let block = style <= 2
+        if block && focused { return 0 }
+        if block {
+            guard let dest = renderer.prepareOverlays(count: 4) else { return 0 }
+            quad(0, ox, oy, cw, t, dest)
+            quad(1, ox, oy + ch - t, cw, t, dest)
+            quad(2, ox, oy, t, ch, dest)
+            quad(3, ox + cw - t, oy, t, ch, dest)
+            return 4
+        }
+        guard let dest = renderer.prepareOverlays(count: 1) else { return 0 }
+        if style == 3 || style == 4 {
+            quad(0, ox, oy + ch - t * 2, cw, t * 2, dest)
+        } else {
+            quad(0, ox, oy, bar, ch, dest)
+        }
+        return 1
     }
 
     private func armSyncTimeout() {

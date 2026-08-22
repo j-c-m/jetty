@@ -163,6 +163,63 @@ final class ParserTests: XCTestCase {
         XCTAssertFalse(s.focusEvent)
     }
 
+    func testOSCTitleAndST() {
+        let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}]0;hello\u{07}")
+        XCTAssertEqual(p.titles, ["hello"])
+        p.feed("\u{1B}]2;world\u{1B}\\")
+        XCTAssertEqual(p.titles.last, "world")
+        p.feed("\u{1B}]0;\u{202A}bad\u{07}")
+        XCTAssertEqual(p.titles.last, "bad")
+    }
+
+    func testOSC4AndDefaults() {
+        let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}]4;1;#FF0000\u{07}")
+        XCTAssertEqual(s.paletteColor(1), RGB(r: 255, g: 0, b: 0))
+        p.writes.removeAll()
+        p.feed("\u{1B}]4;1;?\u{07}")
+        let q = String(bytes: p.writes, encoding: .utf8) ?? ""
+        XCTAssertTrue(q.contains("]4;1;rgb:FFFF/0000/0000"), q)
+        p.feed("\u{1B}]10;#010203\u{07}")
+        XCTAssertEqual(s.defaultFgRGB, RGB(r: 1, g: 2, b: 3))
+        p.feed("\u{1B}]11;rgb:00/FF/00\u{07}")
+        XCTAssertEqual(s.defaultBgRGB, RGB(r: 0, g: 255, b: 0))
+        p.feed("\u{1B}]112\u{07}")
+        p.feed("\u{1B}]10;?\u{07}")
+        XCTAssertTrue((String(bytes: p.writes, encoding: .utf8) ?? "").contains("]10;"))
+    }
+
+    func testOSC52() {
+        let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}]52;c;aGVsbG8=\u{07}")
+        XCTAssertEqual(p.osc52Writes.count, 1)
+        XCTAssertEqual(p.osc52Writes[0].kind, UInt8(ascii: "c"))
+        XCTAssertEqual(String(bytes: p.osc52Writes[0].b64, encoding: .ascii), "aGVsbG8=")
+        p.feed("\u{1B}]52;c;?\u{07}")
+        XCTAssertEqual(p.osc52Reads, [UInt8(ascii: "c")])
+        p.feed("\u{1B}]52;x;?\u{07}")
+        XCTAssertEqual(p.osc52Reads.last, UInt8(ascii: "c"))
+    }
+
+    func testDECSCUSR() {
+        let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[3 q")
+        XCTAssertEqual(s.cursorStyle, 3)
+        p.feed("\u{1B}[0 q")
+        XCTAssertEqual(s.cursorStyle, 0)
+        p.feed("\u{1B}[6 q")
+        XCTAssertEqual(s.cursorStyle, 6)
+    }
+
     func testUTF8Scalar() {
         let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
         let p = Parser()

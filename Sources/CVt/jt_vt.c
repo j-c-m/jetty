@@ -51,6 +51,11 @@ void jt_vt_reset(jt_vt *p) {
 
 int jt_vt_state(const jt_vt *p) { return p->state; }
 
+static void finish_osc(jt_vt *p, jt_scr *scr, const jt_vt_host *h) {
+    if (p->osc_n > 0) jt_osc_dispatch(scr, h, p->osc, p->osc_n);
+    p->osc_n = 0;
+}
+
 static void enter_ground(jt_vt *p) {
     p->state = JT_ST_GROUND;
     clear_seq(p);
@@ -589,6 +594,7 @@ static void emit_utf8_run(jt_vt *p, jt_scr *scr, const uint8_t *src, size_t n) {
 
 static void execute_c0(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
     if (b == 0x07) {
+        if (p->state == JT_ST_OSC_STRING) finish_osc(p, scr, h);
         if (p->state == JT_ST_OSC_STRING || p->state == JT_ST_OSC_IGNORE) {
             enter_ground(p);
             return;
@@ -597,6 +603,7 @@ static void execute_c0(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
         return;
     }
     if (b == 0x1B) {
+        if (p->state == JT_ST_OSC_STRING) finish_osc(p, scr, h);
         utf8_reset(p);
         enter_escape(p);
         return;
@@ -736,6 +743,7 @@ static void dispatch(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
         return;
     }
     if (b == 0x1B) {
+        if (p->state == JT_ST_OSC_STRING) finish_osc(p, scr, h);
         utf8_reset(p);
         enter_escape(p);
         return;
@@ -772,8 +780,10 @@ static void dispatch(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
         if (b >= 0x40 && b <= 0x7E) enter_ground(p);
         break;
     case JT_ST_OSC_STRING:
-        if (b == 0x07) enter_ground(p);
-        else if (p->osc_n >= 4096) p->state = JT_ST_OSC_IGNORE;
+        if (b == 0x07) {
+            finish_osc(p, scr, h);
+            enter_ground(p);
+        } else if (p->osc_n >= 4096) p->state = JT_ST_OSC_IGNORE;
         else p->osc[p->osc_n++] = b;
         break;
     case JT_ST_OSC_IGNORE:

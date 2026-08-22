@@ -113,6 +113,7 @@ int jt_scr_is_wrapped(const jt_scr *s, int32_t y);
 
 Cell *jt_scr_row(jt_scr *s, int32_t y);
 void jt_scr_ris(jt_scr *s);
+void jt_scr_palette_reset(jt_scr *s);
 void jt_sgr_apply(jt_scr *s, const uint16_t *p, int n, uint32_t seps);
 
 extern const uint8_t jt_width_lut[278528];
@@ -159,6 +160,8 @@ typedef struct jt_vt_host {
     void (*osc133)(void *ctx, uint8_t action, const uint8_t *opts, size_t n);
     void (*palette_changed)(void *ctx);
 } jt_vt_host;
+
+void jt_osc_dispatch(jt_scr *s, const jt_vt_host *h, const uint8_t *p, int n);
 
 typedef struct jt_vt jt_vt;
 

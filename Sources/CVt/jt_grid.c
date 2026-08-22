@@ -41,6 +41,12 @@ static void jt_defaults_reset(jt_scr *s) {
     jt_palette_reset(s->palette);
     s->default_fg = COLOR_RGB | 0xCCCCCCu;
     s->default_bg = COLOR_RGB | 0x000000u;
+    s->cursor_color = COLOR_DEFAULT;
+}
+
+void jt_scr_palette_reset(jt_scr *s) {
+    if (!s) return;
+    jt_palette_reset(s->palette);
 }
 
 static Cell blank_cell(const jt_scr *s) {

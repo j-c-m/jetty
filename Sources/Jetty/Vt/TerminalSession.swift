@@ -1,3 +1,4 @@
+import AppKit
 import CPty
 import CoreFoundation
 import Darwin
@@ -16,6 +17,9 @@ public final class TerminalSession: @unchecked Sendable {
     private var pipeline: PtyPipeline?
     public var onRedraw: (@Sendable () -> Void)?
     public var onDeath: (@Sendable () -> Void)?
+    public var onTitle: (@Sendable (String) -> Void)?
+    public var osc52WriteAllow = true
+    public var osc52ReadAsk = true
 
     private let redrawLock = NSLock()
     private var redrawPending = false
@@ -35,6 +39,24 @@ public final class TerminalSession: @unchecked Sendable {
         parser.screen = screen
         parser.ptyWriter = { [weak self] bytes in
             self?.writeToPty(bytes)
+        }
+        parser.onTitle = { [weak self] title in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.onTitle?(title) }
+            }
+        }
+        parser.onOsc52Write = { [weak self] _, b64 in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.applyOsc52Write(b64) }
+            }
+        }
+        parser.onOsc52Read = { [weak self] kind in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.askOsc52Read(kind) }
+            }
+        }
+        parser.onPaletteChanged = { [weak self] in
+            self?.scheduleRedraw()
         }
     }
 
@@ -85,6 +107,45 @@ public final class TerminalSession: @unchecked Sendable {
             _ = jt_pty_set_winsize(fd, UInt16(max(2, cols)), UInt16(max(1, rows)), cw, ch)
         }
         scheduleRedraw()
+    }
+
+    @MainActor
+    private func applyOsc52Write(_ b64: [UInt8]) {
+        guard osc52WriteAllow else { return }
+        let raw = String(bytes: b64, encoding: .ascii) ?? ""
+        let clean = String(raw.filter { !$0.isWhitespace && $0 != "\n" && $0 != "\r" })
+        guard let data = Data(base64Encoded: clean),
+              let text = String(data: data, encoding: .utf8)
+        else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    @MainActor
+    private func askOsc52Read(_ kind: UInt8) {
+        let k = kind == 0 ? UInt8(ascii: "c") : kind
+        func reply(_ payload: String) {
+            var out = Array("\u{1B}]52;".utf8)
+            out.append(k)
+            out.append(UInt8(ascii: ";"))
+            out.append(contentsOf: payload.utf8)
+            out.append(0x07)
+            writeToPty(out)
+        }
+        if !osc52ReadAsk {
+            reply("")
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Allow clipboard read?"
+        alert.addButton(withTitle: "Allow")
+        alert.addButton(withTitle: "Deny")
+        let ok = alert.runModal() == .alertFirstButtonReturn
+        guard ok, let str = NSPasteboard.general.string(forType: .string) else {
+            reply("")
+            return
+        }
+        reply(Data(str.utf8).base64EncodedString())
     }
 
     public func writeToPty(_ bytes: [UInt8]) {

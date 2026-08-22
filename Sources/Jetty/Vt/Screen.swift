@@ -70,6 +70,15 @@ public final class Screen {
         get { implPtr.pointee.cursor_style }
         set { implPtr.pointee.cursor_style = newValue }
     }
+    public var cursorBlink: Bool {
+        get { implPtr.pointee.cursor_blink != 0 }
+        set { implPtr.pointee.cursor_blink = newValue ? 1 : 0 }
+    }
+    public var cursorRGB: RGB {
+        let v = implPtr.pointee.cursor_color
+        if PackedColor.type(of: v) == 2 { return RGB.packed(v) }
+        return defaultFgRGB
+    }
 
     public var penFG: UInt32 {
         get { implPtr.pointee.pen.fg }

@@ -8,7 +8,14 @@ public final class Parser {
     public unowned(unsafe) var screen: Screen?
     public var writes: [UInt8] = []
     public var bells: Int = 0
+    public var titles: [String] = []
+    public var osc52Writes: [(kind: UInt8, b64: [UInt8])] = []
+    public var osc52Reads: [UInt8] = []
     public var ptyWriter: (([UInt8]) -> Void)?
+    public var onTitle: ((String) -> Void)?
+    public var onOsc52Write: ((UInt8, [UInt8]) -> Void)?
+    public var onOsc52Read: ((UInt8) -> Void)?
+    public var onPaletteChanged: (() -> Void)?
 
     public var state: Int { Int(jt_vt_state(vt)) }
 
@@ -23,6 +30,10 @@ public final class Parser {
         host.ctx = Unmanaged.passUnretained(glue).toOpaque()
         host.write_pty = jtHostWritePty
         host.bell = jtHostBell
+        host.set_title = jtHostSetTitle
+        host.osc52_write = jtHostOsc52Write
+        host.osc52_read = jtHostOsc52Read
+        host.palette_changed = jtHostPaletteChanged
     }
 
     deinit {
@@ -33,6 +44,9 @@ public final class Parser {
         jt_vt_reset(vt)
         writes.removeAll()
         bells = 0
+        titles.removeAll()
+        osc52Writes.removeAll()
+        osc52Reads.removeAll()
     }
 
     public func feed(_ bytes: UnsafePointer<UInt8>, count: Int) {
@@ -64,5 +78,25 @@ public final class Parser {
 
     func onBell() {
         bells += 1
+    }
+
+    func handleTitle(_ bytes: [UInt8]) {
+        let s = String(bytes: bytes, encoding: .utf8) ?? ""
+        titles.append(s)
+        onTitle?(s)
+    }
+
+    func handleOsc52Write(_ kind: UInt8, _ b64: [UInt8]) {
+        osc52Writes.append((kind, b64))
+        onOsc52Write?(kind, b64)
+    }
+
+    func handleOsc52Read(_ kind: UInt8) {
+        osc52Reads.append(kind)
+        onOsc52Read?(kind)
+    }
+
+    func handlePaletteChanged() {
+        onPaletteChanged?()
     }
 }
