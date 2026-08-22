@@ -33,6 +33,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var pageHoldCount: Int = 0
     private var lastMouseCell: (x: Int, y: Int)?
     private var mouseWheelPending: Double = 0
+    private var mouseHostSelect = false
 
     public init(session: TerminalSession, config: AppConfig, device: MTLDevice, backingScale: CGFloat) {
         self.session = session
@@ -111,6 +112,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             altScrollPending = 0
             mouseWheelPending = 0
             lastMouseCell = nil
+            mouseHostSelect = false
             selAnchor = nil
             selEnd = nil
             selecting = false
@@ -501,7 +503,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         session.lock.lock()
         let mode = session.screen.mouseEvent
         session.lock.unlock()
-        if mode == 1003 {
+        if mode == 1003, !event.modifierFlags.contains(.shift) {
             _ = reportMouse(event, action: .motion, button: nil)
         }
     }
@@ -544,19 +546,40 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         session.lock.lock()
         let mode = session.screen.mouseEvent
         session.lock.unlock()
-        if mode != 0 {
-            if event.modifierFlags.contains(.command) { return }
+        let flags = event.modifierFlags
+        if flags.contains(.command) { return }
+        let host = mode == 0 || flags.contains(.shift)
+        mouseHostSelect = host && mode != 0
+        if !host {
+            if selAnchor != nil || selEnd != nil {
+                selAnchor = nil
+                selEnd = nil
+                selecting = false
+                pendingSelect = nil
+                needsDisplay = true
+            }
             _ = reportMouse(event, action: .press, button: button)
             return
         }
-        pendingSelect = cellAt(event)
-        selecting = false
-        selAnchor = nil
-        selEnd = nil
+        let cell = cellAt(event)
+        if flags.contains(.shift), selAnchor != nil {
+            selecting = true
+            pendingSelect = nil
+            selEnd = cell
+        } else {
+            pendingSelect = cell
+            selecting = false
+            selAnchor = nil
+            selEnd = nil
+        }
         needsDisplay = true
     }
 
     private func handleMouseDrag(_ event: NSEvent, button: UInt8?) {
+        if mouseHostSelect {
+            hostSelectDrag(event)
+            return
+        }
         session.lock.lock()
         let mode = session.screen.mouseEvent
         session.lock.unlock()
@@ -565,6 +588,28 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             _ = reportMouse(event, action: .motion, button: button)
             return
         }
+        hostSelectDrag(event)
+    }
+
+    private func handleMouseRelease(_ event: NSEvent, button: UInt8?) {
+        if mouseHostSelect {
+            finishHostSelect(event)
+            mouseHostSelect = false
+            return
+        }
+        session.lock.lock()
+        let mode = session.screen.mouseEvent
+        session.lock.unlock()
+        if mode != 0 {
+            if !event.modifierFlags.contains(.command) {
+                _ = reportMouse(event, action: .release, button: button)
+            }
+            return
+        }
+        finishHostSelect(event)
+    }
+
+    private func hostSelectDrag(_ event: NSEvent) {
         let cell = cellAt(event)
         if let pending = pendingSelect, (cell.x != pending.x || cell.y != pending.y) {
             selecting = true
@@ -577,16 +622,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         }
     }
 
-    private func handleMouseRelease(_ event: NSEvent, button: UInt8?) {
-        session.lock.lock()
-        let mode = session.screen.mouseEvent
-        session.lock.unlock()
-        if mode != 0 {
-            if !event.modifierFlags.contains(.command) {
-                _ = reportMouse(event, action: .release, button: button)
-            }
-            return
-        }
+    private func finishHostSelect(_ event: NSEvent) {
         if selecting {
             selEnd = cellAt(event)
             if config.copyOnSelect { copy(nil) }
