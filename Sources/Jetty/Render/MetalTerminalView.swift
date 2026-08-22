@@ -190,24 +190,28 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 let dbg = SIMD3(Float(defBG.r) / 255, Float(defBG.g) / 255, Float(defBG.b) / 255)
                 paint.withUnsafeBufferPointer { cellBuf in
                     guard let cp = cellBuf.baseAddress else { return }
-                    GridExpand.expand(
-                        cells: cp,
-                        cols: cols,
-                        rows: paintRows,
-                        cellW: cw,
-                        cellH: ch,
-                        originX: insetLeftPx,
-                        originY: insetTopPx,
-                        palette: pal.baseAddress!,
-                        defFG: dfg,
-                        defBG: dbg,
-                        atlas: renderer.atlas,
-                        cursorX: cx,
-                        cursorY: curY,
-                        cursorVisible: cursorOn,
-                        selection: sel,
-                        dest: inst
-                    )
+                    for _ in 0..<3 {
+                        let gen = renderer.atlas.packGeneration
+                        GridExpand.expand(
+                            cells: cp,
+                            cols: cols,
+                            rows: paintRows,
+                            cellW: cw,
+                            cellH: ch,
+                            originX: insetLeftPx,
+                            originY: insetTopPx,
+                            palette: pal.baseAddress!,
+                            defFG: dfg,
+                            defBG: dbg,
+                            atlas: renderer.atlas,
+                            cursorX: cx,
+                            cursorY: curY,
+                            cursorVisible: cursorOn,
+                            selection: sel,
+                            dest: inst
+                        )
+                        if renderer.atlas.packGeneration == gen { break }
+                    }
                 }
             }
         }
