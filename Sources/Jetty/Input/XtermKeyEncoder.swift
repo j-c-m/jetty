@@ -37,6 +37,27 @@ public enum XtermKeyEncoder {
         return nil
     }
 
+    /// DECSET 1007: accumulated wheel rows (+up) to CSI/SS3 cursor keys.
+    public static func alternateScroll(
+        deltaRows: Double,
+        pending: inout Double,
+        applicationCursor: Bool
+    ) -> [UInt8]? {
+        pending += deltaRows
+        let n = Int(pending.rounded(.towardZero))
+        if n == 0 { return nil }
+        pending -= Double(n)
+        let count = min(abs(n), 256)
+        let letter: UInt8 = n > 0 ? 0x41 : 0x42
+        let one: [UInt8] = applicationCursor
+            ? [0x1B, 0x4F, letter]
+            : [0x1B, 0x5B, letter]
+        var out = [UInt8]()
+        out.reserveCapacity(one.count * count)
+        for _ in 0..<count { out.append(contentsOf: one) }
+        return out
+    }
+
     private static func special(_ keyCode: UInt16, flags: NSEvent.ModifierFlags, applicationCursor: Bool) -> [UInt8]? {
         let shift = flags.contains(.shift)
         let alt = flags.contains(.option)

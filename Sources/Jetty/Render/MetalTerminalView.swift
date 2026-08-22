@@ -27,6 +27,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var lastLinesScrolled: UInt64 = 0
     private var lastSbCount: Int = 0
     private var lastSafeTop: CGFloat = 0
+    private var lastInAlt = false
+    private var altScrollPending: Double = 0
 
     public init(session: TerminalSession, config: AppConfig, device: MTLDevice, backingScale: CGFloat) {
         self.session = session
@@ -98,33 +100,44 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let cy = session.screen.cursorY
         let vis = session.screen.cursorVisible
         let rev = session.screen.reverseVideo
+        let inAlt = session.screen.inAlt
+        if inAlt != lastInAlt {
+            lastInAlt = inAlt
+            altScrollPending = 0
+            selAnchor = nil
+            selEnd = nil
+            selecting = false
+            pendingSelect = nil
+        }
         let produced = session.screen.linesScrolled
         let sbCount = session.screen.scrollbackCount
-        let maxO = Double(sbCount)
-        var newRows = 0.0
-        if produced >= lastLinesScrolled {
-            newRows = Double(produced - lastLinesScrolled)
-        }
-        lastLinesScrolled = produced
-        let grown = max(0, maxO - Double(lastSbCount))
-        let trim = max(0, newRows - grown)
-        lastSbCount = sbCount
-        if trim > 0.5, !scrollPhysics.pinnedToBottom {
-            scrollPhysics.trimTop(trim)
-        }
-        scrollPhysics.followBottomIfPinned(maxOffset: maxO)
         let dtNow = CACurrentMediaTime()
         let dt = lastFrameTime > 0 ? dtNow - lastFrameTime : 1.0 / 60.0
         lastFrameTime = dtNow
-        let moving = scrollPhysics.step(dt: dt, maxOffset: maxO, viewportRows: Double(max(1, rows)))
-        if moving { kickScroll() }
-        let start = Int(scrollPhysics.integerRow(maxOffset: maxO))
-        let visRows = scrollPhysics.visualOffsetRows(maxOffset: maxO)
-        let extra: Int
-        if abs(visRows) < 1e-6 {
-            extra = 0
-        } else {
-            extra = max(1, Int(ceil(abs(visRows))) + 1)
+        var extra = 0
+        var start = 0
+        var visRows = 0.0
+        if !inAlt {
+            let maxO = Double(sbCount)
+            var newRows = 0.0
+            if produced >= lastLinesScrolled {
+                newRows = Double(produced - lastLinesScrolled)
+            }
+            lastLinesScrolled = produced
+            let grown = max(0, maxO - Double(lastSbCount))
+            let trim = max(0, newRows - grown)
+            lastSbCount = sbCount
+            if trim > 0.5, !scrollPhysics.pinnedToBottom {
+                scrollPhysics.trimTop(trim)
+            }
+            scrollPhysics.followBottomIfPinned(maxOffset: maxO)
+            let moving = scrollPhysics.step(dt: dt, maxOffset: maxO, viewportRows: Double(max(1, rows)))
+            if moving { kickScroll() }
+            start = Int(scrollPhysics.integerRow(maxOffset: maxO))
+            visRows = scrollPhysics.visualOffsetRows(maxOffset: maxO)
+            if abs(visRows) >= 1e-6 {
+                extra = max(1, Int(ceil(abs(visRows))) + 1)
+            }
         }
         let paintRows = rows + extra
         var blank = CVt.Cell.empty
@@ -135,7 +148,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         }
         paint.withUnsafeMutableBufferPointer { dest in
             guard let dp = dest.baseAddress, cols > 0, paintRows > 0 else { return }
-            if extra == 0 && start == sbCount {
+            if extra == 0 && (inAlt || start == sbCount) {
                 session.screen.blitLiveGrid(to: dp)
             } else {
                 var row = 0
@@ -158,7 +171,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let dh = drawableSize.height
         let cw = Float(cellWPx)
         let ch = Float(cellHPx)
-        let liveOrigin = sbCount - start
+        let liveOrigin = inAlt ? 0 : sbCount - start
         var sel = selectionCells()
         if let s = sel {
             sel = (s.x0, s.y0 + liveOrigin, s.x1, s.y1 + liveOrigin)
@@ -278,12 +291,16 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         }
         session.lock.lock()
         let appCursor = session.screen.decckm
+        let inAlt = session.screen.inAlt
+        let sb = session.screen.scrollbackCount
         session.lock.unlock()
         guard let bytes = XtermKeyEncoder.bytes(for: event, applicationCursor: appCursor) else {
             super.keyDown(with: event)
             return
         }
-        scrollPhysics.pinBottom(maxOffset: Double(session.screen.scrollbackCount))
+        if !inAlt {
+            scrollPhysics.pinBottom(maxOffset: Double(sb))
+        }
         session.writeToPty(bytes)
     }
 
@@ -331,6 +348,36 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     public override func scrollWheel(with event: NSEvent) {
+        session.lock.lock()
+        let inAlt = session.screen.inAlt
+        let sendAlt = session.screen.sendsAlternateScroll
+        let appCursor = session.screen.decckm
+        session.lock.unlock()
+        if inAlt {
+            if sendAlt {
+                let bs = max(window?.backingScaleFactor ?? 1, 1)
+                let chPt = max(CGFloat(cellHPx) / bs, 1)
+                let dy = event.scrollingDeltaY
+                let deltaRows: Double
+                if event.hasPreciseScrollingDeltas {
+                    deltaRows = Double(dy / chPt)
+                } else if dy == 0 {
+                    return
+                } else {
+                    deltaRows = Double(dy > 0 ? max(dy, 1) : min(dy, -1))
+                }
+                guard let keys = XtermKeyEncoder.alternateScroll(
+                    deltaRows: deltaRows,
+                    pending: &altScrollPending,
+                    applicationCursor: appCursor
+                ) else { return }
+                selAnchor = nil
+                selEnd = nil
+                selecting = false
+                session.writeToPty(keys)
+            }
+            return
+        }
         let bs = max(window?.backingScaleFactor ?? 1, 1)
         let chPt = max(CGFloat(cellHPx) / bs, 1)
         let dy = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.scrollingDeltaY * chPt * 3
@@ -397,7 +444,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         session.lock.lock()
         let cols = session.screen.cols
         let rows = session.screen.rows
-        let sb = session.screen.scrollbackCount
+        let sb = session.screen.viewportHistoryCount
         session.lock.unlock()
         selAnchor = (0, -sb)
         selEnd = (max(0, cols - 1), max(0, rows - 1))
@@ -414,7 +461,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let yFromTop = Int(floor((bounds.height - p.y - padPt - sa.top) / ch))
         session.lock.lock()
         let cols = session.screen.cols
-        let sb = session.screen.scrollbackCount
+        let sb = session.screen.viewportHistoryCount
         session.lock.unlock()
         let start = Int(scrollPhysics.integerRow(maxOffset: Double(sb)))
         let docY = start + yFromTop
@@ -431,7 +478,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         var a = (x: s.x0, y: s.y0)
         var b = (x: s.x1, y: s.y1)
         if a.y > b.y || (a.y == b.y && a.x > b.x) { swap(&a, &b) }
-        let sb = session.screen.scrollbackCount
+        let sb = session.screen.viewportHistoryCount
         var out = ""
         var y = a.y
         while y <= b.y {

@@ -146,4 +146,68 @@ final class ScreenTests: XCTestCase {
         let after = s.row(0)
         XCTAssertNotEqual(after[1].wide, WIDE_FULL)
     }
+
+    func testAltDoesNotGrowScrollback() {
+        let s = Screen(cols: 4, rows: 2, scrollbackCapRows: 10)
+        s.printRun("aaaa")
+        s.printRun("bbbb")
+        s.printRun("cccc")
+        let before = s.scrollbackCount
+        let produced = s.linesScrolled
+        XCTAssertGreaterThan(before, 0)
+        XCTAssertFalse(s.sendsAlternateScroll)
+        s.switchScreenMode(1049, enabled: true)
+        XCTAssertTrue(s.inAlt)
+        XCTAssertTrue(s.sendsAlternateScroll)
+        XCTAssertEqual(s.viewportHistoryCount, 0)
+        XCTAssertEqual(s.scrollbackCount, before)
+        s.printRun("xxxx")
+        s.printRun("yyyy")
+        s.printRun("zzzz")
+        XCTAssertEqual(s.scrollbackCount, before)
+        XCTAssertEqual(s.linesScrolled, produced)
+        s.switchScreenMode(1049, enabled: false)
+        XCTAssertFalse(s.inAlt)
+        XCTAssertEqual(s.scrollbackCount, before)
+        XCTAssertEqual(s.viewportHistoryCount, before)
+        s.printRun("dddd")
+        XCTAssertEqual(s.scrollbackCount, before + 1)
+    }
+
+    func testBlitOnAltIsLiveNotHistory() {
+        let s = Screen(cols: 4, rows: 2, scrollbackCapRows: 10)
+        s.printRun("AAAA")
+        s.printRun("BBBB")
+        s.printRun("CCCC")
+        s.switchScreenMode(1049, enabled: true)
+        s.cup(row: 0, col: 0)
+        s.printRun("XY")
+        var dest = [Cell](repeating: .empty, count: 4)
+        var blank = Cell.empty
+        blank.content = content_scalar(0x20, WIDE_NARROW)
+        dest.withUnsafeMutableBufferPointer { buf in
+            guard let p = buf.baseAddress else { return }
+            s.blitDocumentRow(0, to: p, destCols: 4, liveRows: 2, blank: blank)
+        }
+        XCTAssertEqual(dest[0].contentPayload, UInt32(UInt8(ascii: "X")))
+        XCTAssertEqual(dest[1].contentPayload, UInt32(UInt8(ascii: "Y")))
+    }
+
+    func testAlternateScrollRequiresAltAnd1007AndNoMouse() {
+        let s = Screen(cols: 8, rows: 4, scrollbackCapRows: 8)
+        let p = Parser()
+        p.screen = s
+        XCTAssertTrue(s.mouseAltScroll)
+        XCTAssertFalse(s.sendsAlternateScroll)
+        p.feed("\u{1B}[?1049h")
+        XCTAssertTrue(s.sendsAlternateScroll)
+        p.feed("\u{1B}[?1007l")
+        XCTAssertFalse(s.mouseAltScroll)
+        XCTAssertFalse(s.sendsAlternateScroll)
+        p.feed("\u{1B}[?1007h")
+        XCTAssertTrue(s.sendsAlternateScroll)
+        p.feed("\u{1B}[?1000h")
+        XCTAssertEqual(s.mouseEvent, 1000)
+        XCTAssertFalse(s.sendsAlternateScroll)
+    }
 }

@@ -10,6 +10,14 @@ public final class Screen {
     public var inAlt: Bool { implPtr.pointee.in_alt != 0 }
     public var linesScrolled: UInt64 { implPtr.pointee.lines_scrolled }
     public var scrollbackCount: Int { Int(jt_scr_sb_len(implPtr)) }
+    /// History rows the host may pan. Alternate screen never has a viewport into the primary ring.
+    public var viewportHistoryCount: Int { inAlt ? 0 : scrollbackCount }
+    public var mouseEvent: UInt16 { implPtr.pointee.mouse_event }
+    public var mouseAltScroll: Bool { implPtr.pointee.mouse_alt_scroll != 0 }
+    /// Ghostty/xterm 1007: wheel → cursor keys when on alt, no mouse report, and alternate-scroll is on.
+    public var sendsAlternateScroll: Bool {
+        inAlt && mouseEvent == 0 && mouseAltScroll
+    }
     public var autoWrap: Bool {
         get { implPtr.pointee.auto_wrap != 0 }
         set { implPtr.pointee.auto_wrap = newValue ? 1 : 0 }
@@ -177,6 +185,14 @@ public final class Screen {
         liveRows: Int,
         blank: Cell
     ) {
+        if inAlt {
+            if docRow >= 0 && docRow < liveRows {
+                jt_scr_copy_row(implPtr, Int32(docRow), dest, Int32(destCols), blank)
+            } else {
+                for x in 0..<destCols { dest[x] = blank }
+            }
+            return
+        }
         let sb = scrollbackCount
         if docRow < sb {
             jt_scr_copy_sb_row(implPtr, Int32(docRow), dest, Int32(destCols), blank)

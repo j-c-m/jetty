@@ -219,14 +219,12 @@ static void scroll_up(jt_scr *s) {
     int full = (top == 0 && bot == s->rows - 1);
     if (full) {
         if (!s->in_alt) sb_push(s, row_at(s, 0), *wrap_at(s, 0));
-        else s->lines_scrolled++;
         b->origin++;
         if (b->origin >= s->rows) b->origin = 0;
         fill_row(s, s->rows - 1);
         return;
     }
     if (top == 0 && !s->in_alt) sb_push(s, row_at(s, 0), *wrap_at(s, 0));
-    else if (top == 0) s->lines_scrolled++;
     if (bot > top) copy_rows_up(s, top, bot);
     fill_row(s, bot);
 }
