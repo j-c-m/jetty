@@ -162,12 +162,14 @@ public final class Screen {
 
     public var defaultFgRGB: RGB {
         let v = implPtr.pointee.default_fg
-        return v == 0 ? paletteColor(7) : RGB.packed(v)
+        if PackedColor.type(of: v) == 2 { return RGB.packed(v) }
+        return paletteColor(7)
     }
 
     public var defaultBgRGB: RGB {
         let v = implPtr.pointee.default_bg
-        return v == 0 ? paletteColor(0) : RGB.packed(v)
+        if PackedColor.type(of: v) == 2 { return RGB.packed(v) }
+        return paletteColor(0)
     }
 
     public func blitLiveGrid(to dest: UnsafeMutablePointer<Cell>) {

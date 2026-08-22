@@ -9,11 +9,12 @@ static void default_tabs(uint8_t *t, int32_t cols) {
 }
 
 static void jt_palette_reset(uint32_t pal[256]) {
+    /* Eighties Black (terminal-themes / ghosvt). Cube 16–255 stays xterm. */
     static const uint32_t ansi[16] = {
-        0x000000, 0x800000, 0x008000, 0x808000,
-        0x000080, 0x800080, 0x008080, 0xC0C0C0,
-        0x808080, 0xFF0000, 0x00FF00, 0xFFFF00,
-        0x0000FF, 0xFF00FF, 0x00FFFF, 0xFFFFFF,
+        0x111111, 0xEE4549, 0x59B259, 0xC86131,
+        0x3773AF, 0xB259B2, 0x37AFAF, 0xCCCCCC,
+        0x888888, 0xF2777A, 0x99CC99, 0xFFCC66,
+        0x6699CC, 0xCC99CC, 0x66CCCC, 0xF2F0EC,
     };
     for (int i = 0; i < 16; i++) pal[i] = ansi[i];
     for (int r = 0; r < 6; r++) {
@@ -30,6 +31,12 @@ static void jt_palette_reset(uint32_t pal[256]) {
         uint32_t v = (uint32_t)(8 + 10 * i);
         pal[232 + i] = (v << 16) | (v << 8) | v;
     }
+}
+
+static void jt_defaults_reset(jt_scr *s) {
+    jt_palette_reset(s->palette);
+    s->default_fg = COLOR_RGB | 0xCCCCCCu;
+    s->default_bg = COLOR_RGB | 0x000000u;
 }
 
 static Cell blank_cell(const jt_scr *s) {
@@ -719,7 +726,7 @@ void jt_scr_init(jt_scr *s, int32_t cols, int32_t rows, int32_t sb_cap) {
     s->cursor_style = 2;
     s->pen.fg = COLOR_DEFAULT;
     s->pen.bg = COLOR_DEFAULT;
-    jt_palette_reset(s->palette);
+    jt_defaults_reset(s);
     if (!buf_init(&s->primary, cols, rows, blank_cell(s))) return;
     s->active = &s->primary;
     sb_alloc(s, sb_cap < 0 ? 0 : sb_cap, cols);
@@ -767,9 +774,7 @@ void jt_scr_ris(jt_scr *s) {
     s->primary.cx = 0;
     s->primary.cy = 0;
     s->primary.pending_wrap = 0;
-    jt_palette_reset(s->palette);
-    s->default_fg = 0;
-    s->default_bg = 0;
+    jt_defaults_reset(s);
     s->saved.valid = 0;
     jt_scr_ed(s, 2);
 }

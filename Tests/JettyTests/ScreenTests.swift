@@ -3,6 +3,23 @@ import XCTest
 @testable import Jetty
 
 final class ScreenTests: XCTestCase {
+    func testEightiesBlackDefaults() {
+        let s = Screen(cols: 8, rows: 2, scrollbackCapRows: 0)
+        XCTAssertEqual(s.paletteColor(0), RGB(r: 0x11, g: 0x11, b: 0x11))
+        XCTAssertEqual(s.paletteColor(1), RGB(r: 0xEE, g: 0x45, b: 0x49))
+        XCTAssertEqual(s.paletteColor(7), RGB(r: 0xCC, g: 0xCC, b: 0xCC))
+        XCTAssertEqual(s.paletteColor(15), RGB(r: 0xF2, g: 0xF0, b: 0xEC))
+        XCTAssertEqual(s.defaultFgRGB, RGB(r: 0xCC, g: 0xCC, b: 0xCC))
+        XCTAssertEqual(s.defaultBgRGB, RGB(r: 0, g: 0, b: 0))
+        XCTAssertNotEqual(s.defaultBgRGB, s.paletteColor(0))
+        s.ed(2)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}c")
+        XCTAssertEqual(s.defaultBgRGB, RGB(r: 0, g: 0, b: 0))
+        XCTAssertEqual(s.paletteColor(0), RGB(r: 0x11, g: 0x11, b: 0x11))
+    }
+
     func testPrintAndCursor() {
         let s = Screen(cols: 5, rows: 5, scrollbackCapRows: 8)
         s.printRun("1A")
