@@ -31,6 +31,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var altScrollPending: Double = 0
     private var pageHoldKey: UInt16 = 0
     private var pageHoldCount: Int = 0
+    private var lastMouseCell: (x: Int, y: Int)?
+    private var mouseWheelPending: Double = 0
 
     public init(session: TerminalSession, config: AppConfig, device: MTLDevice, backingScale: CGFloat) {
         self.session = session
@@ -107,6 +109,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         if inAlt != lastInAlt {
             lastInAlt = inAlt
             altScrollPending = 0
+            mouseWheelPending = 0
+            lastMouseCell = nil
             selAnchor = nil
             selEnd = nil
             selecting = false
@@ -397,12 +401,28 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         needsDisplay = true
     }
 
+    public override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        ))
+    }
+
     public override func scrollWheel(with event: NSEvent) {
         session.lock.lock()
         let inAlt = session.screen.inAlt
         let sendAlt = session.screen.sendsAlternateScroll
         let appCursor = session.screen.decckm
+        let mode = session.screen.mouseEvent
         session.lock.unlock()
+        if mode != 0 {
+            reportWheel(event)
+            return
+        }
         if inAlt {
             if sendAlt {
                 let bs = max(window?.backingScaleFactor ?? 1, 1)
@@ -442,46 +462,48 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     public override func mouseDown(with event: NSEvent) {
-        if inTitlebarStrip(event) {
-            if event.clickCount >= 2 {
-                window?.performZoom(nil)
-            } else {
-                window?.performDrag(with: event)
-            }
-            return
-        }
-        window?.makeFirstResponder(self)
-        pendingSelect = cellAt(event)
-        selecting = false
-        selAnchor = nil
-        selEnd = nil
-        needsDisplay = true
+        handleMousePress(event, button: 0)
+    }
+
+    public override func rightMouseDown(with event: NSEvent) {
+        handleMousePress(event, button: 2)
+    }
+
+    public override func otherMouseDown(with event: NSEvent) {
+        handleMousePress(event, button: event.buttonNumber == 2 ? 1 : nil)
     }
 
     public override func mouseDragged(with event: NSEvent) {
-        let cell = cellAt(event)
-        if let pending = pendingSelect, (cell.x != pending.x || cell.y != pending.y) {
-            selecting = true
-            selAnchor = pending
-            pendingSelect = nil
-        }
-        if selecting {
-            selEnd = cell
-            needsDisplay = true
-        }
+        handleMouseDrag(event, button: 0)
+    }
+
+    public override func rightMouseDragged(with event: NSEvent) {
+        handleMouseDrag(event, button: 2)
+    }
+
+    public override func otherMouseDragged(with event: NSEvent) {
+        handleMouseDrag(event, button: 1)
     }
 
     public override func mouseUp(with event: NSEvent) {
-        if selecting {
-            selEnd = cellAt(event)
-            if config.copyOnSelect { copy(nil) }
-        } else {
-            selAnchor = nil
-            selEnd = nil
+        handleMouseRelease(event, button: 0)
+    }
+
+    public override func rightMouseUp(with event: NSEvent) {
+        handleMouseRelease(event, button: 2)
+    }
+
+    public override func otherMouseUp(with event: NSEvent) {
+        handleMouseRelease(event, button: 1)
+    }
+
+    public override func mouseMoved(with event: NSEvent) {
+        session.lock.lock()
+        let mode = session.screen.mouseEvent
+        session.lock.unlock()
+        if mode == 1003 {
+            _ = reportMouse(event, action: .motion, button: nil)
         }
-        selecting = false
-        pendingSelect = nil
-        needsDisplay = true
     }
 
     @objc public func copy(_ sender: Any?) {
@@ -507,6 +529,142 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         selAnchor = (0, -sb)
         selEnd = (max(0, cols - 1), max(0, rows - 1))
         needsDisplay = true
+    }
+
+    private func handleMousePress(_ event: NSEvent, button: UInt8?) {
+        if inTitlebarStrip(event) {
+            if event.clickCount >= 2 {
+                window?.performZoom(nil)
+            } else {
+                window?.performDrag(with: event)
+            }
+            return
+        }
+        window?.makeFirstResponder(self)
+        session.lock.lock()
+        let mode = session.screen.mouseEvent
+        session.lock.unlock()
+        if mode != 0 {
+            if event.modifierFlags.contains(.command) { return }
+            _ = reportMouse(event, action: .press, button: button)
+            return
+        }
+        pendingSelect = cellAt(event)
+        selecting = false
+        selAnchor = nil
+        selEnd = nil
+        needsDisplay = true
+    }
+
+    private func handleMouseDrag(_ event: NSEvent, button: UInt8?) {
+        session.lock.lock()
+        let mode = session.screen.mouseEvent
+        session.lock.unlock()
+        if mode != 0 {
+            if event.modifierFlags.contains(.command) { return }
+            _ = reportMouse(event, action: .motion, button: button)
+            return
+        }
+        let cell = cellAt(event)
+        if let pending = pendingSelect, (cell.x != pending.x || cell.y != pending.y) {
+            selecting = true
+            selAnchor = pending
+            pendingSelect = nil
+        }
+        if selecting {
+            selEnd = cell
+            needsDisplay = true
+        }
+    }
+
+    private func handleMouseRelease(_ event: NSEvent, button: UInt8?) {
+        session.lock.lock()
+        let mode = session.screen.mouseEvent
+        session.lock.unlock()
+        if mode != 0 {
+            if !event.modifierFlags.contains(.command) {
+                _ = reportMouse(event, action: .release, button: button)
+            }
+            return
+        }
+        if selecting {
+            selEnd = cellAt(event)
+            if config.copyOnSelect { copy(nil) }
+        } else {
+            selAnchor = nil
+            selEnd = nil
+        }
+        selecting = false
+        pendingSelect = nil
+        needsDisplay = true
+    }
+
+    @discardableResult
+    private func reportMouse(_ event: NSEvent, action: MouseReport.Action, button: UInt8?) -> Bool {
+        session.lock.lock()
+        let mode = session.screen.mouseEvent
+        let sgr = session.screen.mouseSgr
+        let cols = session.screen.cols
+        let rows = session.screen.rows
+        session.lock.unlock()
+        guard mode != 0 else { return false }
+        let cell = viewportCell(event, cols: cols, rows: rows)
+        if action == .motion, lastMouseCell?.x == cell.x, lastMouseCell?.y == cell.y {
+            return false
+        }
+        let flags = event.modifierFlags
+        guard let bytes = MouseReport.packet(
+            mode: mode,
+            sgr: sgr,
+            action: action,
+            button: button,
+            x: cell.x + 1,
+            y: cell.y + 1,
+            shift: flags.contains(.shift),
+            meta: flags.contains(.option),
+            ctrl: flags.contains(.control)
+        ) else { return false }
+        lastMouseCell = cell
+        session.writeToPty(bytes)
+        return true
+    }
+
+    private func reportWheel(_ event: NSEvent) {
+        if event.modifierFlags.contains(.command) { return }
+        let bs = max(window?.backingScaleFactor ?? 1, 1)
+        let chPt = max(CGFloat(cellHPx) / bs, 1)
+        let dy = event.scrollingDeltaY
+        let deltaRows: Double
+        if event.hasPreciseScrollingDeltas {
+            deltaRows = Double(dy / chPt)
+        } else if dy == 0 {
+            return
+        } else {
+            deltaRows = Double(dy > 0 ? max(dy, 1) : min(dy, -1))
+        }
+        mouseWheelPending += deltaRows
+        let n = Int(mouseWheelPending.rounded(.towardZero))
+        if n == 0 { return }
+        mouseWheelPending -= Double(n)
+        let count = min(abs(n), 256)
+        let btn: UInt8 = n > 0 ? 64 : 65
+        for _ in 0..<count {
+            _ = reportMouse(event, action: .press, button: btn)
+        }
+    }
+
+    private func viewportCell(_ event: NSEvent, cols: Int, rows: Int) -> (x: Int, y: Int) {
+        let p = convert(event.locationInWindow, from: nil)
+        let bs = max(window?.backingScaleFactor ?? 1, 1)
+        let sa = safeAreaInsets
+        let cw = CGFloat(cellWPx) / bs
+        let ch = CGFloat(cellHPx) / bs
+        let x = Int(floor((p.x - padPt - sa.left) / cw))
+        let yFromTop = Int(floor((bounds.height - p.y - padPt - sa.top) / ch))
+        return (
+            max(0, min(max(0, cols - 1), x)),
+            max(0, min(max(0, rows - 1), yFromTop))
+        )
     }
 
     private func inTitlebarStrip(_ event: NSEvent) -> Bool {

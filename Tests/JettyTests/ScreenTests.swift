@@ -398,5 +398,16 @@ final class ScreenTests: XCTestCase {
         p.feed("\u{1B}[?1000h")
         XCTAssertEqual(s.mouseEvent, 1000)
         XCTAssertFalse(s.sendsAlternateScroll)
+        p.feed("\u{1B}[?1002;1006h")
+        XCTAssertEqual(s.mouseEvent, 1002)
+        XCTAssertTrue(s.mouseSgr)
+        XCTAssertTrue(s.tracksMouse)
+        p.feed("\u{1B}[?1000l")
+        XCTAssertEqual(s.mouseEvent, 1002)
+        p.feed("\u{1B}[?1002l")
+        XCTAssertEqual(s.mouseEvent, 0)
+        XCTAssertTrue(s.mouseSgr)
+        XCTAssertFalse(s.tracksMouse)
+        XCTAssertTrue(s.sendsAlternateScroll)
     }
 }

@@ -201,10 +201,22 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
                 case 1049:
                     jt_scr_switch_screen_mode(scr, (int)n, set);
                     break;
-                case 9: scr->mouse_event = set ? 9 : 0; break;
-                case 1000: scr->mouse_event = set ? 1000 : 0; break;
-                case 1002: scr->mouse_event = set ? 1002 : 0; break;
-                case 1003: scr->mouse_event = set ? 1003 : 0; break;
+                case 9:
+                    if (set) scr->mouse_event = 9;
+                    else if (scr->mouse_event == 9) scr->mouse_event = 0;
+                    break;
+                case 1000:
+                    if (set) scr->mouse_event = 1000;
+                    else if (scr->mouse_event == 1000) scr->mouse_event = 0;
+                    break;
+                case 1002:
+                    if (set) scr->mouse_event = 1002;
+                    else if (scr->mouse_event == 1002) scr->mouse_event = 0;
+                    break;
+                case 1003:
+                    if (set) scr->mouse_event = 1003;
+                    else if (scr->mouse_event == 1003) scr->mouse_event = 0;
+                    break;
                 case 1004: scr->focus_event = (uint8_t)set; break;
                 case 1006: scr->mouse_sgr = (uint8_t)set; break;
                 case 1007: scr->mouse_alt_scroll = (uint8_t)set; break;

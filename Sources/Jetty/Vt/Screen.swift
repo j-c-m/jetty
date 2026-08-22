@@ -13,6 +13,8 @@ public final class Screen {
     /// History rows the host may pan. Alternate screen never has a viewport into the primary ring.
     public var viewportHistoryCount: Int { inAlt ? 0 : scrollbackCount }
     public var mouseEvent: UInt16 { implPtr.pointee.mouse_event }
+    public var mouseSgr: Bool { implPtr.pointee.mouse_sgr != 0 }
+    public var tracksMouse: Bool { mouseEvent != 0 }
     public var mouseAltScroll: Bool { implPtr.pointee.mouse_alt_scroll != 0 }
     /// Ghostty/xterm 1007: wheel → cursor keys when on alt, no mouse report, and alternate-scroll is on.
     public var sendsAlternateScroll: Bool {
