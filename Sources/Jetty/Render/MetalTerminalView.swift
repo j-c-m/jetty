@@ -812,46 +812,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     private func selectedText(_ s: (x0: Int, y0: Int, x1: Int, y1: Int)) -> String {
-        var a = (x: s.x0, y: s.y0)
-        var b = (x: s.x1, y: s.y1)
-        if a.y > b.y || (a.y == b.y && a.x > b.x) { swap(&a, &b) }
-        let sb = session.screen.viewportHistoryCount
-        var out = ""
-        var y = a.y
-        while y <= b.y {
-            let liveY = y
-            let row: [CVt.Cell]
-            if liveY < 0 {
-                let hi = sb + liveY
-                row = hi >= 0 ? session.screen.historyRow(hi) : []
-            } else {
-                row = session.screen.row(liveY)
-            }
-            let lo = y == a.y ? a.x : 0
-            let hi = y == b.y ? b.x : row.count - 1
-            if !row.isEmpty {
-                for x in max(0, lo)...min(row.count - 1, hi) {
-                    let wide = row[x].wide
-                    if wide == WIDE_TAIL || wide == WIDE_HEAD { continue }
-                    if (row[x].content & CONTENT_KIND_MASK) == CONTENT_GRAPHEME {
-                        var n: UInt16 = 0
-                        if let cps = jt_grapheme_get(session.screen.implPtr, row[x].contentPayload, &n) {
-                            for i in 0..<Int(n) {
-                                if let u = UnicodeScalar(cps[i]) { out.append(Character(u)) }
-                            }
-                        }
-                        continue
-                    }
-                    let p = row[x].contentPayload
-                    if p == 0 { continue }
-                    if let u = UnicodeScalar(p) { out.append(Character(u)) }
-                }
-            }
-            let wrapped = liveY >= 0 && session.screen.isWrapped(liveY)
-            if y < b.y && !wrapped { out.append("\n") }
-            y += 1
-        }
-        return out
+        session.screen.copySelection(x0: s.x0, y0: s.y0, x1: s.x1, y1: s.y1)
     }
 
     private struct PreeditRun {

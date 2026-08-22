@@ -105,6 +105,7 @@ void jt_scr_clear_history(jt_scr *s);
 void jt_scr_copy_row(const jt_scr *s, int32_t y, Cell *dst, int32_t dst_cols, Cell blank);
 void jt_scr_copy_sb_row(const jt_scr *s, int32_t i, Cell *dst, int32_t dst_cols, Cell blank);
 int32_t jt_scr_sb_len(const jt_scr *s);
+int jt_scr_sb_wrapped(const jt_scr *s, int32_t i);
 
 void jt_scr_mark_dirty(jt_scr *s, int32_t y);
 void jt_scr_wrap_at(jt_scr *s, int32_t y);

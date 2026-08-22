@@ -130,6 +130,59 @@ public final class Screen {
         jt_scr_is_wrapped(implPtr, Int32(y)) != 0
     }
 
+    public func isHistoryWrapped(_ i: Int) -> Bool {
+        jt_scr_sb_wrapped(implPtr, Int32(i)) != 0
+    }
+
+    /// Document Y: live row ≥ 0, history row = `i - viewportHistoryCount`.
+    public func isDocumentWrapped(_ liveY: Int) -> Bool {
+        if liveY >= 0 { return isWrapped(liveY) }
+        let hi = viewportHistoryCount + liveY
+        return hi >= 0 && isHistoryWrapped(hi)
+    }
+
+    public func copySelection(x0: Int, y0: Int, x1: Int, y1: Int) -> String {
+        var a = (x: x0, y: y0)
+        var b = (x: x1, y: y1)
+        if a.y > b.y || (a.y == b.y && a.x > b.x) { swap(&a, &b) }
+        let sb = viewportHistoryCount
+        var out = ""
+        var y = a.y
+        while y <= b.y {
+            let liveY = y
+            let row: [Cell]
+            if liveY < 0 {
+                let hi = sb + liveY
+                row = hi >= 0 ? historyRow(hi) : []
+            } else {
+                row = self.row(liveY)
+            }
+            let lo = y == a.y ? a.x : 0
+            let hi = y == b.y ? b.x : row.count - 1
+            if !row.isEmpty {
+                for x in max(0, lo)...min(row.count - 1, hi) {
+                    let wide = row[x].wide
+                    if wide == WIDE_TAIL || wide == WIDE_HEAD { continue }
+                    if (row[x].content & CONTENT_KIND_MASK) == CONTENT_GRAPHEME {
+                        var n: UInt16 = 0
+                        if let cps = jt_grapheme_get(implPtr, row[x].contentPayload, &n) {
+                            for i in 0..<Int(n) {
+                                if let u = UnicodeScalar(cps[i]) { out.append(Character(u)) }
+                            }
+                        }
+                        continue
+                    }
+                    let p = row[x].contentPayload
+                    if p == 0 { continue }
+                    if let u = UnicodeScalar(p) { out.append(Character(u)) }
+                }
+            }
+            if y < b.y && !isDocumentWrapped(liveY) { out.append("\n") }
+            y += 1
+        }
+        return out
+    }
+
     public func row(_ y: Int) -> [Cell] {
         var out = [Cell](repeating: .empty, count: cols)
         let blank = spaceBlank

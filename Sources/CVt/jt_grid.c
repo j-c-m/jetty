@@ -899,6 +899,11 @@ void jt_scr_copy_row(const jt_scr *s, int32_t y, Cell *dst, int32_t dst_cols, Ce
     for (int32_t x = n; x < dst_cols; x++) dst[x] = blank;
 }
 
+int jt_scr_sb_wrapped(const jt_scr *s, int32_t i) {
+    if (!s || !s->sb_wrap || i < 0 || i >= s->sb_len) return 0;
+    return s->sb_wrap[sb_phys(s, i)] != 0;
+}
+
 void jt_scr_copy_sb_row(const jt_scr *s, int32_t i, Cell *dst, int32_t dst_cols, Cell blank) {
     if (!dst || dst_cols <= 0) return;
     if (!s || !s->sb_idx || !s->primary.grid || i < 0 || i >= s->sb_len) {

@@ -94,6 +94,18 @@ final class ScreenTests: XCTestCase {
         XCTAssertEqual(s.glyph(0, 1), UInt32(UInt8(ascii: "G")))
     }
 
+    func testCopyJoinsHistoryWrap() {
+        let s = Screen(cols: 4, rows: 2, scrollbackCapRows: 4)
+        let p = Parser()
+        p.screen = s
+        p.feed("ABCDEFGHIJKL")
+        XCTAssertEqual(s.scrollbackCount, 1)
+        XCTAssertTrue(s.isHistoryWrapped(0))
+        XCTAssertTrue(s.isWrapped(0))
+        XCTAssertEqual(s.copySelection(x0: 0, y0: -1, x1: 3, y1: 0), "ABCDEFGH")
+        XCTAssertEqual(s.copySelection(x0: 0, y0: -1, x1: 3, y1: 1), "ABCDEFGHIJKL")
+    }
+
     func testLazyEraseUnreadRowIsBlank() {
         let s = Screen(cols: 4, rows: 2, scrollbackCapRows: 4)
         s.printRun("AAAA")
