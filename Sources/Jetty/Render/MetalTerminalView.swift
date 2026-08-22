@@ -65,6 +65,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     public override var acceptsFirstResponder: Bool { true }
+    /// Grid clicks select. Titlebar strip still moves the window via `performDrag`.
     public override var mouseDownCanMoveWindow: Bool { false }
 
     public override func viewDidMoveToWindow() {
@@ -392,6 +393,14 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     public override func mouseDown(with event: NSEvent) {
+        if inTitlebarStrip(event) {
+            if event.clickCount >= 2 {
+                window?.performZoom(nil)
+            } else {
+                window?.performDrag(with: event)
+            }
+            return
+        }
         window?.makeFirstResponder(self)
         pendingSelect = cellAt(event)
         selecting = false
@@ -449,6 +458,11 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         selAnchor = (0, -sb)
         selEnd = (max(0, cols - 1), max(0, rows - 1))
         needsDisplay = true
+    }
+
+    private func inTitlebarStrip(_ event: NSEvent) -> Bool {
+        guard let window, !window.styleMask.contains(.fullScreen) else { return false }
+        return event.locationInWindow.y >= window.contentLayoutRect.maxY
     }
 
     private func cellAt(_ event: NSEvent) -> (x: Int, y: Int) {
