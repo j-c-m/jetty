@@ -62,6 +62,14 @@ public final class Screen {
         set { implPtr.pointee.cursor_visible = newValue ? 1 : 0 }
     }
     public var decckm: Bool { implPtr.pointee.decckm != 0 }
+    public var syncOutput: Bool {
+        get { implPtr.pointee.sync_output != 0 }
+        set { implPtr.pointee.sync_output = newValue ? 1 : 0 }
+    }
+    public var cursorStyle: UInt8 {
+        get { implPtr.pointee.cursor_style }
+        set { implPtr.pointee.cursor_style = newValue }
+    }
 
     public var penFG: UInt32 {
         get { implPtr.pointee.pen.fg }

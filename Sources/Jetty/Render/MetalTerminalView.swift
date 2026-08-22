@@ -36,6 +36,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var mouseHostSelect = false
     private var markedText = NSMutableAttributedString()
     private var imeInsert = false
+    private var syncHoldStart: UInt64 = 0
+    private var syncTimeoutWork: DispatchWorkItem?
 
     public init(session: TerminalSession, config: AppConfig, device: MTLDevice, backingScale: CGFloat) {
         self.session = session
@@ -98,6 +100,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
 
     public func draw(in view: MTKView) {
         guard let renderer, let device else { return }
+        if skipSyncPresent() { return }
         session.lockDemand()
         let cols = session.screen.cols
         let rows = session.screen.rows
@@ -375,6 +378,40 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             unmarkText()
         }
         return super.resignFirstResponder()
+    }
+
+    private func skipSyncPresent() -> Bool {
+        session.lock.lock()
+        let sync = session.screen.syncOutput
+        session.lock.unlock()
+        let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        if Dec2026.skipPresent(sync: sync, holdStart: syncHoldStart, now: now) {
+            if syncHoldStart == 0 { syncHoldStart = now }
+            armSyncTimeout()
+            return true
+        }
+        if sync {
+            session.lock.lock()
+            session.screen.syncOutput = false
+            session.lock.unlock()
+        }
+        syncHoldStart = 0
+        syncTimeoutWork?.cancel()
+        syncTimeoutWork = nil
+        return false
+    }
+
+    private func armSyncTimeout() {
+        if syncTimeoutWork != nil { return }
+        let work = DispatchWorkItem { [weak self] in
+            self?.syncTimeoutWork = nil
+            self?.needsDisplay = true
+        }
+        syncTimeoutWork = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(Int(Dec2026.timeoutNs / 1_000_000) + 50),
+            execute: work
+        )
     }
 
     private func pinLiveBottom() {

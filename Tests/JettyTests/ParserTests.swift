@@ -84,6 +84,17 @@ final class ParserTests: XCTestCase {
         p.feed("\u{1B}[?2026l")
         p.feed("\u{1B}[?2026$p")
         XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?2026;2$y")
+        XCTAssertFalse(s.syncOutput)
+        p.feed("\u{1B}[?2026h")
+        XCTAssertTrue(s.syncOutput)
+    }
+
+    func testDec2026HoldTimeout() {
+        XCTAssertTrue(Dec2026.skipPresent(sync: true, holdStart: 0, now: 1))
+        XCTAssertTrue(Dec2026.skipPresent(sync: true, holdStart: 10, now: 10))
+        XCTAssertTrue(Dec2026.skipPresent(sync: true, holdStart: 10, now: 10 + Dec2026.timeoutNs - 1))
+        XCTAssertFalse(Dec2026.skipPresent(sync: true, holdStart: 10, now: 10 + Dec2026.timeoutNs))
+        XCTAssertFalse(Dec2026.skipPresent(sync: false, holdStart: 10, now: 10))
     }
 
     func testDECRQMDefaultsAndPermanent() {
