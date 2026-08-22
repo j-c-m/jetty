@@ -107,9 +107,14 @@ static void fill_cells(Cell *row, int32_t n, Cell b) {
 #endif
 }
 
+static void cell_retain(jt_scr *s, const Cell *c);
+static void cell_release(jt_scr *s, Cell *c);
+static void release_cells(jt_scr *s, Cell *row, int32_t n);
+
 /* ASCII bytes → 16-byte cells. Last u32 is attrs (low half) + extra (high half). */
-static void store_ascii_cells(Cell *dest, const uint8_t *p, size_t n,
+static void store_ascii_cells(jt_scr *s, Cell *dest, const uint8_t *p, size_t n,
                               uint32_t fg, uint32_t bg, uint16_t attrs, uint16_t extra) {
+    release_cells(s, dest, (int32_t)n);
 #if defined(__ARM_NEON)
     uint32x4_t vfg = vdupq_n_u32(fg);
     uint32x4_t vbg = vdupq_n_u32(bg);
@@ -175,6 +180,33 @@ static void store_ascii_cells(Cell *dest, const uint8_t *p, size_t n,
         dest[k].extra = extra;
     }
 #endif
+    if (extra) {
+        for (size_t i = 0; i < n; i++) jt_rare_retain(s, extra);
+    }
+}
+
+static void cell_retain(jt_scr *s, const Cell *c) {
+    if (!s || !c) return;
+    if ((c->content & CONTENT_KIND_MASK) == CONTENT_GRAPHEME)
+        jt_grapheme_retain(s, c->content & CONTENT_PAYLOAD);
+    if (c->extra) jt_rare_retain(s, c->extra);
+}
+
+static void cell_release(jt_scr *s, Cell *c) {
+    if (!s || !c) return;
+    if ((c->content & CONTENT_KIND_MASK) == CONTENT_GRAPHEME)
+        jt_grapheme_release(s, c->content & CONTENT_PAYLOAD);
+    if (c->extra) jt_rare_release(s, c->extra);
+}
+
+static void release_cells(jt_scr *s, Cell *row, int32_t n) {
+    for (int32_t i = 0; i < n; i++) cell_release(s, &row[i]);
+}
+
+static void stamp_cell(jt_scr *s, Cell *dst, Cell neu) {
+    cell_release(s, dst);
+    *dst = neu;
+    cell_retain(s, dst);
 }
 
 static int row_erased(const jt_scr *s, int32_t y) {
@@ -200,6 +232,7 @@ static void mark_all(jt_scr *s) {
 }
 
 static void fill_row(jt_scr *s, int32_t y) {
+    if (!row_erased(s, y)) release_cells(s, row_at(s, y), s->cols);
     *wrap_at(s, y) = 0;
     *erased_at(s, y) = 1;
     mark_row(s, y);
@@ -319,7 +352,7 @@ static int ensure_alt(jt_scr *s) {
     return buf_init(&s->alt, s->cols, s->rows, 0, blank_cell(s));
 }
 
-static void fix_wide_row(Cell *row, int32_t cols, Cell blank) {
+static void fix_wide_row(jt_scr *s, Cell *row, int32_t cols, Cell blank) {
     int32_t x = 0;
     while (x < cols) {
         uint32_t w = row[x].content & CONTENT_WIDE_MASK;
@@ -328,13 +361,13 @@ static void fix_wide_row(Cell *row, int32_t cols, Cell blank) {
                 x += 2;
                 continue;
             }
-            row[x] = blank;
-            if (x + 1 < cols) row[x + 1] = blank;
+            stamp_cell(s, &row[x], blank);
+            if (x + 1 < cols) stamp_cell(s, &row[x + 1], blank);
             x += 2;
             continue;
         }
         if (w == WIDE_TAIL) {
-            row[x] = blank;
+            stamp_cell(s, &row[x], blank);
             x++;
             continue;
         }
@@ -458,19 +491,16 @@ static void consume_wrap(jt_scr *s) {
     jt_scr_index(s);
 }
 
-static void write_one(jt_scr *s, uint32_t scalar, uint32_t wide) {
+static void place_graphic(jt_scr *s, uint32_t content) {
     jt_buf *b = s->active;
-    consume_wrap(s);
-    if (s->insert_mode) {
-        jt_scr_ich(s, wide == WIDE_FULL ? 2 : 1);
-    }
     materialize_row(s, b->cy);
-    Cell *cell = row_at(s, b->cy) + b->cx;
-    cell->content = content_scalar(scalar, wide);
-    cell->fg = s->pen.fg;
-    cell->bg = s->pen.bg;
-    cell->attrs = s->pen.attrs;
-    cell->extra = s->pen.extra;
+    Cell neu;
+    neu.content = content;
+    neu.fg = s->pen.fg;
+    neu.bg = s->pen.bg;
+    neu.attrs = s->pen.attrs;
+    neu.extra = s->pen.extra;
+    stamp_cell(s, row_at(s, b->cy) + b->cx, neu);
     mark_row(s, b->cy);
     if (b->cx + 1 >= s->cols) {
         b->cx = s->cols - 1;
@@ -480,8 +510,72 @@ static void write_one(jt_scr *s, uint32_t scalar, uint32_t wide) {
     }
 }
 
+static void attach_mark(jt_scr *s, uint32_t mark) {
+    jt_buf *b = s->active;
+    int32_t y = b->cy;
+    int32_t x;
+    if (b->pending_wrap) x = s->cols - 1;
+    else if (b->cx > 0) x = b->cx - 1;
+    else return;
+    materialize_row(s, y);
+    Cell *row = row_at(s, y);
+    if ((row[x].content & CONTENT_WIDE_MASK) == WIDE_TAIL && x > 0) x--;
+    if ((row[x].content & CONTENT_WIDE_MASK) == WIDE_HEAD) return;
+    uint32_t cps[16];
+    uint16_t n = 0;
+    uint32_t wide = row[x].content & CONTENT_WIDE_MASK;
+    if ((row[x].content & CONTENT_KIND_MASK) == CONTENT_GRAPHEME) {
+        uint16_t gn = 0;
+        const uint32_t *old = jt_grapheme_get(s, row[x].content & CONTENT_PAYLOAD, &gn);
+        if (!old || gn == 0 || gn >= 16) return;
+        memcpy(cps, old, (size_t)gn * sizeof(uint32_t));
+        n = gn;
+    } else {
+        cps[0] = row[x].content & CONTENT_PAYLOAD;
+        n = 1;
+    }
+    cps[n++] = mark;
+    uint32_t id = jt_grapheme_intern(s, cps, n);
+    if (!id) return;
+    Cell neu = row[x];
+    neu.content = content_grapheme(id, wide);
+    stamp_cell(s, &row[x], neu);
+    mark_row(s, y);
+}
+
+static void print_wide(jt_scr *s, uint32_t scalar) {
+    jt_buf *b = s->active;
+    consume_wrap(s);
+    if (s->insert_mode) jt_scr_ich(s, 2);
+    int32_t room = s->cols - b->cx;
+    if (room < 2) {
+        if (s->auto_wrap) {
+            place_graphic(s, content_scalar(0, WIDE_HEAD));
+            consume_wrap(s);
+            place_graphic(s, content_scalar(scalar, WIDE_FULL));
+            place_graphic(s, content_scalar(0, WIDE_TAIL));
+        } else {
+            place_graphic(s, content_scalar(scalar, WIDE_FULL));
+        }
+        return;
+    }
+    place_graphic(s, content_scalar(scalar, WIDE_FULL));
+    place_graphic(s, content_scalar(0, WIDE_TAIL));
+}
+
 void jt_scr_print_scalar(jt_scr *s, uint32_t scalar) {
-    write_one(s, scalar, WIDE_NARROW);
+    int w = jt_codepoint_width(scalar);
+    if (w == 0) {
+        attach_mark(s, scalar);
+        return;
+    }
+    if (w >= 2) {
+        print_wide(s, scalar);
+        return;
+    }
+    consume_wrap(s);
+    if (s->insert_mode) jt_scr_ich(s, 1);
+    place_graphic(s, content_scalar(scalar, WIDE_NARROW));
 }
 
 void jt_scr_print_run(jt_scr *s, const uint8_t *p, size_t n) {
@@ -505,7 +599,7 @@ void jt_scr_print_run(jt_scr *s, const uint8_t *p, size_t n) {
             materialize_row(s, b->cy);
         }
         Cell *dest = row_at(s, b->cy) + b->cx;
-        store_ascii_cells(dest, p + i, take, s->pen.fg, s->pen.bg, s->pen.attrs, s->pen.extra);
+        store_ascii_cells(s, dest, p + i, take, s->pen.fg, s->pen.bg, s->pen.attrs, s->pen.extra);
         mark_row(s, b->cy);
         i += take;
         if (b->cx + (int32_t)take >= s->cols) {
@@ -523,12 +617,13 @@ void jt_scr_ich(jt_scr *s, int n) {
     materialize_row(s, b->cy);
     Cell *row = row_at(s, b->cy);
     int32_t count = n < (s->cols - b->cx) ? n : (s->cols - b->cx);
+    release_cells(s, row + (s->cols - count), count);
     for (int32_t i = s->cols - 1; i >= b->cx + count; i--) {
         row[i] = row[i - count];
     }
     Cell blank = blank_cell(s);
     for (int32_t i = 0; i < count; i++) row[b->cx + i] = blank;
-    fix_wide_row(row, s->cols, blank);
+    fix_wide_row(s, row, s->cols, blank);
     *wrap_at(s, b->cy) = 0;
     mark_row(s, b->cy);
 }
@@ -539,12 +634,13 @@ void jt_scr_dch(jt_scr *s, int n) {
     materialize_row(s, b->cy);
     Cell *row = row_at(s, b->cy);
     int count = n < (s->cols - b->cx) ? n : (s->cols - b->cx);
+    release_cells(s, row + b->cx, count);
     for (int i = b->cx; i < s->cols - count; i++) {
         row[i] = row[i + count];
     }
     Cell blank = blank_cell(s);
     for (int i = s->cols - count; i < s->cols; i++) row[i] = blank;
-    fix_wide_row(row, s->cols, blank);
+    fix_wide_row(s, row, s->cols, blank);
     *wrap_at(s, b->cy) = 0;
     mark_row(s, b->cy);
 }
@@ -556,8 +652,8 @@ void jt_scr_ech(jt_scr *s, int n) {
     if (count < 0) count = 0;
     materialize_row(s, b->cy);
     Cell *row = row_at(s, b->cy) + b->cx;
-    for (int i = 0; i < count; i++) row[i] = blank;
-    fix_wide_row(row_at(s, b->cy), s->cols, blank);
+    for (int i = 0; i < count; i++) stamp_cell(s, &row[i], blank);
+    fix_wide_row(s, row_at(s, b->cy), s->cols, blank);
     mark_row(s, b->cy);
 }
 
@@ -592,6 +688,7 @@ static void fill_rect(jt_scr *s, int x1, int y1, int x2, int y2, int clear_wrap)
             *erased_at(s, y) = 1;
         } else {
             materialize_row(s, y);
+            release_cells(s, row_at(s, y) + xa, xb - xa + 1);
             fill_cells(row_at(s, y) + xa, xb - xa + 1, blank);
         }
         if (clear_wrap && xa == 0 && xb == s->cols - 1) *wrap_at(s, y) = 0;
@@ -939,6 +1036,7 @@ void jt_scr_init(jt_scr *s, int32_t cols, int32_t rows, int32_t sb_cap) {
     s->pen.fg = COLOR_DEFAULT;
     s->pen.bg = COLOR_DEFAULT;
     jt_defaults_reset(s);
+    jt_pools_init(s);
     int32_t cap = sb_cap < 0 ? 0 : sb_cap;
     if (!buf_init(&s->primary, cols, rows, cap, blank_cell(s))) return;
     s->active = &s->primary;
@@ -955,6 +1053,7 @@ void jt_scr_deinit(jt_scr *s) {
     s->sb_free = NULL;
     s->sb_wrap = NULL;
     s->active = NULL;
+    jt_pools_deinit(s);
 }
 
 void jt_scr_ris(jt_scr *s) {
@@ -962,8 +1061,9 @@ void jt_scr_ris(jt_scr *s) {
     s->in_alt = 0;
     s->pen.fg = COLOR_DEFAULT;
     s->pen.bg = COLOR_DEFAULT;
-    s->pen.ul_color = 0;
+    s->pen.ul_color = COLOR_DEFAULT;
     s->pen.attrs = 0;
+    if (s->pen.extra) jt_rare_release(s, s->pen.extra);
     s->pen.extra = 0;
     s->g0 = 0;
     s->g1 = 1;

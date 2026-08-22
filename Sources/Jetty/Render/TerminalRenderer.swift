@@ -95,6 +95,7 @@ public final class TerminalRenderer {
         enc.setVertexBuffer(instanceBuffers[instanceSlot], offset: 0, index: 0)
         enc.setVertexBuffer(uniformBuffers[uniformSlot], offset: 0, index: 1)
         enc.setFragmentTexture(atlas.texture, index: 0)
+        enc.setFragmentTexture(atlas.colorTexture, index: 1)
         enc.setFragmentSamplerState(sampler, index: 0)
         if instanceCount > 0 {
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: instanceCount)
@@ -132,6 +133,7 @@ public final class TerminalRenderer {
         float4 fg;
         float4 bg;
         float hasGlyph;
+        float atlas;
     };
 
     constant float2 corners[6] = {
@@ -156,12 +158,19 @@ public final class TerminalRenderer {
         o.fg = c.fg;
         o.bg = c.bg;
         o.hasGlyph = (abs(c.uv.z - c.uv.x) > 1e-6 && abs(c.uv.w - c.uv.y) > 1e-6) ? 1.0 : 0.0;
+        o.atlas = c.atlas;
         return o;
     }
 
     fragment float4 cell_fragment(VertexOut in [[stage_in]],
                                   texture2d<float> atlas [[texture(0)]],
+                                  texture2d<float> colorAtlas [[texture(1)]],
                                   sampler samp [[sampler(0)]]) {
+        if (in.atlas > 0.5 && in.hasGlyph > 0.5) {
+            float4 c = colorAtlas.sample(samp, in.uv);
+            float3 rgb = c.rgb + in.bg.rgb * (1.0 - saturate(c.a));
+            return float4(rgb, 1.0);
+        }
         float a = 0.0;
         if (in.hasGlyph > 0.5) {
             a = atlas.sample(samp, in.uv).r;

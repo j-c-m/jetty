@@ -28,17 +28,18 @@ static void set_ul(jt_pen *pen, uint16_t style) {
     pen->attrs = (uint16_t)((pen->attrs & (uint16_t)~ATTR_UL_MASK) | (style & ATTR_UL_MASK));
 }
 
-static void reset_pen(jt_pen *pen) {
-    pen->fg = COLOR_DEFAULT;
-    pen->bg = COLOR_DEFAULT;
-    pen->ul_color = COLOR_DEFAULT;
-    pen->attrs = 0;
+static void reset_pen(jt_scr *s) {
+    s->pen.fg = COLOR_DEFAULT;
+    s->pen.bg = COLOR_DEFAULT;
+    s->pen.ul_color = COLOR_DEFAULT;
+    s->pen.attrs = 0;
+    jt_pen_refresh_extra(s);
 }
 
 void jt_sgr_apply(jt_scr *s, const uint16_t *p, int n, uint32_t seps) {
     if (!s) return;
     if (n <= 0) {
-        reset_pen(&s->pen);
+        reset_pen(s);
         return;
     }
     int i = 0;
@@ -47,7 +48,7 @@ void jt_sgr_apply(jt_scr *s, const uint16_t *p, int n, uint32_t seps) {
         int colon = colon_after(seps, i);
         switch (v) {
         case 0:
-            reset_pen(&s->pen);
+            reset_pen(s);
             break;
         case 1:
             s->pen.attrs |= ATTR_BOLD;
@@ -127,6 +128,7 @@ void jt_sgr_apply(jt_scr *s, const uint16_t *p, int n, uint32_t seps) {
             uint32_t c = s->pen.ul_color;
             i = parse_color(p, n, seps, i, &c) - 1;
             s->pen.ul_color = c;
+            jt_pen_refresh_extra(s);
             break;
         }
         case 39:
@@ -137,6 +139,7 @@ void jt_sgr_apply(jt_scr *s, const uint16_t *p, int n, uint32_t seps) {
             break;
         case 59:
             s->pen.ul_color = COLOR_DEFAULT;
+            jt_pen_refresh_extra(s);
             break;
         case 53:
             s->pen.attrs |= ATTR_OVERLINE;

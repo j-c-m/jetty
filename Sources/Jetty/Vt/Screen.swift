@@ -17,6 +17,10 @@ public final class Screen {
     public var tracksMouse: Bool { mouseEvent != 0 }
     public var bracketedPaste: Bool { implPtr.pointee.bracketed_paste != 0 }
     public var focusEvent: Bool { implPtr.pointee.focus_event != 0 }
+
+    public func codepointWidth(_ scalar: UInt32) -> Int {
+        Int(jt_codepoint_width(scalar))
+    }
     public var mouseAltScroll: Bool { implPtr.pointee.mouse_alt_scroll != 0 }
     /// Ghostty/xterm 1007: wheel → cursor keys when on alt, no mouse report, and alternate-scroll is on.
     public var sendsAlternateScroll: Bool {

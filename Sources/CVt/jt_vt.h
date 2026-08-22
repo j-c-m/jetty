@@ -59,7 +59,17 @@ typedef struct jt_scr {
     uint8_t reverse_video, cursor_visible, cursor_blink;
     uint8_t cursor_style;
     uint8_t decckm, deckpam;
+    void *gp;
+    void *rp;
+    char *osc8_id;
+    char *osc8_uri;
 } jt_scr;
+
+typedef struct jt_rare {
+    const char *osc8_id;
+    const char *uri;
+    uint32_t ul_color;
+} jt_rare;
 
 void jt_scr_init(jt_scr *s, int32_t cols, int32_t rows, int32_t sb_cap);
 void jt_scr_deinit(jt_scr *s);
@@ -102,6 +112,19 @@ int jt_scr_is_wrapped(const jt_scr *s, int32_t y);
 Cell *jt_scr_row(jt_scr *s, int32_t y);
 void jt_scr_ris(jt_scr *s);
 void jt_sgr_apply(jt_scr *s, const uint16_t *p, int n, uint32_t seps);
+
+int jt_codepoint_width(uint32_t cp);
+uint32_t jt_grapheme_intern(jt_scr *s, const uint32_t *cps, uint16_t n);
+const uint32_t *jt_grapheme_get(const jt_scr *s, uint32_t id, uint16_t *n);
+void jt_grapheme_retain(jt_scr *s, uint32_t id);
+void jt_grapheme_release(jt_scr *s, uint32_t id);
+uint16_t jt_rare_intern(jt_scr *s, const char *osc8_id, const char *uri, uint32_t ul);
+int jt_rare_get(const jt_scr *s, uint16_t id, jt_rare *out);
+void jt_rare_retain(jt_scr *s, uint16_t id);
+void jt_rare_release(jt_scr *s, uint16_t id);
+void jt_pen_refresh_extra(jt_scr *s);
+void jt_pools_init(jt_scr *s);
+void jt_pools_deinit(jt_scr *s);
 
 enum {
     JT_ST_GROUND = 0,

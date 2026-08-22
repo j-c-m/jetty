@@ -73,6 +73,10 @@ static inline uint32_t content_scalar(uint32_t scalar, uint32_t wide) {
     return (scalar & CONTENT_PAYLOAD) | (wide & CONTENT_WIDE_MASK);
 }
 
+static inline uint32_t content_grapheme(uint32_t id, uint32_t wide) {
+    return (id & CONTENT_PAYLOAD) | CONTENT_GRAPHEME | (wide & CONTENT_WIDE_MASK);
+}
+
 static inline size_t jt_cell_extra_offset(void) { return offsetof(Cell, extra); }
 
 #ifdef __cplusplus

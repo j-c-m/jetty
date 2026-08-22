@@ -173,6 +173,18 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 }
             }
         }
+        var graphemes: [UInt32: [UInt32]] = [:]
+        for cell in paint {
+            if (cell.content & CONTENT_KIND_MASK) == CONTENT_GRAPHEME {
+                let id = cell.contentPayload
+                if graphemes[id] == nil {
+                    var n: UInt16 = 0
+                    if let cps = jt_grapheme_get(session.screen.implPtr, id, &n), n > 0 {
+                        graphemes[id] = Array(UnsafeBufferPointer(start: cps, count: Int(n)))
+                    }
+                }
+            }
+        }
         session.unlockDemand()
         applyChrome(defBG, reverse: rev)
 
@@ -216,6 +228,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                             cursorY: curY,
                             cursorVisible: cursorOn,
                             selection: sel,
+                            graphemes: graphemes,
                             dest: inst
                         )
                         if renderer.atlas.packGeneration == gen { break }
@@ -762,6 +775,17 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             let hi = y == b.y ? b.x : row.count - 1
             if !row.isEmpty {
                 for x in max(0, lo)...min(row.count - 1, hi) {
+                    let wide = row[x].wide
+                    if wide == WIDE_TAIL || wide == WIDE_HEAD { continue }
+                    if (row[x].content & CONTENT_KIND_MASK) == CONTENT_GRAPHEME {
+                        var n: UInt16 = 0
+                        if let cps = jt_grapheme_get(session.screen.implPtr, row[x].contentPayload, &n) {
+                            for i in 0..<Int(n) {
+                                if let u = UnicodeScalar(cps[i]) { out.append(Character(u)) }
+                            }
+                        }
+                        continue
+                    }
                     let p = row[x].contentPayload
                     if p == 0 { continue }
                     if let u = UnicodeScalar(p) { out.append(Character(u)) }

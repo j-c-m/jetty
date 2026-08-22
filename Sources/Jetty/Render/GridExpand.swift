@@ -52,6 +52,7 @@ public enum GridExpand {
         cursorY: Int,
         cursorVisible: Bool,
         selection: (x0: Int, y0: Int, x1: Int, y1: Int)?,
+        graphemes: [UInt32: [UInt32]] = [:],
         dest: UnsafeMutablePointer<CellInstance>
     ) {
         var i = 0
@@ -75,18 +76,34 @@ public enum GridExpand {
                     fg = fg * (2.0 / 3.0)
                 }
                 let wide = cell.content & CONTENT_WIDE_MASK
-                var uv = GlyphAtlas.UV.empty
-                if wide != WIDE_TAIL && wide != WIDE_HEAD {
+                var g = GlyphAtlas.Glyph.empty
+                var sx = cellW
+                var sy = cellH
+                if wide == WIDE_TAIL {
+                    sx = 0
+                    sy = 0
+                } else if wide != WIDE_HEAD {
                     let bold = (cell.attrs & UInt16(ATTR_BOLD)) != 0
                     let italic = (cell.attrs & UInt16(ATTR_ITALIC)) != 0
-                    uv = atlas.uv(scalar: cell.contentPayload, bold: bold, italic: italic)
+                    let isWide = wide == WIDE_FULL && x + 1 < cols
+                    if isWide { sx = cellW * 2 }
+                    if (cell.content & CONTENT_KIND_MASK) == CONTENT_GRAPHEME,
+                       let cps = graphemes[cell.contentPayload] {
+                        g = atlas.glyph(
+                            scalar: cps.first ?? 0, bold: bold, italic: italic, wide: isWide, cluster: cps
+                        )
+                    } else {
+                        g = atlas.glyph(
+                            scalar: cell.contentPayload, bold: bold, italic: italic, wide: isWide
+                        )
+                    }
                 }
                 dest[i] = CellInstance(
-                    ox: ox, oy: oy, sx: cellW, sy: cellH,
-                    u0: uv.u0, v0: uv.v0, u1: uv.u1, v1: uv.v1,
+                    ox: ox, oy: oy, sx: sx, sy: sy,
+                    u0: g.uv.u0, v0: g.uv.v0, u1: g.uv.u1, v1: g.uv.v1,
                     fr: fg.x, fg: fg.y, fb: fg.z, fa: 1,
                     br: bg.x, bg: bg.y, bb: bg.z, ba: 1,
-                    atlas: 0, _pad0: 0, _pad1: 0, _pad2: 0
+                    atlas: g.color ? 1 : 0, _pad0: 0, _pad1: 0, _pad2: 0
                 )
                 i += 1
                 x += 1
