@@ -519,7 +519,18 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
 
     @objc public func paste(_ sender: Any?) {
         guard let str = NSPasteboard.general.string(forType: .string) else { return }
-        session.writeToPty(Array(str.utf8))
+        session.lock.lock()
+        let bracketed = session.screen.bracketedPaste
+        session.lock.unlock()
+        session.writeToPty(Clipboard.pasteBytes(Array(str.utf8), bracketed: bracketed))
+    }
+
+    public func reportFocus(gained: Bool) {
+        session.lock.lock()
+        let on = session.screen.focusEvent
+        session.lock.unlock()
+        guard on else { return }
+        session.writeToPty(Clipboard.focusBytes(gained: gained))
     }
 
     @objc public override func selectAll(_ sender: Any?) {

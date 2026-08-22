@@ -129,6 +129,29 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?1049;1$y")
     }
 
+    func testBracketedPasteAndFocusModes() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        XCTAssertFalse(s.bracketedPaste)
+        XCTAssertFalse(s.focusEvent)
+        p.feed("\u{1B}[?2004;1004h")
+        XCTAssertTrue(s.bracketedPaste)
+        XCTAssertTrue(s.focusEvent)
+        p.feed("\u{1B}[?2004$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?2004;1$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?1004$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?1004;1$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?2004l")
+        XCTAssertFalse(s.bracketedPaste)
+        XCTAssertTrue(s.focusEvent)
+        p.feed("\u{1B}c")
+        XCTAssertFalse(s.bracketedPaste)
+        XCTAssertFalse(s.focusEvent)
+    }
+
     func testUTF8Scalar() {
         let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
         let p = Parser()

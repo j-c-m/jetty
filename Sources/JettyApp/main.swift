@@ -30,6 +30,14 @@ final class TermWindow: NSObject, NSWindowDelegate {
         window.delegate = self
     }
 
+    func windowDidBecomeKey(_ notification: Notification) {
+        view.reportFocus(gained: true)
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        view.reportFocus(gained: false)
+    }
+
     func windowWillClose(_ notification: Notification) {
         session.stop()
         window.delegate = nil
