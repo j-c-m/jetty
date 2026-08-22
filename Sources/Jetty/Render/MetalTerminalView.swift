@@ -39,6 +39,13 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var syncHoldStart: UInt64 = 0
     private var syncTimeoutWork: DispatchWorkItem?
     private var cursorBlinkWork: DispatchWorkItem?
+    private var liveDirty = ContiguousArray<UInt8>()
+    private var skipLast: DirtySkip.Key?
+    private var rowDocId: [Int] = []
+    private var lastCursorPaintY: Int?
+    private var lastBlinkOn = true
+    private var lastDamageGen: UInt32 = 0
+    private var forceFullRebuild = true
 
     public init(session: TerminalSession, config: AppConfig, device: MTLDevice, backingScale: CGFloat) {
         self.session = session
@@ -181,6 +188,13 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 }
             }
         }
+        if liveDirty.count != rows {
+            liveDirty = ContiguousArray(repeating: 0, count: max(rows, 0))
+        }
+        let damageGen = liveDirty.withUnsafeMutableBufferPointer { buf -> UInt32 in
+            guard let p = buf.baseAddress, rows > 0 else { return 0 }
+            return session.screen.takeDirty(into: p, count: rows)
+        }
         var graphemes: [UInt32: [UInt32]] = [:]
         var ulColors: [UInt16: UInt32] = [:]
         for cell in paint {
@@ -220,11 +234,55 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let cursorOn = vis && focused && blockStyle && blinkOn && curY >= 0 && curY < paintRows
         if vis, blinks, focused { armCursorBlink() }
         let preedit = preeditRuns()
-        var ulSlots = 0
-        for run in preedit { ulSlots += run.width }
         let n = cellCount
-        var drawn = n
-        if n > 0, let inst = renderer.prepareInstances(count: n + ulSlots) {
+        let palSig = palPacked.withUnsafeBufferPointer { buf -> UInt64 in
+            guard let p = buf.baseAddress else { return 0 }
+            return DirtySkip.paletteSignature(packed: p, defFG: defFG, defBG: defBG, reverse: rev)
+        }
+        var skipKey = DirtySkip.Key(
+            integerRow: start,
+            extra: extra,
+            contentOffset: abs(visRows) >= 1e-6,
+            inAlt: inAlt,
+            cols: cols,
+            rows: rows,
+            cellW: cellWPx,
+            cellH: cellHPx,
+            originX: insetLeftPx,
+            originY: insetTopPx,
+            packGeneration: renderer.atlas.packGeneration,
+            reverse: rev,
+            paletteSignature: palSig,
+            selection: sel.map { DirtySkip.Sel(x0: $0.x0, y0: $0.y0, x1: $0.x1, y1: $0.y1) },
+            searchActive: false,
+            preedit: !preedit.isEmpty
+        )
+        var skipExpand: [Bool]?
+        if !forceFullRebuild,
+           !DirtySkip.fullRebuild(now: skipKey, last: skipLast)
+        {
+            let blinkPhaseChanged = blinkOn != lastBlinkOn
+            let cursorPaintY = (vis && curY >= 0 && curY < paintRows) ? curY : nil
+            let lastCur = lastCursorPaintY.flatMap { y in (y >= 0 && y < paintRows) ? y : nil }
+            skipExpand = liveDirty.withUnsafeBufferPointer { buf in
+                guard let dp = buf.baseAddress else { return nil }
+                return DirtySkip.expandRows(
+                    paintRows: paintRows,
+                    liveOrigin: liveOrigin,
+                    liveRows: rows,
+                    dirty: dp,
+                    dirtyCount: buf.count,
+                    liveGenChanged: damageGen != lastDamageGen,
+                    cursorPaintY: cursorPaintY,
+                    lastCursorPaintY: lastCur,
+                    blinkPhaseChanged: blinkPhaseChanged,
+                    rowHasBlink: { y in self.paintRowHasBlink(y, cols: cols) },
+                    docRow: { y in start + y },
+                    lastDocId: self.rowDocId
+                )
+            }
+        }
+        if n > 0, let inst = renderer.prepareInstances(count: n) {
             rgb.withUnsafeMutableBufferPointer { pal in
                 palPacked.withUnsafeBufferPointer { packed in
                     guard let pp = packed.baseAddress, let dp = pal.baseAddress else { return }
@@ -233,33 +291,66 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 let dfg = SIMD3(Float(defFG.r) / 255, Float(defFG.g) / 255, Float(defFG.b) / 255)
                 let dbg = SIMD3(Float(defBG.r) / 255, Float(defBG.g) / 255, Float(defBG.b) / 255)
                 paint.withUnsafeBufferPointer { cellBuf in
-                    guard let cp = cellBuf.baseAddress else { return }
+                    guard let cp = cellBuf.baseAddress, let palBase = pal.baseAddress else { return }
+                    var useSkip = skipExpand
+                    if useSkip != nil && !renderer.canCopyFromPresented(count: n) {
+                        useSkip = nil
+                    }
                     for _ in 0..<3 {
                         let gen = renderer.atlas.packGeneration
-                        GridExpand.expand(
-                            cells: cp,
-                            cols: cols,
-                            rows: paintRows,
-                            cellW: cw,
-                            cellH: ch,
-                            originX: insetLeftPx,
-                            originY: insetTopPx,
-                            palette: pal.baseAddress!,
-                            defFG: dfg,
-                            defBG: dbg,
-                            atlas: renderer.atlas,
-                            cursorX: cx,
-                            cursorY: curY,
-                            cursorVisible: cursorOn && preedit.isEmpty,
-                            selection: sel,
-                            graphemes: graphemes,
-                            dest: inst
-                        )
+                        if let mask = useSkip {
+                            var y = 0
+                            while y < paintRows {
+                                if mask[y] {
+                                    GridExpand.expandRow(
+                                        rowCells: cp + y * cols,
+                                        cols: cols,
+                                        rowY: y,
+                                        cellW: cw,
+                                        cellH: ch,
+                                        originX: insetLeftPx,
+                                        originY: insetTopPx,
+                                        palette: palBase,
+                                        defFG: dfg,
+                                        defBG: dbg,
+                                        atlas: renderer.atlas,
+                                        cursorX: cx,
+                                        cursorY: curY,
+                                        cursorVisible: cursorOn && preedit.isEmpty,
+                                        selection: sel,
+                                        graphemes: graphemes,
+                                        dest: inst + y * cols
+                                    )
+                                } else {
+                                    renderer.copyPresentedRow(to: inst, row: y, cols: cols)
+                                }
+                                y += 1
+                            }
+                        } else {
+                            GridExpand.expand(
+                                cells: cp,
+                                cols: cols,
+                                rows: paintRows,
+                                cellW: cw,
+                                cellH: ch,
+                                originX: insetLeftPx,
+                                originY: insetTopPx,
+                                palette: palBase,
+                                defFG: dfg,
+                                defBG: dbg,
+                                atlas: renderer.atlas,
+                                cursorX: cx,
+                                cursorY: curY,
+                                cursorVisible: cursorOn && preedit.isEmpty,
+                                selection: sel,
+                                graphemes: graphemes,
+                                dest: inst
+                            )
+                        }
                         if !preedit.isEmpty {
-                            drawn = n + stampPreedit(
+                            stampPreedit(
                                 preedit,
                                 dest: inst,
-                                extraStart: n,
                                 cols: cols,
                                 paintRows: paintRows,
                                 cursorX: cx,
@@ -270,18 +361,18 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                                 bg: dbg,
                                 atlas: renderer.atlas
                             )
-                        } else {
-                            drawn = n
                         }
                         if renderer.atlas.packGeneration == gen { break }
+                        useSkip = nil
                     }
                 }
             }
         }
         var overlayN = 0
         let ulNeed = underlineOverlayCount(cols: cols, paintRows: paintRows)
+        let preNeed = preeditUnderlineCount(preedit, cols: cols, cursorX: cx)
         let curNeed = (vis && preedit.isEmpty && curY >= 0 && curY < paintRows && (blinkOn || !focused)) ? 4 : 0
-        if ulNeed + curNeed > 0, let ov = renderer.prepareOverlays(count: ulNeed + curNeed) {
+        if ulNeed + curNeed + preNeed > 0, let ov = renderer.prepareOverlays(count: ulNeed + curNeed + preNeed) {
             if curNeed > 0 {
                 overlayN += writeCursorOverlay(
                     dest: ov,
@@ -305,14 +396,43 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 defFG: defFG,
                 ulColors: ulColors
             )
+            if preNeed > 0 {
+                overlayN += writePreeditUnderlineOverlays(
+                    dest: ov,
+                    at: overlayN,
+                    runs: preedit,
+                    cols: cols,
+                    paintRows: paintRows,
+                    cursorX: cx,
+                    cursorY: curY,
+                    cellW: cw,
+                    cellH: ch,
+                    rgb: defBG
+                )
+            }
         }
-        renderer.draw(
+        skipKey.packGeneration = renderer.atlas.packGeneration
+        let presented = renderer.draw(
             view: self,
-            instanceCount: drawn,
+            instanceCount: n,
             overlayCount: overlayN,
             viewport: SIMD2(Float(dw), Float(dh)),
             contentOffsetY: Float(visRows) * ch
         )
+        if presented {
+            skipLast = skipKey
+            lastDamageGen = damageGen
+            lastBlinkOn = blinkOn
+            lastCursorPaintY = (vis && curY >= 0 && curY < paintRows) ? curY : nil
+            if paintRows > 0 {
+                rowDocId = (0..<paintRows).map { start + $0 }
+            } else {
+                rowDocId = []
+            }
+            forceFullRebuild = false
+        } else {
+            forceFullRebuild = true
+        }
         if !preedit.isEmpty {
             inputContext?.invalidateCharacterCoordinates()
         }
@@ -1038,10 +1158,63 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         return out
     }
 
+    private func paintRowHasBlink(_ y: Int, cols: Int) -> Bool {
+        guard cols > 0, y >= 0 else { return false }
+        let base = y * cols
+        if base < 0 || base + cols > paint.count { return false }
+        var x = 0
+        while x < cols {
+            if (paint[base + x].attrs & UInt16(ATTR_BLINK)) != 0 { return true }
+            x += 1
+        }
+        return false
+    }
+
+    private func preeditUnderlineCount(_ runs: [PreeditRun], cols: Int, cursorX: Int) -> Int {
+        var x = cursorX
+        var n = 0
+        for run in runs {
+            if x >= cols { break }
+            n += 1
+            x += run.width >= 2 && x + 1 < cols ? 2 : 1
+        }
+        return n
+    }
+
+    private func writePreeditUnderlineOverlays(
+        dest: UnsafeMutablePointer<OverlayInstance>,
+        at: Int,
+        runs: [PreeditRun],
+        cols: Int,
+        paintRows: Int,
+        cursorX: Int,
+        cursorY: Int,
+        cellW: Float,
+        cellH: Float,
+        rgb: RGB
+    ) -> Int {
+        guard cursorY >= 0, cursorY < paintRows, cols > 0 else { return 0 }
+        let ul = max(1, cellH * 0.08)
+        let r = Float(rgb.r) / 255, g = Float(rgb.g) / 255, b = Float(rgb.b) / 255
+        var x = cursorX
+        var w = 0
+        for run in runs {
+            if x >= cols { break }
+            let cells = run.width >= 2 && x + 1 < cols ? 2 : 1
+            let ox = insetLeftPx + Float(x) * cellW
+            let oy = insetTopPx + Float(cursorY) * cellH + cellH - ul
+            dest[at + w] = OverlayInstance(
+                ox: ox, oy: oy, sx: cellW * Float(cells), sy: ul, r: r, g: g, b: b, a: 1
+            )
+            w += 1
+            x += cells
+        }
+        return w
+    }
+
     private func stampPreedit(
         _ runs: [PreeditRun],
         dest: UnsafeMutablePointer<CellInstance>,
-        extraStart: Int,
         cols: Int,
         paintRows: Int,
         cursorX: Int,
@@ -1051,11 +1224,9 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         fg: SIMD3<Float>,
         bg: SIMD3<Float>,
         atlas: GlyphAtlas
-    ) -> Int {
-        guard cursorY >= 0, cursorY < paintRows, cols > 0 else { return 0 }
-        let ul = max(1, cellH * 0.08)
+    ) {
+        guard cursorY >= 0, cursorY < paintRows, cols > 0 else { return }
         var x = cursorX
-        var written = 0
         for run in runs {
             if x >= cols { break }
             let wide = run.width >= 2 && x + 1 < cols
@@ -1080,17 +1251,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                     atlas: 0, _pad0: 0, _pad1: 0, _pad2: 0
                 )
             }
-            dest[extraStart + written] = CellInstance(
-                ox: ox, oy: oy + cellH - ul, sx: cellW * Float(cells), sy: ul,
-                u0: 0, v0: 0, u1: 0, v1: 0,
-                fr: bg.x, fg: bg.y, fb: bg.z, fa: 1,
-                br: bg.x, bg: bg.y, bb: bg.z, ba: 1,
-                atlas: 0, _pad0: 0, _pad1: 0, _pad2: 0
-            )
-            written += 1
             x += cells
         }
-        return written
     }
 
     private func cursorCellRect() -> NSRect {

@@ -36,6 +36,77 @@ public enum GridExpand {
         return SIMD3(r, g, b)
     }
 
+    public static func expandRow(
+        rowCells: UnsafePointer<Cell>,
+        cols: Int,
+        rowY: Int,
+        cellW: Float,
+        cellH: Float,
+        originX: Float,
+        originY: Float,
+        palette: UnsafePointer<SIMD3<Float>>,
+        defFG: SIMD3<Float>,
+        defBG: SIMD3<Float>,
+        atlas: GlyphAtlas,
+        cursorX: Int,
+        cursorY: Int,
+        cursorVisible: Bool,
+        selection: (x0: Int, y0: Int, x1: Int, y1: Int)?,
+        graphemes: [UInt32: [UInt32]] = [:],
+        dest: UnsafeMutablePointer<CellInstance>
+    ) {
+        let selCols = selection.flatMap { CellSelection.columns($0, row: rowY, cols: cols) }
+        let cursorOnRow = cursorVisible && rowY == cursorY
+        let oy = originY + Float(rowY) * cellH
+        var x = 0
+        var ox = originX
+        while x < cols {
+            let cell = rowCells[x]
+            var fg = resolve(cell.fg, palette: palette, def: defFG)
+            var bg = resolve(cell.bg, palette: palette, def: defBG)
+            let reverse = (cell.attrs & UInt16(ATTR_REVERSE)) != 0
+            if reverse { swap(&fg, &bg) }
+            if let sel = selCols, x >= sel.lo, x <= sel.hi { swap(&fg, &bg) }
+            if cursorOnRow && x == cursorX { swap(&fg, &bg) }
+            if (cell.attrs & UInt16(ATTR_HIDDEN)) != 0 { fg = bg }
+            if (cell.attrs & UInt16(ATTR_DIM)) != 0 {
+                fg = fg * (2.0 / 3.0)
+            }
+            let wide = cell.content & CONTENT_WIDE_MASK
+            var g = GlyphAtlas.Glyph.empty
+            var sx = cellW
+            var sy = cellH
+            if wide == WIDE_TAIL {
+                sx = 0
+                sy = 0
+            } else if wide != WIDE_HEAD {
+                let bold = (cell.attrs & UInt16(ATTR_BOLD)) != 0
+                let italic = (cell.attrs & UInt16(ATTR_ITALIC)) != 0
+                let isWide = wide == WIDE_FULL && x + 1 < cols
+                if isWide { sx = cellW * 2 }
+                if (cell.content & CONTENT_KIND_MASK) == CONTENT_GRAPHEME,
+                   let cps = graphemes[cell.contentPayload] {
+                    g = atlas.glyph(
+                        scalar: cps.first ?? 0, bold: bold, italic: italic, wide: isWide, cluster: cps
+                    )
+                } else {
+                    g = atlas.glyph(
+                        scalar: cell.contentPayload, bold: bold, italic: italic, wide: isWide
+                    )
+                }
+            }
+            dest[x] = CellInstance(
+                ox: ox, oy: oy, sx: sx, sy: sy,
+                u0: g.uv.u0, v0: g.uv.v0, u1: g.uv.u1, v1: g.uv.v1,
+                fr: fg.x, fg: fg.y, fb: fg.z, fa: 1,
+                br: bg.x, bg: bg.y, bb: bg.z, ba: 1,
+                atlas: g.color ? 1 : 0, _pad0: 0, _pad1: 0, _pad2: 0
+            )
+            x += 1
+            ox += cellW
+        }
+    }
+
     public static func expand(
         cells: UnsafePointer<Cell>,
         cols: Int,
@@ -55,62 +126,28 @@ public enum GridExpand {
         graphemes: [UInt32: [UInt32]] = [:],
         dest: UnsafeMutablePointer<CellInstance>
     ) {
-        var i = 0
         var y = 0
-        var oy = originY
         while y < rows {
-            let selCols = selection.flatMap { CellSelection.columns($0, row: y, cols: cols) }
-            let cursorOnRow = cursorVisible && y == cursorY
-            var x = 0
-            var ox = originX
-            while x < cols {
-                let cell = cells[i]
-                var fg = resolve(cell.fg, palette: palette, def: defFG)
-                var bg = resolve(cell.bg, palette: palette, def: defBG)
-                let reverse = (cell.attrs & UInt16(ATTR_REVERSE)) != 0
-                if reverse { swap(&fg, &bg) }
-                if let sel = selCols, x >= sel.lo, x <= sel.hi { swap(&fg, &bg) }
-                if cursorOnRow && x == cursorX { swap(&fg, &bg) }
-                if (cell.attrs & UInt16(ATTR_HIDDEN)) != 0 { fg = bg }
-                if (cell.attrs & UInt16(ATTR_DIM)) != 0 {
-                    fg = fg * (2.0 / 3.0)
-                }
-                let wide = cell.content & CONTENT_WIDE_MASK
-                var g = GlyphAtlas.Glyph.empty
-                var sx = cellW
-                var sy = cellH
-                if wide == WIDE_TAIL {
-                    sx = 0
-                    sy = 0
-                } else if wide != WIDE_HEAD {
-                    let bold = (cell.attrs & UInt16(ATTR_BOLD)) != 0
-                    let italic = (cell.attrs & UInt16(ATTR_ITALIC)) != 0
-                    let isWide = wide == WIDE_FULL && x + 1 < cols
-                    if isWide { sx = cellW * 2 }
-                    if (cell.content & CONTENT_KIND_MASK) == CONTENT_GRAPHEME,
-                       let cps = graphemes[cell.contentPayload] {
-                        g = atlas.glyph(
-                            scalar: cps.first ?? 0, bold: bold, italic: italic, wide: isWide, cluster: cps
-                        )
-                    } else {
-                        g = atlas.glyph(
-                            scalar: cell.contentPayload, bold: bold, italic: italic, wide: isWide
-                        )
-                    }
-                }
-                dest[i] = CellInstance(
-                    ox: ox, oy: oy, sx: sx, sy: sy,
-                    u0: g.uv.u0, v0: g.uv.v0, u1: g.uv.u1, v1: g.uv.v1,
-                    fr: fg.x, fg: fg.y, fb: fg.z, fa: 1,
-                    br: bg.x, bg: bg.y, bb: bg.z, ba: 1,
-                    atlas: g.color ? 1 : 0, _pad0: 0, _pad1: 0, _pad2: 0
-                )
-                i += 1
-                x += 1
-                ox += cellW
-            }
+            expandRow(
+                rowCells: cells + y * cols,
+                cols: cols,
+                rowY: y,
+                cellW: cellW,
+                cellH: cellH,
+                originX: originX,
+                originY: originY,
+                palette: palette,
+                defFG: defFG,
+                defBG: defBG,
+                atlas: atlas,
+                cursorX: cursorX,
+                cursorY: cursorY,
+                cursorVisible: cursorVisible,
+                selection: selection,
+                graphemes: graphemes,
+                dest: dest + y * cols
+            )
             y += 1
-            oy += cellH
         }
     }
 }

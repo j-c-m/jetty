@@ -260,6 +260,13 @@ public final class Screen {
         return s.isEmpty ? nil : s
     }
 
+    @discardableResult
+    public func takeDirty(into dest: UnsafeMutablePointer<UInt8>, count: Int) -> UInt32 {
+        var gen: UInt32 = 0
+        jt_scr_take_dirty(implPtr, dest, Int32(count), &gen)
+        return gen
+    }
+
     public func blitLiveGrid(to dest: UnsafeMutablePointer<Cell>) {
         let blank = spaceBlank
         let c = cols

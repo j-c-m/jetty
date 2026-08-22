@@ -64,6 +64,7 @@ typedef struct jt_scr {
     char *osc8_id;
     char *osc8_uri;
     int32_t pool_cells;
+    uint32_t damage_gen;
 } jt_scr;
 
 typedef struct jt_rare {
@@ -108,6 +109,8 @@ int32_t jt_scr_sb_len(const jt_scr *s);
 int jt_scr_sb_wrapped(const jt_scr *s, int32_t i);
 
 void jt_scr_mark_dirty(jt_scr *s, int32_t y);
+/* dst[y] = dirty[rowmap[y]] for y in [0, n); n is live rows. Zero dirty[0, grid_rows). */
+void jt_scr_take_dirty(jt_scr *s, uint8_t *dst, int32_t n, uint32_t *damage_gen);
 void jt_scr_wrap_at(jt_scr *s, int32_t y);
 int jt_scr_is_wrapped(const jt_scr *s, int32_t y);
 

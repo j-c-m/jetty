@@ -15,6 +15,7 @@ public final class TerminalRenderer {
     private var instanceBuffers: [MTLBuffer?] = [nil, nil, nil]
     private var instanceCaps: [Int] = [0, 0, 0]
     private var instanceSlot = 0
+    private var presentedSlot: Int?
     private var overlayBuffers: [MTLBuffer?] = [nil, nil, nil]
     private var overlayCaps: [Int] = [0, 0, 0]
     private var overlaySlot = 0
@@ -93,6 +94,28 @@ public final class TerminalRenderer {
         return buf.contents().assumingMemoryBound(to: CellInstance.self)
     }
 
+    /// Same cap as the current write slot, last successful present, not the write slot itself.
+    public func canCopyFromPresented(count: Int) -> Bool {
+        guard let p = presentedSlot, p != instanceSlot else { return false }
+        let cap = instanceCaps[p]
+        return cap == instanceCaps[instanceSlot] && cap >= count
+    }
+
+    public func copyPresentedRow(
+        to dest: UnsafeMutablePointer<CellInstance>,
+        row: Int,
+        cols: Int
+    ) {
+        guard cols > 0, row >= 0,
+              let p = presentedSlot,
+              let buf = instanceBuffers[p]
+        else { return }
+        let start = row * cols
+        if start < 0 || start + cols > instanceCaps[p] { return }
+        let src = buf.contents().assumingMemoryBound(to: CellInstance.self)
+        (dest + start).update(from: src + start, count: cols)
+    }
+
     public func prepareOverlays(count: Int) -> UnsafeMutablePointer<OverlayInstance>? {
         overlaySlot = (overlaySlot + 1) % Self.ringCount
         let need = max(count, 1)
@@ -109,18 +132,19 @@ public final class TerminalRenderer {
     }
 
     @MainActor
+    @discardableResult
     public func draw(
         view: MTKView,
         instanceCount: Int,
         overlayCount: Int = 0,
         viewport: SIMD2<Float>,
         contentOffsetY: Float = 0
-    ) {
+    ) -> Bool {
         guard let rpd = view.currentRenderPassDescriptor,
               let drawable = view.currentDrawable,
               let cmd = queue.makeCommandBuffer(),
               let enc = cmd.makeRenderCommandEncoder(descriptor: rpd)
-        else { return }
+        else { return false }
 
         uniformSlot = (uniformSlot + 1) % Self.ringCount
         if let uni = uniformBuffers[uniformSlot] {
@@ -146,6 +170,8 @@ public final class TerminalRenderer {
         enc.endEncoding()
         cmd.present(drawable)
         cmd.commit()
+        presentedSlot = instanceSlot
+        return true
     }
 
     private static let shaderSource = """

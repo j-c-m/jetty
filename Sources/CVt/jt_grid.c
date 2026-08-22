@@ -343,6 +343,7 @@ static void sb_alloc(jt_scr *s, int32_t cap, int32_t cols, int32_t extra_base) {
 static int32_t sb_push_falling(jt_scr *s) {
     s->lines_scrolled++;
     if (s->scrollback_cap <= 0 || !s->sb_idx) return -1;
+    s->damage_gen++;
     jt_buf *b = &s->primary;
     int32_t falling = b->rowmap[0];
     uint8_t wrap = (b->wrap && falling >= 0 && falling < b->grid_rows) ? b->wrap[falling] : 0;
@@ -394,7 +395,8 @@ static void fix_wide_row(jt_scr *s, Cell *row, int32_t cols, Cell blank) {
     }
 }
 
-static void rotate_up(jt_buf *b, int32_t top, int32_t bot) {
+static void rotate_up(jt_scr *s, jt_buf *b, int32_t top, int32_t bot) {
+    s->damage_gen++;
     int32_t span = bot - top;
     int32_t first = b->rowmap[top];
     if (span > 0) {
@@ -403,7 +405,8 @@ static void rotate_up(jt_buf *b, int32_t top, int32_t bot) {
     b->rowmap[bot] = first;
 }
 
-static void rotate_down(jt_buf *b, int32_t top, int32_t bot) {
+static void rotate_down(jt_scr *s, jt_buf *b, int32_t top, int32_t bot) {
+    s->damage_gen++;
     int32_t span = bot - top;
     int32_t last = b->rowmap[bot];
     if (span > 0) {
@@ -427,14 +430,14 @@ static void scroll_up(jt_scr *s) {
             return;
         }
     }
-    if (bot > top) rotate_up(b, top, bot);
+    if (bot > top) rotate_up(s, b, top, bot);
     fill_row(s, bot);
 }
 
 static void scroll_down(jt_scr *s) {
     jt_buf *b = s->active;
     int32_t top = b->scroll_top, bot = b->scroll_bottom;
-    if (bot > top) rotate_down(b, top, bot);
+    if (bot > top) rotate_down(s, b, top, bot);
     fill_row(s, top);
 }
 
@@ -704,7 +707,7 @@ void jt_scr_il(jt_scr *s, int n) {
     int nn = n < 1 ? 1 : n;
     int32_t top = b->cy, bot = b->scroll_bottom;
     for (int k = 0; k < nn; k++) {
-        if (bot > top) rotate_down(b, top, bot);
+        if (bot > top) rotate_down(s, b, top, bot);
         fill_row(s, top);
     }
 }
@@ -715,7 +718,7 @@ void jt_scr_dl(jt_scr *s, int n) {
     int nn = n < 1 ? 1 : n;
     int32_t top = b->cy, bot = b->scroll_bottom;
     for (int k = 0; k < nn; k++) {
-        if (bot > top) rotate_up(b, top, bot);
+        if (bot > top) rotate_up(s, b, top, bot);
         fill_row(s, bot);
     }
 }
@@ -932,6 +935,31 @@ void jt_scr_copy_sb_row(const jt_scr *s, int32_t i, Cell *dst, int32_t dst_cols,
 }
 
 void jt_scr_mark_dirty(jt_scr *s, int32_t y) { mark_row(s, y); }
+
+void jt_scr_take_dirty(jt_scr *s, uint8_t *dst, int32_t n, uint32_t *damage_gen) {
+    if (n < 0) n = 0;
+    if (!s || !s->active) {
+        if (dst && n > 0) memset(dst, 0, (size_t)n);
+        if (damage_gen) *damage_gen = 0;
+        return;
+    }
+    jt_buf *b = s->active;
+    int32_t live = s->rows;
+    int32_t take = n < live ? n : live;
+    if (dst) {
+        for (int32_t y = 0; y < take; y++) {
+            uint8_t bit = 0;
+            if (b->dirty && b->rowmap && y >= 0) {
+                int32_t py = b->rowmap[y];
+                if (py >= 0 && py < b->grid_rows) bit = b->dirty[py];
+            }
+            dst[y] = bit;
+        }
+        if (n > take) memset(dst + take, 0, (size_t)(n - take));
+    }
+    if (b->dirty && b->grid_rows > 0) memset(b->dirty, 0, (size_t)b->grid_rows);
+    if (damage_gen) *damage_gen = s->damage_gen;
+}
 
 void jt_scr_wrap_at(jt_scr *s, int32_t y) {
     if (y < 0 || y >= s->rows) return;

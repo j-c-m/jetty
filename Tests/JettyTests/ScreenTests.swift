@@ -533,4 +533,88 @@ final class ScreenTests: XCTestCase {
         fflush(stderr)
         XCTAssertLessThan(isolated, 500)
     }
+
+    func testTakeDirtyPrintSetsOnlyThatLogicalRow() {
+        let s = Screen(cols: 8, rows: 24, scrollbackCapRows: 8)
+        _ = takeDirty(s)
+        s.cup(row: 10, col: 0)
+        s.printRun("x")
+        let (bits, _) = takeDirty(s)
+        XCTAssertEqual(bits.count, 24)
+        XCTAssertEqual(bits[10], 1)
+        XCTAssertEqual(bits.filter { $0 != 0 }.count, 1)
+        let (again, _) = takeDirty(s)
+        XCTAssertTrue(again.allSatisfy { $0 == 0 })
+    }
+
+    func testTakeDirtyGathersViaRowmapAfterScroll() {
+        let s = Screen(cols: 4, rows: 4, scrollbackCapRows: 4)
+        s.printRun("AAAA")
+        s.printRun("BBBB")
+        s.printRun("CCCC")
+        s.printRun("DDDD")
+        s.printRun("EEEE")
+        _ = takeDirty(s)
+        s.cup(row: 0, col: 0)
+        s.printRun("Z")
+        let (bits, _) = takeDirty(s)
+        XCTAssertEqual(bits[0], 1)
+        XCTAssertEqual(bits.filter { $0 != 0 }.count, 1)
+    }
+
+    func testDamageGenIndexAtRegionBottomNotMidScreen() {
+        let s = Screen(cols: 8, rows: 10, scrollbackCapRows: 8)
+        let (_, gen0) = takeDirty(s)
+        s.cup(row: 5, col: 0)
+        s.index()
+        let (_, genMid) = takeDirty(s)
+        XCTAssertEqual(genMid, gen0)
+        s.cup(row: 9, col: 0)
+        s.index()
+        let (_, genBot) = takeDirty(s)
+        XCTAssertNotEqual(genBot, gen0)
+    }
+
+    func testDamageGenRegionBottomIndex() {
+        let s = Screen(cols: 8, rows: 10, scrollbackCapRows: 8)
+        s.decstbm(top: 0, bot: 4)
+        let (_, gen0) = takeDirty(s)
+        s.cup(row: 4, col: 0)
+        s.index()
+        let (_, gen1) = takeDirty(s)
+        XCTAssertNotEqual(gen1, gen0)
+        s.cup(row: 2, col: 0)
+        s.index()
+        let (_, gen2) = takeDirty(s)
+        XCTAssertEqual(gen2, gen1)
+    }
+
+    func testDamageGenInsertDeleteLines() {
+        let s = Screen(cols: 8, rows: 6, scrollbackCapRows: 0)
+        let (_, gen0) = takeDirty(s)
+        s.il(1)
+        let (_, genIL) = takeDirty(s)
+        XCTAssertNotEqual(genIL, gen0)
+        s.dl(1)
+        let (_, genDL) = takeDirty(s)
+        XCTAssertNotEqual(genDL, genIL)
+    }
+
+    func testDamageGenAltIndexRotates() {
+        let s = Screen(cols: 8, rows: 4, scrollbackCapRows: 8)
+        s.switchScreenMode(1049, enabled: true)
+        let (_, gen0) = takeDirty(s)
+        s.cup(row: 3, col: 0)
+        s.index()
+        let (_, gen1) = takeDirty(s)
+        XCTAssertNotEqual(gen1, gen0)
+    }
+
+    private func takeDirty(_ s: Screen) -> (bits: [UInt8], gen: UInt32) {
+        var bits = [UInt8](repeating: 0, count: s.rows)
+        let gen = bits.withUnsafeMutableBufferPointer { buf in
+            s.takeDirty(into: buf.baseAddress!, count: s.rows)
+        }
+        return (bits, gen)
+    }
 }
