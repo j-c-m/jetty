@@ -34,6 +34,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var lastMouseCell: (x: Int, y: Int)?
     private var mouseWheelPending: Double = 0
     private var mouseHostSelect = false
+    private var markedText = NSMutableAttributedString()
+    private var imeInsert = false
 
     public init(session: TerminalSession, config: AppConfig, device: MTLDevice, backingScale: CGFloat) {
         self.session = session
@@ -199,8 +201,12 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         }
         let curY = cy + liveOrigin
         let cursorOn = vis && window?.isKeyWindow == true && curY >= 0 && curY < paintRows
+        let preedit = preeditRuns()
+        var ulSlots = 0
+        for run in preedit { ulSlots += run.width }
         let n = cellCount
-        if n > 0, let inst = renderer.prepareInstances(count: n) {
+        var drawn = n
+        if n > 0, let inst = renderer.prepareInstances(count: n + ulSlots) {
             rgb.withUnsafeMutableBufferPointer { pal in
                 palPacked.withUnsafeBufferPointer { packed in
                     guard let pp = packed.baseAddress, let dp = pal.baseAddress else { return }
@@ -226,11 +232,29 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                             atlas: renderer.atlas,
                             cursorX: cx,
                             cursorY: curY,
-                            cursorVisible: cursorOn,
+                            cursorVisible: cursorOn && preedit.isEmpty,
                             selection: sel,
                             graphemes: graphemes,
                             dest: inst
                         )
+                        if !preedit.isEmpty {
+                            drawn = n + stampPreedit(
+                                preedit,
+                                dest: inst,
+                                extraStart: n,
+                                cols: cols,
+                                paintRows: paintRows,
+                                cursorX: cx,
+                                cursorY: curY,
+                                cellW: cw,
+                                cellH: ch,
+                                fg: dfg,
+                                bg: dbg,
+                                atlas: renderer.atlas
+                            )
+                        } else {
+                            drawn = n
+                        }
                         if renderer.atlas.packGeneration == gen { break }
                     }
                 }
@@ -238,10 +262,13 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         }
         renderer.draw(
             view: self,
-            instanceCount: n,
+            instanceCount: drawn,
             viewport: SIMD2(Float(dw), Float(dh)),
             contentOffsetY: Float(visRows) * ch
         )
+        if !preedit.isEmpty {
+            inputContext?.invalidateCharacterCoordinates()
+        }
         _ = device
     }
 
@@ -316,19 +343,48 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             super.keyDown(with: event)
             return
         }
+        let wasMarked = hasMarkedText()
+        imeInsert = false
+        interpretKeyEvents([event])
+        if !XtermKeyEncoder.shouldEncodeKeyDown(
+            hasMarkedText: hasMarkedText(),
+            wasMarked: wasMarked,
+            insertTextConsumed: imeInsert
+        ) {
+            pinLiveBottom()
+            return
+        }
         session.lock.lock()
         let appCursor = session.screen.decckm
-        let inAlt = session.screen.inAlt
-        let sb = session.screen.scrollbackCount
         session.lock.unlock()
         guard let bytes = XtermKeyEncoder.bytes(for: event, applicationCursor: appCursor) else {
             super.keyDown(with: event)
             return
         }
+        pinLiveBottom()
+        session.writeToPty(bytes)
+    }
+
+    public override func doCommand(by selector: Selector) {
+        _ = selector
+    }
+
+    public override func resignFirstResponder() -> Bool {
+        if hasMarkedText() {
+            inputContext?.discardMarkedText()
+            unmarkText()
+        }
+        return super.resignFirstResponder()
+    }
+
+    private func pinLiveBottom() {
+        session.lock.lock()
+        let inAlt = session.screen.inAlt
+        let sb = session.screen.scrollbackCount
+        session.lock.unlock()
         if !inAlt {
             scrollPhysics.pinBottom(maxOffset: Double(sb))
         }
-        session.writeToPty(bytes)
     }
 
     @objc public func zoomIn(_ sender: Any?) { applyFontSize(metrics.fontSize + 1) }
@@ -796,5 +852,190 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             y += 1
         }
         return out
+    }
+
+    private struct PreeditRun {
+        var scalar: UInt32
+        var width: Int
+    }
+
+    private func preeditRuns() -> [PreeditRun] {
+        guard markedText.length > 0 else { return [] }
+        var out: [PreeditRun] = []
+        for u in markedText.string.unicodeScalars {
+            let w = jt_codepoint_width(u.value)
+            if w <= 0 { continue }
+            out.append(PreeditRun(scalar: u.value, width: min(2, Int(w))))
+        }
+        return out
+    }
+
+    private func stampPreedit(
+        _ runs: [PreeditRun],
+        dest: UnsafeMutablePointer<CellInstance>,
+        extraStart: Int,
+        cols: Int,
+        paintRows: Int,
+        cursorX: Int,
+        cursorY: Int,
+        cellW: Float,
+        cellH: Float,
+        fg: SIMD3<Float>,
+        bg: SIMD3<Float>,
+        atlas: GlyphAtlas
+    ) -> Int {
+        guard cursorY >= 0, cursorY < paintRows, cols > 0 else { return 0 }
+        let ul = max(1, cellH * 0.08)
+        var x = cursorX
+        var written = 0
+        for run in runs {
+            if x >= cols { break }
+            let wide = run.width >= 2 && x + 1 < cols
+            let cells = wide ? 2 : 1
+            let g = atlas.glyph(scalar: run.scalar, bold: false, italic: false, wide: wide)
+            let ox = insetLeftPx + Float(x) * cellW
+            let oy = insetTopPx + Float(cursorY) * cellH
+            let i = cursorY * cols + x
+            dest[i] = CellInstance(
+                ox: ox, oy: oy, sx: cellW * Float(cells), sy: cellH,
+                u0: g.uv.u0, v0: g.uv.v0, u1: g.uv.u1, v1: g.uv.v1,
+                fr: bg.x, fg: bg.y, fb: bg.z, fa: 1,
+                br: fg.x, bg: fg.y, bb: fg.z, ba: 1,
+                atlas: g.color ? 1 : 0, _pad0: 0, _pad1: 0, _pad2: 0
+            )
+            if wide, x + 1 < cols {
+                dest[i + 1] = CellInstance(
+                    ox: ox + cellW, oy: oy, sx: 0, sy: 0,
+                    u0: 0, v0: 0, u1: 0, v1: 0,
+                    fr: 0, fg: 0, fb: 0, fa: 1,
+                    br: fg.x, bg: fg.y, bb: fg.z, ba: 1,
+                    atlas: 0, _pad0: 0, _pad1: 0, _pad2: 0
+                )
+            }
+            dest[extraStart + written] = CellInstance(
+                ox: ox, oy: oy + cellH - ul, sx: cellW * Float(cells), sy: ul,
+                u0: 0, v0: 0, u1: 0, v1: 0,
+                fr: bg.x, fg: bg.y, fb: bg.z, fa: 1,
+                br: bg.x, bg: bg.y, bb: bg.z, ba: 1,
+                atlas: 0, _pad0: 0, _pad1: 0, _pad2: 0
+            )
+            written += 1
+            x += cells
+        }
+        return written
+    }
+
+    private func cursorCellRect() -> NSRect {
+        let bs = max(window?.backingScaleFactor ?? 1, 1)
+        let sa = safeAreaInsets
+        let cw = CGFloat(cellWPx) / bs
+        let ch = CGFloat(cellHPx) / bs
+        session.lock.lock()
+        let cx = session.screen.cursorX
+        let cy = session.screen.cursorY
+        let inAlt = session.screen.inAlt
+        let sb = session.screen.scrollbackCount
+        session.lock.unlock()
+        let start = inAlt ? sb : Int(scrollPhysics.integerRow(maxOffset: Double(sb)))
+        let liveOrigin = inAlt ? 0 : sb - start
+        let visRows = inAlt ? 0.0 : scrollPhysics.visualOffsetRows(maxOffset: Double(sb))
+        let x = padPt + sa.left + CGFloat(cx) * cw
+        let yFromTop = padPt + sa.top + (CGFloat(cy + liveOrigin) + visRows) * ch
+        return NSRect(x: x, y: bounds.height - yFromTop - ch, width: cw, height: ch)
+    }
+
+    private func writeInsert(_ text: String, composing: Bool) {
+        guard let bytes = XtermKeyEncoder.committedUTF8(text, composing: composing) else { return }
+        imeInsert = true
+        pinLiveBottom()
+        session.writeToPty(bytes)
+    }
+}
+
+extension MetalTerminalView: @preconcurrency NSTextInputClient {
+    public func hasMarkedText() -> Bool {
+        markedText.length > 0
+    }
+
+    public func markedRange() -> NSRange {
+        guard markedText.length > 0 else {
+            return NSRange(location: NSNotFound, length: 0)
+        }
+        return NSRange(location: 0, length: markedText.length)
+    }
+
+    public func selectedRange() -> NSRange {
+        NSRange(location: NSNotFound, length: 0)
+    }
+
+    public func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        let text: String
+        switch string {
+        case let attributed as NSAttributedString:
+            text = attributed.string
+        case let s as String:
+            text = s
+        default:
+            text = ""
+        }
+        if text.isEmpty {
+            unmarkText()
+            return
+        }
+        markedText = NSMutableAttributedString(string: text)
+        needsDisplay = true
+        inputContext?.invalidateCharacterCoordinates()
+    }
+
+    public func unmarkText() {
+        guard markedText.length > 0 else { return }
+        markedText = NSMutableAttributedString()
+        needsDisplay = true
+    }
+
+    public func validAttributesForMarkedText() -> [NSAttributedString.Key] {
+        []
+    }
+
+    public func attributedSubstring(
+        forProposedRange range: NSRange,
+        actualRange: NSRangePointer?
+    ) -> NSAttributedString? {
+        _ = range
+        _ = actualRange
+        return nil
+    }
+
+    public func characterIndex(for point: NSPoint) -> Int {
+        0
+    }
+
+    public func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        _ = range
+        _ = actualRange
+        let viewRect = cursorCellRect()
+        let winRect = convert(viewRect, to: nil)
+        return window?.convertToScreen(winRect) ?? winRect
+    }
+
+    public func insertText(_ string: Any, replacementRange: NSRange) {
+        let text: String
+        switch string {
+        case let attributed as NSAttributedString:
+            text = attributed.string
+        case let s as String:
+            text = s
+        default:
+            return
+        }
+        let composing = hasMarkedText()
+        unmarkText()
+        let option = NSApp.currentEvent?.type == .keyDown
+            && (NSApp.currentEvent?.modifierFlags.contains(.option) ?? false)
+            && !(NSApp.currentEvent?.modifierFlags.contains(.command) ?? false)
+        if XtermKeyEncoder.insertTextDefersToMeta(composing: composing, option: option) {
+            return
+        }
+        writeInsert(text, composing: composing)
     }
 }

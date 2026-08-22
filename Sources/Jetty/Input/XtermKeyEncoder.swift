@@ -37,6 +37,35 @@ public enum XtermKeyEncoder {
         return nil
     }
 
+    /// `interpretKeyEvents` owns the key while composing or after insertText.
+    public static func shouldEncodeKeyDown(
+        hasMarkedText: Bool,
+        wasMarked: Bool,
+        insertTextConsumed: Bool
+    ) -> Bool {
+        !hasMarkedText && !wasMarked && !insertTextConsumed
+    }
+
+    /// Option-as-meta when IME is idle. insertText must not eat that key.
+    public static func insertTextDefersToMeta(composing: Bool, option: Bool) -> Bool {
+        !composing && option
+    }
+
+    /// Committed IME / insertText. LF → CR. While composing, ignore empty and C0-only.
+    public static func committedUTF8(_ text: String, composing: Bool) -> [UInt8]? {
+        if text.isEmpty { return nil }
+        var out = [UInt8]()
+        out.reserveCapacity(text.utf8.count)
+        var onlyC0 = true
+        for b in text.utf8 {
+            let mapped: UInt8 = b == 0x0A ? 0x0D : b
+            if mapped >= 0x20, mapped != 0x7F { onlyC0 = false }
+            out.append(mapped)
+        }
+        if composing, onlyC0 { return nil }
+        return out
+    }
+
     /// DECSET 1007: accumulated wheel rows (+up) to CSI/SS3 cursor keys.
     public static func alternateScroll(
         deltaRows: Double,
