@@ -1,0 +1,4 @@
+module CPty {
+    header "pty_spawn.h"
+    export *
+}
