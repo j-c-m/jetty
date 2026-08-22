@@ -56,4 +56,27 @@ final class GlyphAtlasTests: XCTestCase {
         XCTAssertNil(shelf.grow())
         XCTAssertEqual(shelf.width, 8)
     }
+
+    func testSpriteCoversBoxBlockBraille() {
+        XCTAssertTrue(SpriteFace.covers(0x2502))
+        XCTAssertTrue(SpriteFace.covers(0x2588))
+        XCTAssertTrue(SpriteFace.covers(0x28FF))
+        XCTAssertFalse(SpriteFace.covers(UInt32(UInt8(ascii: "A"))))
+    }
+
+    func testSpriteDrawsBrailleInk() {
+        var cov: [UInt8] = []
+        XCTAssertTrue(SpriteFace.draw(0x28FF, width: 12, height: 24, baseline: 4, into: &cov))
+        XCTAssertEqual(cov.count, 12 * 24)
+        XCTAssertTrue(cov.contains { $0 > 0 })
+        var empty: [UInt8] = []
+        XCTAssertTrue(SpriteFace.draw(0x2800, width: 12, height: 24, baseline: 4, into: &empty))
+        XCTAssertFalse(empty.contains { $0 > 0 })
+    }
+
+    func testSpriteDrawsBoxWhenAsked() {
+        var cov: [UInt8] = []
+        XCTAssertTrue(SpriteFace.draw(0x2502, width: 12, height: 24, baseline: 4, into: &cov))
+        XCTAssertTrue(cov.contains { $0 > 0 })
+    }
 }

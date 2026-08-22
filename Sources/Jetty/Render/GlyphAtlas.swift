@@ -261,6 +261,11 @@ public final class GlyphAtlas {
         }
         guard !text.isEmpty else { return .empty }
         let font = metrics.face(bold: bold, italic: italic)
+        let cp = cluster?.first ?? scalar
+        let single = cluster == nil || cluster!.count == 1
+        if single, SpriteFace.covers(cp) {
+            return rasterizeSprite(cp, wide: wide)
+        }
         let cf = text as CFString
         var used = font
         let fallback = CTFontCreateForString(font, cf, CFRange(location: 0, length: CFStringGetLength(cf)))
@@ -272,6 +277,29 @@ public final class GlyphAtlas {
             return rasterizeColor(text: text, font: used, wide: wide)
         }
         return rasterizeGray(text: text, font: used, wide: wide)
+    }
+
+    private func rasterizeSprite(_ cp: UInt32, wide: Bool) -> Glyph {
+        let w = max(1, wide ? cellW * 2 : cellW)
+        let h = cellH
+        var coverage: [UInt8] = []
+        guard SpriteFace.draw(
+            cp,
+            width: w,
+            height: h,
+            baseline: metrics.cellBaselinePx,
+            into: &coverage
+        ) else { return .empty }
+        if !coverage.contains(where: { $0 > 0 }) { return .empty }
+        if let rect = shelf.allocate(width: w, height: h) {
+            return Glyph(uv: writeGray(coverage, width: w, height: h, rect: rect), color: false)
+        }
+        if growGray(), let rect = shelf.allocate(width: w, height: h) {
+            return Glyph(uv: writeGray(coverage, width: w, height: h, rect: rect), color: false)
+        }
+        clearGray()
+        guard let rect = shelf.allocate(width: w, height: h) else { return .empty }
+        return Glyph(uv: writeGray(coverage, width: w, height: h, rect: rect), color: false)
     }
 
     private func rasterizeGray(text: String, font: CTFont, wide: Bool) -> Glyph {
