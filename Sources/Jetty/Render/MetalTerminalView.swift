@@ -26,6 +26,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var chromePacked: UInt32 = 0xFFFF_FFFF
     private var lastLinesScrolled: UInt64 = 0
     private var lastSbCount: Int = 0
+    private var lastSafeTop: CGFloat = 0
 
     public init(session: TerminalSession, config: AppConfig, device: MTLDevice, backingScale: CGFloat) {
         self.session = session
@@ -69,6 +70,16 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         applyChrome(session.screen.defaultBgRGB, reverse: false)
         refreshInsets()
         relayout()
+    }
+
+    public override func layout() {
+        super.layout()
+        let top = safeAreaInsets.top
+        if abs(top - lastSafeTop) > 0.5 {
+            lastSafeTop = top
+            relayout()
+            needsDisplay = true
+        }
     }
 
     public func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
@@ -220,9 +231,17 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         }
     }
 
-    private func gridInsetsPx(backingScale: CGFloat) -> (left: CGFloat, right: CGFloat, top: CGFloat, bottom: CGFloat) {
-        let p = padPt * max(backingScale, 1)
-        return (p, p, p, p)
+    /// Pad plus `safeAreaInsets` so the titlebar / traffic lights do not cover row 0.
+    private func gridInsetsPx(backingScale: CGFloat) -> NSEdgeInsets {
+        let sa = safeAreaInsets
+        let p = padPt
+        let bs = max(backingScale, 1)
+        return NSEdgeInsets(
+            top: (p + sa.top) * bs,
+            left: (p + sa.left) * bs,
+            bottom: (p + sa.bottom) * bs,
+            right: (p + sa.right) * bs
+        )
     }
 
     private func refreshInsets() {
@@ -381,8 +400,11 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private func cellAt(_ event: NSEvent) -> (x: Int, y: Int) {
         let p = convert(event.locationInWindow, from: nil)
         let bs = max(window?.backingScaleFactor ?? 1, 1)
-        let x = Int((p.x * bs - CGFloat(insetLeftPx)) / CGFloat(cellWPx))
-        let yFromTop = Int(((bounds.height - p.y) * bs - CGFloat(insetTopPx)) / CGFloat(cellHPx))
+        let sa = safeAreaInsets
+        let cw = CGFloat(cellWPx) / bs
+        let ch = CGFloat(cellHPx) / bs
+        let x = Int(floor((p.x - padPt - sa.left) / cw))
+        let yFromTop = Int(floor((bounds.height - p.y - padPt - sa.top) / ch))
         session.lock.lock()
         let cols = session.screen.cols
         let sb = session.screen.scrollbackCount
