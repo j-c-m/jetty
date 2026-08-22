@@ -99,6 +99,38 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(s.glyph(1, 0), UInt32(UInt8(ascii: "x")))
     }
 
+    func testSGRIndexedAndBold() {
+        let s = Screen(cols: 20, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[31;1mA")
+        XCTAssertEqual(s.penFG, PackedColor.indexed(1))
+        XCTAssertEqual(s.penAttrs & UInt16(ATTR_BOLD), UInt16(ATTR_BOLD))
+        XCTAssertEqual(s.glyph(0, 0), UInt32(UInt8(ascii: "A")))
+        p.feed("\u{1B}[91mB")
+        XCTAssertEqual(s.penFG, PackedColor.indexed(9))
+    }
+
+    func testSGRTruecolorAndMixed() {
+        let s = Screen(cols: 20, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[38;5;196;48;2;1;2;3mX")
+        XCTAssertEqual(s.penFG, PackedColor.indexed(196))
+        XCTAssertEqual(s.penBG, PackedColor.rgb(r: 1, g: 2, b: 3))
+        p.feed("\u{1B}[38:2::10:20:30m")
+        XCTAssertEqual(s.penFG, PackedColor.rgb(r: 10, g: 20, b: 30))
+    }
+
+    func testSGR21DoubleUnderline() {
+        let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[31;21m")
+        XCTAssertEqual(s.penFG, PackedColor.indexed(1))
+        XCTAssertEqual(s.penAttrs & UInt16(ATTR_UL_MASK), UInt16(UL_DOUBLE))
+    }
+
     func testCUP() {
         let s = Screen(cols: 20, rows: 10, scrollbackCapRows: 0)
         let p = Parser()

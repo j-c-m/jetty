@@ -97,6 +97,7 @@ int jt_scr_is_wrapped(const jt_scr *s, int32_t y);
 
 Cell *jt_scr_row(jt_scr *s, int32_t y);
 void jt_scr_ris(jt_scr *s);
+void jt_sgr_apply(jt_scr *s, const uint16_t *p, int n, uint32_t seps);
 
 enum {
     JT_ST_GROUND = 0,

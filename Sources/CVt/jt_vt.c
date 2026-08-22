@@ -285,7 +285,7 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
         }
         break;
     case 'm':
-        /* SGR is PR 6 */
+        jt_sgr_apply(scr, p->params, p->np, p->seps);
         break;
     case 'q':
         if (p->ni == 1 && p->inter[0] == ' ') {
