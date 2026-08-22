@@ -107,6 +107,76 @@ static void fill_cells(Cell *row, int32_t n, Cell b) {
 #endif
 }
 
+/* ASCII bytes → 16-byte cells. Last u32 is attrs (low half) + extra (high half). */
+static void store_ascii_cells(Cell *dest, const uint8_t *p, size_t n,
+                              uint32_t fg, uint32_t bg, uint16_t attrs, uint16_t extra) {
+#if defined(__ARM_NEON)
+    uint32x4_t vfg = vdupq_n_u32(fg);
+    uint32x4_t vbg = vdupq_n_u32(bg);
+    uint32x4_t vae = vdupq_n_u32((uint32_t)attrs | ((uint32_t)extra << 16));
+    size_t k = 0;
+    while (k + 16 <= n) {
+        uint8x16_t ch = vld1q_u8(p + k);
+        uint16x8_t w0 = vmovl_u8(vget_low_u8(ch));
+        uint16x8_t w1 = vmovl_u8(vget_high_u8(ch));
+        uint32x4x4_t s;
+        s.val[1] = vfg;
+        s.val[2] = vbg;
+        s.val[3] = vae;
+        s.val[0] = vmovl_u16(vget_low_u16(w0));
+        vst4q_u32((uint32_t *)(dest + k), s);
+        s.val[0] = vmovl_u16(vget_high_u16(w0));
+        vst4q_u32((uint32_t *)(dest + k + 4), s);
+        s.val[0] = vmovl_u16(vget_low_u16(w1));
+        vst4q_u32((uint32_t *)(dest + k + 8), s);
+        s.val[0] = vmovl_u16(vget_high_u16(w1));
+        vst4q_u32((uint32_t *)(dest + k + 12), s);
+        k += 16;
+    }
+    if (k + 8 <= n) {
+        uint8x8_t ch = vld1_u8(p + k);
+        uint16x8_t w = vmovl_u8(ch);
+        uint32x4x4_t s;
+        s.val[1] = vfg;
+        s.val[2] = vbg;
+        s.val[3] = vae;
+        s.val[0] = vmovl_u16(vget_low_u16(w));
+        vst4q_u32((uint32_t *)(dest + k), s);
+        s.val[0] = vmovl_u16(vget_high_u16(w));
+        vst4q_u32((uint32_t *)(dest + k + 4), s);
+        k += 8;
+    }
+    if (k + 4 <= n) {
+        uint32_t packed = (uint32_t)p[k]
+            | ((uint32_t)p[k + 1] << 8)
+            | ((uint32_t)p[k + 2] << 16)
+            | ((uint32_t)p[k + 3] << 24);
+        uint32x4x4_t s;
+        s.val[0] = vmovl_u16(vget_low_u16(vmovl_u8(vreinterpret_u8_u32(vdup_n_u32(packed)))));
+        s.val[1] = vfg;
+        s.val[2] = vbg;
+        s.val[3] = vae;
+        vst4q_u32((uint32_t *)(dest + k), s);
+        k += 4;
+    }
+    for (; k < n; k++) {
+        dest[k].content = content_scalar(p[k], WIDE_NARROW);
+        dest[k].fg = fg;
+        dest[k].bg = bg;
+        dest[k].attrs = attrs;
+        dest[k].extra = extra;
+    }
+#else
+    for (size_t k = 0; k < n; k++) {
+        dest[k].content = content_scalar(p[k], WIDE_NARROW);
+        dest[k].fg = fg;
+        dest[k].bg = bg;
+        dest[k].attrs = attrs;
+        dest[k].extra = extra;
+    }
+#endif
+}
+
 static int row_erased(const jt_scr *s, int32_t y) {
     const jt_buf *b = s->active;
     int32_t py = phys_y(b, y);
@@ -435,13 +505,7 @@ void jt_scr_print_run(jt_scr *s, const uint8_t *p, size_t n) {
             materialize_row(s, b->cy);
         }
         Cell *dest = row_at(s, b->cy) + b->cx;
-        for (size_t k = 0; k < take; k++) {
-            dest[k].content = content_scalar(p[i + k], WIDE_NARROW);
-            dest[k].fg = s->pen.fg;
-            dest[k].bg = s->pen.bg;
-            dest[k].attrs = s->pen.attrs;
-            dest[k].extra = s->pen.extra;
-        }
+        store_ascii_cells(dest, p + i, take, s->pen.fg, s->pen.bg, s->pen.attrs, s->pen.extra);
         mark_row(s, b->cy);
         i += take;
         if (b->cx + (int32_t)take >= s->cols) {

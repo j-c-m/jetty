@@ -410,4 +410,115 @@ final class ScreenTests: XCTestCase {
         XCTAssertFalse(s.tracksMouse)
         XCTAssertTrue(s.sendsAlternateScroll)
     }
+
+    func testPrintRunPacksPenAndRemainders() {
+        let lengths = [1, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 80, 105]
+        for n in lengths {
+            let cols = max(n, 2)
+            let s = Screen(cols: cols, rows: 2, scrollbackCapRows: 0)
+            s.penFG = PackedColor.indexed(9)
+            s.penBG = PackedColor.rgb(r: 1, g: 2, b: 3)
+            s.penAttrs = UInt16(ATTR_BOLD | UL_DOUBLE)
+            s.implPtr.pointee.pen.extra = 0xBEEF
+            var bytes = [UInt8](repeating: 0, count: n)
+            for i in 0..<n { bytes[i] = 0x20 + UInt8(i % 0x5E) }
+            bytes.withUnsafeBufferPointer { buf in
+                guard let p = buf.baseAddress else { return }
+                jt_scr_print_run(s.implPtr, p, buf.count)
+            }
+            let row = s.row(0)
+            for x in 0..<n {
+                let c = row[x]
+                XCTAssertEqual(c.contentPayload, UInt32(bytes[x]), "n=\(n) x=\(x)")
+                XCTAssertEqual(c.wide, 0, "n=\(n) x=\(x)")
+                XCTAssertEqual(c.fg, PackedColor.indexed(9), "n=\(n) x=\(x)")
+                XCTAssertEqual(c.bg, PackedColor.rgb(r: 1, g: 2, b: 3), "n=\(n) x=\(x)")
+                XCTAssertEqual(c.attrs, UInt16(ATTR_BOLD | UL_DOUBLE), "n=\(n) x=\(x)")
+                XCTAssertEqual(c.extra, 0xBEEF, "n=\(n) x=\(x)")
+            }
+            if n == cols {
+                XCTAssertEqual(s.cursorX, cols - 1)
+                XCTAssertTrue(s.pendingWrap)
+            } else {
+                XCTAssertEqual(s.cursorX, n)
+                XCTAssertFalse(s.pendingWrap)
+            }
+        }
+    }
+
+    func testPrintRunWrapsMidRun() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        s.penFG = PackedColor.indexed(4)
+        s.penAttrs = UInt16(ATTR_ITALIC)
+        let bytes = Array("abcdefghijklmnopqrstuvwxyz".utf8)
+        bytes.withUnsafeBufferPointer { buf in
+            guard let p = buf.baseAddress else { return }
+            jt_scr_print_run(s.implPtr, p, buf.count)
+        }
+        XCTAssertEqual(s.plainString(), "abcdefghij\nklmnopqrst\nuvwxyz")
+        XCTAssertTrue(s.isWrapped(0))
+        XCTAssertTrue(s.isWrapped(1))
+        XCTAssertFalse(s.isWrapped(2))
+        XCTAssertEqual(s.row(1)[3].fg, PackedColor.indexed(4))
+        XCTAssertEqual(s.row(1)[3].attrs, UInt16(ATTR_ITALIC))
+        XCTAssertEqual(s.cursorY, 2)
+        XCTAssertEqual(s.cursorX, 6)
+    }
+
+    func testPrintRunCost() {
+        func minMs(_ trials: Int, _ body: () -> Void) -> Double {
+            var best = Double.greatestFiniteMagnitude
+            for _ in 0..<trials {
+                let t0 = ProcessInfo.processInfo.systemUptime
+                body()
+                best = min(best, (ProcessInfo.processInfo.systemUptime - t0) * 1000)
+            }
+            return best
+        }
+
+        let isolated = minMs(5) {
+            let cols = 256
+            let s = Screen(cols: cols, rows: 2, scrollbackCapRows: 0)
+            let line = [UInt8](repeating: UInt8(ascii: "Q"), count: cols)
+            line.withUnsafeBufferPointer { buf in
+                guard let p = buf.baseAddress else { return }
+                for _ in 0..<40_000 {
+                    jt_scr_cup(s.implPtr, 0, 0)
+                    s.pendingWrap = false
+                    jt_scr_print_run(s.implPtr, p, buf.count)
+                }
+            }
+            XCTAssertEqual(s.glyph(0, 0), UInt32(UInt8(ascii: "Q")))
+        }
+
+        func feedMs(cols: Int, rows: Int, cap: Int, alt: Bool, bytes: [UInt8]) -> Double {
+            minMs(5) {
+                let s = Screen(cols: cols, rows: rows, scrollbackCapRows: cap)
+                if alt { s.switchScreenMode(1049, enabled: true) }
+                let p = Parser()
+                p.screen = s
+                p.feed(bytes)
+            }
+        }
+
+        var full = [UInt8](repeating: UInt8(ascii: "A"), count: 105)
+        full.append(0x0A)
+        var fullscreen = [UInt8]()
+        fullscreen.reserveCapacity(1_048_576)
+        while fullscreen.count < 1_048_576 { fullscreen.append(contentsOf: full) }
+
+        var yn = [UInt8]()
+        yn.reserveCapacity(1_048_576)
+        while yn.count < 1_048_576 {
+            yn.append(UInt8(ascii: "y"))
+            yn.append(0x0A)
+        }
+
+        let wide = feedMs(cols: 105, rows: 35, cap: 50_000, alt: false, bytes: fullscreen)
+        let ynAlt = feedMs(cols: 105, rows: 35, cap: 8, alt: true, bytes: yn)
+        fputs(String(format: "print_run ms isolated=%.2f fullscreen1MiB=%.2f yn1MiB=%.2f\n",
+                     isolated, wide, ynAlt), stderr)
+        fflush(stderr)
+        XCTAssertLessThan(isolated, 500)
+    }
 }
