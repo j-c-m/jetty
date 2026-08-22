@@ -19,8 +19,13 @@ let package = Package(
             ]
         ),
         .target(
+            name: "CVt",
+            path: "Sources/CVt",
+            publicHeadersPath: "."
+        ),
+        .target(
             name: "Jetty",
-            dependencies: ["CPty"],
+            dependencies: ["CPty", "CVt"],
             path: "Sources/Jetty",
             swiftSettings: [
                 .unsafeFlags(
@@ -49,7 +54,7 @@ let package = Package(
         ),
         .testTarget(
             name: "JettyTests",
-            dependencies: ["Jetty"]
+            dependencies: ["Jetty", "CVt"]
         ),
     ]
 )
