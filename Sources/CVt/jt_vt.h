@@ -114,7 +114,13 @@ Cell *jt_scr_row(jt_scr *s, int32_t y);
 void jt_scr_ris(jt_scr *s);
 void jt_sgr_apply(jt_scr *s, const uint16_t *p, int n, uint32_t seps);
 
-int jt_codepoint_width(uint32_t cp);
+extern const uint8_t jt_width_lut[278528];
+
+static inline int jt_codepoint_width(uint32_t cp) {
+    if (cp >= 0x110000u) return 1;
+    uint8_t b = jt_width_lut[cp >> 2];
+    return (int)((b >> ((cp & 3u) * 2u)) & 3u);
+}
 uint32_t jt_grapheme_intern(jt_scr *s, const uint32_t *cps, uint16_t n);
 const uint32_t *jt_grapheme_get(const jt_scr *s, uint32_t id, uint16_t *n);
 void jt_grapheme_retain(jt_scr *s, uint32_t id);

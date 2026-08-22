@@ -4,6 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
+
 #define JT_MAX_PARAMS 24
 
 struct jt_vt {
@@ -464,20 +468,122 @@ static int try_fast_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h,
     return 0;
 }
 
+#if defined(__ARM_NEON)
+/* Five well-formed 3-byte scalars. Leads E1–EC or EE–EF. Load 16, consume 15. */
+static int try_neon_utf8_3(const uint8_t *p, uint32_t cps[5]) {
+    const uint8x16_t v = vld1q_u8(p);
+    const uint8x16_t idx_lead = {
+        0, 3, 6, 9, 12, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255};
+    const uint8x16_t idx_c1 = {
+        1, 4, 7, 10, 13, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255};
+    const uint8x16_t idx_c2 = {
+        2, 5, 8, 11, 14, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255};
+    uint8x16_t lead = vqtbl1q_u8(v, idx_lead);
+    uint8x16_t c1 = vqtbl1q_u8(v, idx_c1);
+    uint8x16_t c2 = vqtbl1q_u8(v, idx_c2);
+    uint8x16_t lead_ok = vandq_u8(
+        vcleq_u8(vsubq_u8(lead, vdupq_n_u8(0xE1)), vdupq_n_u8(0x0E)),
+        vmvnq_u8(vceqq_u8(lead, vdupq_n_u8(0xED))));
+    uint8x16_t c80 = vdupq_n_u8(0x80);
+    uint8x16_t cmask = vdupq_n_u8(0xC0);
+    uint8x16_t cont_ok = vandq_u8(
+        vceqq_u8(vandq_u8(c1, cmask), c80),
+        vceqq_u8(vandq_u8(c2, cmask), c80));
+    uint64_t lo = vgetq_lane_u64(vreinterpretq_u64_u8(vandq_u8(lead_ok, cont_ok)), 0);
+    if ((lo & 0xFFFFFFFFFFull) != 0xFFFFFFFFFFull) return 0;
+
+    uint16x8_t l16 = vmovl_u8(vget_low_u8(vandq_u8(lead, vdupq_n_u8(0x0F))));
+    uint16x8_t a16 = vmovl_u8(vget_low_u8(vandq_u8(c1, vdupq_n_u8(0x3F))));
+    uint16x8_t b16 = vmovl_u8(vget_low_u8(vandq_u8(c2, vdupq_n_u8(0x3F))));
+    uint32x4_t cp0 = vorrq_u32(
+        vshlq_n_u32(vmovl_u16(vget_low_u16(l16)), 12),
+        vorrq_u32(
+            vshlq_n_u32(vmovl_u16(vget_low_u16(a16)), 6),
+            vmovl_u16(vget_low_u16(b16))));
+    cps[0] = vgetq_lane_u32(cp0, 0);
+    cps[1] = vgetq_lane_u32(cp0, 1);
+    cps[2] = vgetq_lane_u32(cp0, 2);
+    cps[3] = vgetq_lane_u32(cp0, 3);
+    cps[4] = ((uint32_t)vgetq_lane_u16(l16, 4) << 12)
+        | ((uint32_t)vgetq_lane_u16(a16, 4) << 6)
+        | (uint32_t)vgetq_lane_u16(b16, 4);
+    return 1;
+}
+#endif
+
 static void emit_utf8_run(jt_vt *p, jt_scr *scr, const uint8_t *src, size_t n) {
     if (!scr) return;
     size_t j = 0;
     while (j < n) {
-        int consumed = 0;
-        while (!consumed) {
-            uint32_t cp = 0;
-            int r = jt_utf8_next(&p->utf8_st, &p->utf8_acc, src[j], &cp);
-            if (r == 1 || r == 2) jt_scr_print_scalar(scr, cp);
-            if (r != 2) {
-                consumed = 1;
-                j++;
+        if (p->utf8_st == 0) {
+            uint8_t b0 = src[j];
+            if (b0 < 0x80) {
+                if (b0 >= 0x20 && b0 != 0x7F) {
+                    jt_scr_print_scalar(scr, b0);
+                    j++;
+                    continue;
+                }
+                break;
+            }
+#if defined(__ARM_NEON)
+            if ((b0 & 0xF0) == 0xE0 && j + 16 <= n) {
+                uint32_t cps[5];
+                if (try_neon_utf8_3(src + j, cps)) {
+                    do {
+                        jt_scr_print_scalar(scr, cps[0]);
+                        jt_scr_print_scalar(scr, cps[1]);
+                        jt_scr_print_scalar(scr, cps[2]);
+                        jt_scr_print_scalar(scr, cps[3]);
+                        jt_scr_print_scalar(scr, cps[4]);
+                        j += 15;
+                        if (j + 16 > n) break;
+                    } while (try_neon_utf8_3(src + j, cps));
+                    continue;
+                }
+            }
+#endif
+            if ((b0 & 0xE0) == 0xC0 && b0 >= 0xC2 && j + 1 < n) {
+                uint8_t b1 = src[j + 1];
+                if ((b1 & 0xC0) == 0x80) {
+                    jt_scr_print_scalar(scr, ((uint32_t)(b0 & 0x1F) << 6) | (b1 & 0x3F));
+                    j += 2;
+                    continue;
+                }
+            } else if ((b0 & 0xF0) == 0xE0 && j + 2 < n) {
+                uint8_t b1 = src[j + 1], b2 = src[j + 2];
+                if ((b1 & 0xC0) == 0x80 && (b2 & 0xC0) == 0x80) {
+                    uint32_t cp = ((uint32_t)(b0 & 0x0F) << 12)
+                        | ((uint32_t)(b1 & 0x3F) << 6) | (b2 & 0x3F);
+                    int ok = (b0 == 0xE0) ? (b1 >= 0xA0)
+                        : (b0 == 0xED) ? (b1 < 0xA0)
+                        : 1;
+                    if (ok && cp >= 0x800) {
+                        jt_scr_print_scalar(scr, cp);
+                        j += 3;
+                        continue;
+                    }
+                }
+            } else if ((b0 & 0xF8) == 0xF0 && b0 <= 0xF4 && j + 3 < n) {
+                uint8_t b1 = src[j + 1], b2 = src[j + 2], b3 = src[j + 3];
+                if ((b1 & 0xC0) == 0x80 && (b2 & 0xC0) == 0x80 && (b3 & 0xC0) == 0x80) {
+                    uint32_t cp = ((uint32_t)(b0 & 0x07) << 18)
+                        | ((uint32_t)(b1 & 0x3F) << 12)
+                        | ((uint32_t)(b2 & 0x3F) << 6) | (b3 & 0x3F);
+                    int ok = (b0 == 0xF0) ? (b1 >= 0x90)
+                        : (b0 == 0xF4) ? (b1 < 0x90)
+                        : 1;
+                    if (ok && cp >= 0x10000 && cp <= 0x10FFFF) {
+                        jt_scr_print_scalar(scr, cp);
+                        j += 4;
+                        continue;
+                    }
+                }
             }
         }
+        uint32_t cp = 0;
+        int r = jt_utf8_next(&p->utf8_st, &p->utf8_acc, src[j], &cp);
+        if (r == 1 || r == 2) jt_scr_print_scalar(scr, cp);
+        if (r != 2) j++;
     }
 }
 

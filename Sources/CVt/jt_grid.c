@@ -565,15 +565,31 @@ static void print_wide(jt_scr *s, uint32_t scalar) {
         if (s->auto_wrap) {
             place_graphic(s, content_scalar(0, WIDE_HEAD));
             consume_wrap(s);
-            place_graphic(s, content_scalar(scalar, WIDE_FULL));
-            place_graphic(s, content_scalar(0, WIDE_TAIL));
         } else {
             place_graphic(s, content_scalar(scalar, WIDE_FULL));
+            return;
         }
-        return;
     }
-    place_graphic(s, content_scalar(scalar, WIDE_FULL));
-    place_graphic(s, content_scalar(0, WIDE_TAIL));
+    materialize_row(s, b->cy);
+    Cell *row = row_at(s, b->cy) + b->cx;
+    Cell full;
+    full.content = content_scalar(scalar, WIDE_FULL);
+    full.fg = s->pen.fg;
+    full.bg = s->pen.bg;
+    full.attrs = s->pen.attrs;
+    full.extra = s->pen.extra;
+    Cell tail = full;
+    tail.content = content_scalar(0, WIDE_TAIL);
+    tail.extra = 0;
+    stamp_cell(s, row, full);
+    if (b->cx + 1 < s->cols) stamp_cell(s, row + 1, tail);
+    mark_row(s, b->cy);
+    if (b->cx + 2 >= s->cols) {
+        b->cx = s->cols - 1;
+        b->pending_wrap = s->auto_wrap;
+    } else {
+        b->cx += 2;
+    }
 }
 
 void jt_scr_print_scalar(jt_scr *s, uint32_t scalar) {
