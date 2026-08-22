@@ -29,6 +29,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var lastSafeTop: CGFloat = 0
     private var lastInAlt = false
     private var altScrollPending: Double = 0
+    private var pageHoldKey: UInt16 = 0
+    private var pageHoldCount: Int = 0
 
     public init(session: TerminalSession, config: AppConfig, device: MTLDevice, backingScale: CGFloat) {
         self.session = session
@@ -290,6 +292,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
 
     public override func keyDown(with event: NSEvent) {
         if handleZoomKeys(event) { return }
+        if handleScrollbackKeys(event) { return }
         if event.modifierFlags.contains(.command) {
             super.keyDown(with: event)
             return
@@ -331,6 +334,48 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             return true
         }
         return false
+    }
+
+    @discardableResult
+    private func handleScrollbackKeys(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags.contains(.command),
+              !flags.contains(.control),
+              !flags.contains(.option),
+              !flags.contains(.shift)
+        else { return false }
+        let code = Int(event.keyCode)
+        let pageUp = code == kVK_PageUp
+        let pageDown = code == kVK_PageDown
+        let home = code == kVK_Home
+        let end = code == kVK_End
+        guard pageUp || pageDown || home || end else { return false }
+
+        session.lock.lock()
+        let inAlt = session.screen.inAlt
+        let sb = session.screen.scrollbackCount
+        let rows = session.screen.rows
+        session.lock.unlock()
+        if inAlt { return true }
+
+        let maxO = Double(sb)
+        let vp = Double(max(1, rows))
+        if pageUp || pageDown {
+            if event.isARepeat, pageHoldKey == event.keyCode {
+                pageHoldCount += 1
+            } else {
+                pageHoldKey = event.keyCode
+                pageHoldCount = 1
+            }
+            let dir: Double = pageUp ? 1 : -1
+            scrollPhysics.applyPageImpulse(direction: dir, holdCount: pageHoldCount, viewportRows: vp)
+        } else if home {
+            scrollPhysics.seekExtreme(direction: 1, holdCount: 1, viewportRows: vp, maxOffset: maxO)
+        } else {
+            scrollPhysics.seekExtreme(direction: -1, holdCount: 1, viewportRows: vp, maxOffset: maxO)
+        }
+        kickScroll()
+        return true
     }
 
     private func applyFontSize(_ next: CGFloat) {
