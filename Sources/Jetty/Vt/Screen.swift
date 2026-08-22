@@ -37,6 +37,15 @@ public final class Screen {
     }
     public var scrollTop: Int { Int(implPtr.pointee.active.pointee.scroll_top) }
     public var scrollBottom: Int { Int(implPtr.pointee.active.pointee.scroll_bottom) }
+    public var reverseVideo: Bool {
+        get { implPtr.pointee.reverse_video != 0 }
+        set { implPtr.pointee.reverse_video = newValue ? 1 : 0 }
+    }
+    public var cursorVisible: Bool {
+        get { implPtr.pointee.cursor_visible != 0 }
+        set { implPtr.pointee.cursor_visible = newValue ? 1 : 0 }
+    }
+    public var decckm: Bool { implPtr.pointee.decckm != 0 }
 
     public var penFG: UInt32 {
         get { implPtr.pointee.pen.fg }
@@ -127,6 +136,58 @@ public final class Screen {
 
     public var cells: [Cell] {
         (0..<rows).flatMap { row($0) }
+    }
+
+    public func paletteColor(_ i: Int) -> RGB {
+        var pal = [UInt32](repeating: 0, count: 256)
+        copyPalette256(&pal)
+        return RGB.packed(pal[max(0, min(255, i))])
+    }
+
+    public func copyPalette256(_ dest: UnsafeMutablePointer<UInt32>) {
+        withUnsafePointer(to: &implPtr.pointee.palette) { ptr in
+            ptr.withMemoryRebound(to: UInt32.self, capacity: 256) { src in
+                dest.update(from: src, count: 256)
+            }
+        }
+    }
+
+    public var defaultFgRGB: RGB {
+        let v = implPtr.pointee.default_fg
+        return v == 0 ? paletteColor(7) : RGB.packed(v)
+    }
+
+    public var defaultBgRGB: RGB {
+        let v = implPtr.pointee.default_bg
+        return v == 0 ? paletteColor(0) : RGB.packed(v)
+    }
+
+    public func blitLiveGrid(to dest: UnsafeMutablePointer<Cell>) {
+        let blank = spaceBlank
+        let c = cols
+        for y in 0..<rows {
+            jt_scr_copy_row(implPtr, Int32(y), dest + y * c, Int32(c), blank)
+        }
+    }
+
+    public func blitDocumentRow(
+        _ docRow: Int,
+        to dest: UnsafeMutablePointer<Cell>,
+        destCols: Int,
+        liveRows: Int,
+        blank: Cell
+    ) {
+        let sb = scrollbackCount
+        if docRow < sb {
+            jt_scr_copy_sb_row(implPtr, Int32(docRow), dest, Int32(destCols), blank)
+            return
+        }
+        let liveY = docRow - sb
+        if liveY >= 0 && liveY < liveRows {
+            jt_scr_copy_row(implPtr, Int32(liveY), dest, Int32(destCols), blank)
+            return
+        }
+        for x in 0..<destCols { dest[x] = blank }
     }
 
     public func glyph(_ x: Int, _ y: Int) -> UInt32 {

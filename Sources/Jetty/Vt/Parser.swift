@@ -8,6 +8,7 @@ public final class Parser {
     public unowned(unsafe) var screen: Screen?
     public var writes: [UInt8] = []
     public var bells: Int = 0
+    public var ptyWriter: (([UInt8]) -> Void)?
 
     public var state: Int { Int(jt_vt_state(vt)) }
 
@@ -56,7 +57,9 @@ public final class Parser {
     }
 
     func onWritePty(_ buf: UnsafeBufferPointer<UInt8>) {
-        writes.append(contentsOf: buf)
+        let bytes = Array(buf)
+        writes.append(contentsOf: bytes)
+        ptyWriter?(bytes)
     }
 
     func onBell() {

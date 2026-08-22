@@ -1,5 +1,21 @@
 import CVt
 
+public struct RGB: Equatable, Sendable {
+    public var r: UInt8
+    public var g: UInt8
+    public var b: UInt8
+
+    public init(r: UInt8, g: UInt8, b: UInt8) {
+        self.r = r
+        self.g = g
+        self.b = b
+    }
+
+    public static func packed(_ v: UInt32) -> RGB {
+        RGB(r: UInt8((v >> 16) & 0xFF), g: UInt8((v >> 8) & 0xFF), b: UInt8(v & 0xFF))
+    }
+}
+
 public enum PackedColor {
     public static var `default`: UInt32 { COLOR_DEFAULT }
 
