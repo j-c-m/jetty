@@ -1,78 +1,235 @@
-import Darwin
+import AppKit
 import Jetty
+import Metal
 
-/// Spawn stub: login shell at 105×35, copy PTY ↔ stdio. No window chrome.
 @main
 enum JettyMain {
     static func main() {
-        guard let (fd, pid) = Pty.spawn() else {
+        MainActor.assumeIsolated {
+            let app = NSApplication.shared
+            let delegate = AppDelegate()
+            app.delegate = delegate
+            app.setActivationPolicy(.regular)
+            app.run()
+        }
+    }
+}
+
+@MainActor
+final class TermWindow: NSObject, NSWindowDelegate {
+    let session: TerminalSession
+    let view: MetalTerminalView
+    let window: NSWindow
+    var onClose: (() -> Void)?
+
+    init(session: TerminalSession, view: MetalTerminalView, window: NSWindow) {
+        self.session = session
+        self.view = view
+        self.window = window
+        super.init()
+        window.delegate = self
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        session.stop()
+        window.delegate = nil
+        let done = onClose
+        onClose = nil
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                done?()
+            }
+        }
+    }
+}
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var device: MTLDevice?
+    private var config: AppConfig?
+    private var terms: [TermWindow] = []
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            fputs("jetty: no Metal device\n", stderr)
+            NSApp.terminate(nil)
+            return
+        }
+        self.device = device
+        self.config = AppConfig.load()
+        EmbeddedFonts.registerIfNeeded()
+
+        let menu = NSMenu()
+        let appMenu = NSMenuItem()
+        appMenu.submenu = NSMenu()
+        appMenu.submenu?.addItem(
+            withTitle: "Hide jetty",
+            action: #selector(NSApplication.hide(_:)),
+            keyEquivalent: "h"
+        )
+        let hideOthers = NSMenuItem(
+            title: "Hide Others",
+            action: #selector(NSApplication.hideOtherApplications(_:)),
+            keyEquivalent: "h"
+        )
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        appMenu.submenu?.addItem(hideOthers)
+        appMenu.submenu?.addItem(.separator())
+        appMenu.submenu?.addItem(
+            withTitle: "Quit jetty",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+        menu.addItem(appMenu)
+        let file = NSMenuItem()
+        file.submenu = NSMenu(title: "File")
+        let neu = NSMenuItem(
+            title: "New Window",
+            action: #selector(newWindow(_:)),
+            keyEquivalent: "n"
+        )
+        neu.target = self
+        file.submenu?.addItem(neu)
+        file.submenu?.addItem(
+            withTitle: "Close Window",
+            action: #selector(NSWindow.performClose(_:)),
+            keyEquivalent: "w"
+        )
+        menu.addItem(file)
+        let edit = NSMenuItem()
+        edit.submenu = NSMenu(title: "Edit")
+        edit.submenu?.addItem(withTitle: "Copy", action: #selector(MetalTerminalView.copy(_:)), keyEquivalent: "c")
+        edit.submenu?.addItem(withTitle: "Paste", action: #selector(MetalTerminalView.paste(_:)), keyEquivalent: "v")
+        edit.submenu?.addItem(
+            withTitle: "Select All",
+            action: #selector(MetalTerminalView.selectAll(_:)),
+            keyEquivalent: "a"
+        )
+        menu.addItem(edit)
+        let viewMenu = NSMenuItem()
+        viewMenu.submenu = NSMenu(title: "View")
+        viewMenu.submenu?.addItem(withTitle: "Actual Size", action: #selector(MetalTerminalView.actualSize(_:)), keyEquivalent: "0")
+        viewMenu.submenu?.addItem(withTitle: "Zoom In", action: #selector(MetalTerminalView.zoomIn(_:)), keyEquivalent: "=")
+        viewMenu.submenu?.addItem(withTitle: "Zoom Out", action: #selector(MetalTerminalView.zoomOut(_:)), keyEquivalent: "-")
+        viewMenu.submenu?.addItem(.separator())
+        let fullScreen = NSMenuItem(
+            title: "Enter Full Screen",
+            action: #selector(NSWindow.toggleFullScreen(_:)),
+            keyEquivalent: "f"
+        )
+        fullScreen.keyEquivalentModifierMask = [.command, .control]
+        viewMenu.submenu?.addItem(fullScreen)
+        menu.addItem(viewMenu)
+        let windowMenu = NSMenuItem()
+        windowMenu.submenu = NSMenu(title: "Window")
+        windowMenu.submenu?.addItem(
+            withTitle: "Minimize",
+            action: #selector(NSWindow.performMiniaturize(_:)),
+            keyEquivalent: "m"
+        )
+        NSApp.windowsMenu = windowMenu.submenu
+        menu.addItem(windowMenu)
+        NSApp.mainMenu = menu
+
+        if openWindow() == nil {
             fputs("jetty: spawn failed\n", stderr)
-            exit(1)
+            NSApp.terminate(nil)
+            return
+        }
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc func newWindow(_ sender: Any?) {
+        if openWindow() == nil {
+            fputs("jetty: spawn failed\n", stderr)
+        }
+    }
+
+    @discardableResult
+    private func openWindow() -> TermWindow? {
+        guard let device, let config else { return nil }
+        let screen = NSScreen.main ?? NSScreen.screens[0]
+        let backing = screen.backingScaleFactor
+        let metrics = CellMetrics.measure(fontSize: config.fontSize, backingScale: backing)
+        let session = TerminalSession(
+            cols: config.launchCols,
+            rows: config.launchRows,
+            cellWidthPx: UInt32(metrics.cellWidthPx),
+            cellHeightPx: UInt32(metrics.cellHeightPx),
+            scrollbackCapRows: config.scrollbackLines
+        )
+        let view = MetalTerminalView(
+            session: session,
+            config: config,
+            device: device,
+            backingScale: backing
+        )
+
+        let grid = view.contentSizePoints(
+            backingScale: backing,
+            cols: config.launchCols,
+            rows: config.launchRows
+        )
+        let titleH = NSWindow.frameRect(
+            forContentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
+            styleMask: [.titled]
+        ).height - 100
+        let size = NSSize(width: grid.width, height: grid.height + titleH)
+        let bg = session.screen.defaultBgRGB
+
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "jetty"
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
+        window.isMovableByWindowBackground = true
+        window.backgroundColor = NSColor(
+            srgbRed: CGFloat(bg.r) / 255,
+            green: CGFloat(bg.g) / 255,
+            blue: CGFloat(bg.b) / 255,
+            alpha: 1
+        )
+        window.contentView = view
+        window.isReleasedWhenClosed = false
+        window.collectionBehavior.insert(.fullScreenPrimary)
+        if let key = NSApp.keyWindow {
+            var origin = key.frame.origin
+            origin.x += 24
+            origin.y -= 24
+            window.setFrameOrigin(origin)
+        } else {
+            window.center()
         }
 
-        var stdinRaw = false
-        var old = termios()
-        if isatty(STDIN_FILENO) != 0, tcgetattr(STDIN_FILENO, &old) == 0 {
-            var raw = old
-            cfmakeraw(&raw)
-            _ = tcsetattr(STDIN_FILENO, TCSANOW, &raw)
-            stdinRaw = true
+        let term = TermWindow(session: session, view: view, window: window)
+        term.onClose = { [weak self, weak term] in
+            self?.terms.removeAll { $0 === term }
         }
+        session.onDeath = { [weak window] in
+            DispatchQueue.main.async {
+                window?.close()
+            }
+        }
+        guard session.spawn() else {
+            session.stop()
+            return nil
+        }
+        terms.append(term)
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(view)
+        return term
+    }
 
-        let sfl = fcntl(STDIN_FILENO, F_GETFL)
-        if sfl >= 0 {
-            _ = fcntl(STDIN_FILENO, F_SETFL, sfl | O_NONBLOCK)
-        }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-        var buf = [UInt8](repeating: 0, count: 4096)
-        var fds = [
-            pollfd(fd: fd, events: Int16(POLLIN), revents: 0),
-            pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0),
-        ]
-        loop: while true {
-            let pr = poll(&fds, nfds_t(fds.count), -1)
-            if pr < 0 {
-                if errno == EINTR { continue }
-                break
-            }
-            if fds[1].revents & Int16(POLLIN) != 0 {
-                let n = read(STDIN_FILENO, &buf, buf.count)
-                if n < 0 {
-                    if errno == EAGAIN || errno == EINTR { continue }
-                    break
-                }
-                if n == 0 { break }
-                _ = writePtyBlocking(fd: fd, bytes: &buf, len: n)
-            }
-            if fds[0].revents & Int16(POLLIN) != 0 {
-                let n = read(fd, &buf, buf.count)
-                if n < 0 {
-                    if errno == EAGAIN || errno == EINTR { continue }
-                    break
-                }
-                if n == 0 { break }
-                var off = 0
-                while off < n {
-                    let w = buf.withUnsafeBytes { raw -> Int in
-                        write(STDOUT_FILENO, raw.baseAddress! + off, n - off)
-                    }
-                    if w < 0 {
-                        if errno == EINTR { continue }
-                        break loop
-                    }
-                    off += w
-                }
-            }
-            if fds[0].revents & Int16(POLLHUP | POLLERR | POLLNVAL) != 0 {
-                break
-            }
+    func applicationWillTerminate(_ notification: Notification) {
+        for term in terms {
+            term.session.stop()
         }
-
-        if stdinRaw {
-            _ = tcsetattr(STDIN_FILENO, TCSANOW, &old)
-        }
-        close(fd)
-        var status: Int32 = 0
-        while waitpid(pid, &status, 0) < 0 && errno == EINTR {}
+        terms.removeAll()
     }
 }

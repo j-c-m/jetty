@@ -27,6 +27,9 @@ let package = Package(
             name: "Jetty",
             dependencies: ["CPty", "CVt"],
             path: "Sources/Jetty",
+            resources: [
+                .copy("Resources"),
+            ],
             swiftSettings: [
                 .unsafeFlags(
                     ["-enforce-exclusivity=unchecked"],
