@@ -1,0 +1,90 @@
+import CVt
+import XCTest
+@testable import Jetty
+
+final class ParserTests: XCTestCase {
+    func testASCIIRun() {
+        let s = Screen(cols: 20, rows: 5, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("hello")
+        XCTAssertEqual(s.plainString(), "hello")
+        XCTAssertEqual(s.cursorX, 5)
+    }
+
+    func testWrap() {
+        let s = Screen(cols: 4, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("abcde")
+        XCTAssertEqual(s.plainString(), "abcd\ne")
+        XCTAssertTrue(s.isWrapped(0))
+    }
+
+    func testRISClears() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("hello")
+        p.feed("\u{1B}c")
+        XCTAssertEqual(s.plainString(), "")
+        XCTAssertEqual(s.cursorX, 0)
+        XCTAssertEqual(s.cursorY, 0)
+    }
+
+    func testLinuxFnDoesNotSwallow() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[[A")
+        XCTAssertEqual(s.plainString(), "A")
+    }
+
+    func testIncompleteOSCDoesNotLeak() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}]0;title")
+        p.feed("X")
+        XCTAssertEqual(s.plainString(), "")
+        p.feed("\u{07}")
+        p.feed("Y")
+        XCTAssertEqual(s.plainString(), "Y")
+    }
+
+    func testDA1() {
+        let p = Parser()
+        p.feed("\u{1B}[c")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?1;2c")
+    }
+
+    func testDA2Ignored() {
+        let p = Parser()
+        p.feed("\u{1B}[>c")
+        XCTAssertEqual(p.writes, [])
+    }
+
+    func testUTF8Scalar() {
+        let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("é")
+        XCTAssertEqual(s.glyph(0, 0), 0xE9)
+    }
+
+    func testScanPrintableStopsAtESC() {
+        let bytes: [UInt8] = [0x41, 0x42, 0x1B, 0x43]
+        XCTAssertEqual(jt_scan_printable_ascii(bytes, bytes.count), 2)
+        XCTAssertEqual(jt_scan_until_c0(bytes, bytes.count), 2)
+        XCTAssertEqual(jt_scan_first_esc(bytes, bytes.count), 2)
+    }
+
+    func testCUP() {
+        let s = Screen(cols: 20, rows: 10, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[5;8H")
+        XCTAssertEqual(s.cursorY, 4)
+        XCTAssertEqual(s.cursorX, 7)
+    }
+}

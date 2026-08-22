@@ -736,3 +736,42 @@ void jt_scr_deinit(jt_scr *s) {
     s->sb_wrap = NULL;
     s->active = NULL;
 }
+
+void jt_scr_ris(jt_scr *s) {
+    s->active = &s->primary;
+    s->in_alt = 0;
+    s->pen.fg = COLOR_DEFAULT;
+    s->pen.bg = COLOR_DEFAULT;
+    s->pen.ul_color = 0;
+    s->pen.attrs = 0;
+    s->pen.extra = 0;
+    s->g0 = 0;
+    s->g1 = 1;
+    s->gl = 0;
+    s->auto_wrap = 1;
+    s->insert_mode = 0;
+    s->origin_mode = 0;
+    s->decckm = 0;
+    s->deckpam = 0;
+    s->cursor_visible = 1;
+    s->cursor_blink = 0;
+    s->cursor_style = 2;
+    s->mouse_event = 0;
+    s->mouse_sgr = 0;
+    s->mouse_alt_scroll = 1;
+    s->focus_event = 0;
+    s->bracketed_paste = 0;
+    s->sync_output = 0;
+    s->reverse_video = 0;
+    s->primary.scroll_top = 0;
+    s->primary.scroll_bottom = s->rows - 1;
+    if (s->primary.tabstops) default_tabs(s->primary.tabstops, s->cols);
+    s->primary.cx = 0;
+    s->primary.cy = 0;
+    s->primary.pending_wrap = 0;
+    jt_palette_reset(s->palette);
+    s->default_fg = 0;
+    s->default_bg = 0;
+    s->saved.valid = 0;
+    jt_scr_ed(s, 2);
+}

@@ -48,7 +48,7 @@ typedef struct jt_scr {
     jt_saved saved;
     uint32_t palette[256];
     uint32_t default_fg, default_bg, cursor_color;
-    uint8_t mouse_event;
+    uint16_t mouse_event;
     uint8_t mouse_sgr;
     uint8_t mouse_alt_scroll;
     uint8_t focus_event, bracketed_paste, sync_output;
@@ -96,6 +96,47 @@ void jt_scr_wrap_at(jt_scr *s, int32_t y);
 int jt_scr_is_wrapped(const jt_scr *s, int32_t y);
 
 Cell *jt_scr_row(jt_scr *s, int32_t y);
+void jt_scr_ris(jt_scr *s);
+
+enum {
+    JT_ST_GROUND = 0,
+    JT_ST_ESCAPE,
+    JT_ST_ESCAPE_INT,
+    JT_ST_CSI_ENTRY,
+    JT_ST_CSI_PARAM,
+    JT_ST_CSI_INT,
+    JT_ST_CSI_IGNORE,
+    JT_ST_OSC_STRING,
+    JT_ST_OSC_IGNORE,
+    JT_ST_SOS_PM_APC,
+    JT_ST_DCS_IGNORE,
+};
+
+typedef struct jt_vt_host {
+    void *ctx;
+    void (*write_pty)(void *ctx, const uint8_t *p, size_t n);
+    void (*bell)(void *ctx);
+    void (*set_title)(void *ctx, const uint8_t *utf8, size_t n);
+    void (*osc52_write)(void *ctx, uint8_t kind, const uint8_t *b64, size_t n);
+    void (*osc52_read)(void *ctx, uint8_t kind);
+    void (*osc7)(void *ctx, const uint8_t *uri, size_t n);
+    void (*osc133)(void *ctx, uint8_t action, const uint8_t *opts, size_t n);
+    void (*palette_changed)(void *ctx);
+} jt_vt_host;
+
+typedef struct jt_vt jt_vt;
+
+jt_vt *jt_vt_create(void);
+void jt_vt_destroy(jt_vt *p);
+void jt_vt_reset(jt_vt *p);
+void jt_vt_feed(jt_vt *p, const uint8_t *bytes, size_t n,
+                jt_scr *scr, const jt_vt_host *host);
+int jt_vt_state(const jt_vt *p);
+
+size_t jt_scan_printable_ascii(const uint8_t *p, size_t n);
+size_t jt_scan_until_c0(const uint8_t *p, size_t n);
+size_t jt_scan_first_esc(const uint8_t *p, size_t n);
+int jt_utf8_next(uint8_t *st, uint32_t *acc, uint8_t b, uint32_t *out);
 
 #ifdef __cplusplus
 }
