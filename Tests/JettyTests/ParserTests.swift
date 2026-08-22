@@ -235,6 +235,18 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(kinds, [14, 18])
     }
 
+    func testSizeReportUnderParseLock() {
+        let session = TerminalSession(cols: 10, rows: 5, cellWidthPx: 8, cellHeightPx: 16, scrollbackCapRows: 0)
+        var replies: [UInt8] = []
+        session.parser.ptyWriter = { replies.append(contentsOf: $0) }
+        session.lock.lock()
+        session.parser.feed("\u{1B}[18t\u{1B}[14t")
+        session.lock.unlock()
+        let text = String(bytes: replies, encoding: .utf8) ?? ""
+        XCTAssertTrue(text.contains("\u{1B}[8;5;10t"), text)
+        XCTAssertTrue(text.contains("\u{1B}[4;80;80t"), text)
+    }
+
     func testDECSCUSR() {
         let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
         let p = Parser()

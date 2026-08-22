@@ -61,17 +61,13 @@ public final class TerminalSession: @unchecked Sendable {
             self?.scheduleRedraw()
         }
         parser.onOsc7 = { [weak self] uri in
-            self?.lock.lock()
             self?.osc7 = uri
-            self?.lock.unlock()
         }
         parser.onOsc133 = { [weak self] action, opts in
             guard let self else { return }
-            self.lock.lock()
             let line = self.screen.linesScrolled + UInt64(max(0, self.screen.cursorY))
             self.osc133.append((line, action, opts))
             if self.osc133.count > 4096 { self.osc133.removeFirst(self.osc133.count - 4096) }
-            self.lock.unlock()
         }
         parser.onSizeReport = { [weak self] kind in
             self?.replySizeReport(kind)
@@ -128,12 +124,10 @@ public final class TerminalSession: @unchecked Sendable {
     }
 
     private func replySizeReport(_ kind: Int32) {
-        lock.lock()
         let cols = screen.cols
         let rows = screen.rows
         let cw = Int(cellWidthPx)
         let ch = Int(cellHeightPx)
-        lock.unlock()
         let seq: String
         if kind == 14 {
             seq = "\u{1B}[4;\(rows * ch);\(cols * cw)t"
@@ -142,7 +136,7 @@ public final class TerminalSession: @unchecked Sendable {
         } else {
             return
         }
-        writeToPty(Array(seq.utf8))
+        parser.ptyWriter?(Array(seq.utf8))
     }
 
     @MainActor
