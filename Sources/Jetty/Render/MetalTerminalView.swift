@@ -348,6 +348,9 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         window?.makeFirstResponder(self)
         pendingSelect = cellAt(event)
         selecting = false
+        selAnchor = nil
+        selEnd = nil
+        needsDisplay = true
     }
 
     public override func mouseDragged(with event: NSEvent) {
@@ -367,9 +370,13 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         if selecting {
             selEnd = cellAt(event)
             if config.copyOnSelect { copy(nil) }
+        } else {
+            selAnchor = nil
+            selEnd = nil
         }
         selecting = false
         pendingSelect = nil
+        needsDisplay = true
     }
 
     @objc public func copy(_ sender: Any?) {
