@@ -63,6 +63,7 @@ typedef struct jt_scr {
     void *rp;
     char *osc8_id;
     char *osc8_uri;
+    int32_t pool_cells;
 } jt_scr;
 
 typedef struct jt_rare {

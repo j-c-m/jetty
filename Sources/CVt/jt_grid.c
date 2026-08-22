@@ -114,7 +114,7 @@ static void release_cells(jt_scr *s, Cell *row, int32_t n);
 /* ASCII bytes → 16-byte cells. Last u32 is attrs (low half) + extra (high half). */
 static void store_ascii_cells(jt_scr *s, Cell *dest, const uint8_t *p, size_t n,
                               uint32_t fg, uint32_t bg, uint16_t attrs, uint16_t extra) {
-    release_cells(s, dest, (int32_t)n);
+    if (s->pool_cells) release_cells(s, dest, (int32_t)n);
 #if defined(__ARM_NEON)
     uint32x4_t vfg = vdupq_n_u32(fg);
     uint32x4_t vbg = vdupq_n_u32(bg);
@@ -182,28 +182,40 @@ static void store_ascii_cells(jt_scr *s, Cell *dest, const uint8_t *p, size_t n,
 #endif
     if (extra) {
         for (size_t i = 0; i < n; i++) jt_rare_retain(s, extra);
+        s->pool_cells += (int32_t)n;
     }
 }
 
+static int cell_pooled(const Cell *c) {
+    return c->extra || ((c->content & CONTENT_KIND_MASK) == CONTENT_GRAPHEME);
+}
+
 static void cell_retain(jt_scr *s, const Cell *c) {
-    if (!s || !c) return;
+    if (!s || !c || !cell_pooled(c)) return;
     if ((c->content & CONTENT_KIND_MASK) == CONTENT_GRAPHEME)
         jt_grapheme_retain(s, c->content & CONTENT_PAYLOAD);
     if (c->extra) jt_rare_retain(s, c->extra);
+    s->pool_cells++;
 }
 
 static void cell_release(jt_scr *s, Cell *c) {
-    if (!s || !c) return;
+    if (!s || !c || !cell_pooled(c)) return;
     if ((c->content & CONTENT_KIND_MASK) == CONTENT_GRAPHEME)
         jt_grapheme_release(s, c->content & CONTENT_PAYLOAD);
     if (c->extra) jt_rare_release(s, c->extra);
+    if (s->pool_cells > 0) s->pool_cells--;
 }
 
 static void release_cells(jt_scr *s, Cell *row, int32_t n) {
+    if (!s->pool_cells) return;
     for (int32_t i = 0; i < n; i++) cell_release(s, &row[i]);
 }
 
 static void stamp_cell(jt_scr *s, Cell *dst, Cell neu) {
+    if (!cell_pooled(dst) && !cell_pooled(&neu)) {
+        *dst = neu;
+        return;
+    }
     cell_release(s, dst);
     *dst = neu;
     cell_retain(s, dst);
@@ -232,7 +244,8 @@ static void mark_all(jt_scr *s) {
 }
 
 static void fill_row(jt_scr *s, int32_t y) {
-    if (!row_erased(s, y)) release_cells(s, row_at(s, y), s->cols);
+    if (s->pool_cells && !row_erased(s, y))
+        release_cells(s, row_at(s, y), s->cols);
     *wrap_at(s, y) = 0;
     *erased_at(s, y) = 1;
     mark_row(s, y);
@@ -564,6 +577,12 @@ static void print_wide(jt_scr *s, uint32_t scalar) {
 }
 
 void jt_scr_print_scalar(jt_scr *s, uint32_t scalar) {
+    if (scalar >= 0x20 && scalar < 0x7F) {
+        consume_wrap(s);
+        if (s->insert_mode) jt_scr_ich(s, 1);
+        place_graphic(s, content_scalar(scalar, WIDE_NARROW));
+        return;
+    }
     int w = jt_codepoint_width(scalar);
     if (w == 0) {
         attach_mark(s, scalar);
@@ -579,7 +598,7 @@ void jt_scr_print_scalar(jt_scr *s, uint32_t scalar) {
 }
 
 void jt_scr_print_run(jt_scr *s, const uint8_t *p, size_t n) {
-    if (s->insert_mode || n == 1) {
+    if (s->insert_mode) {
         for (size_t i = 0; i < n; i++) jt_scr_print_scalar(s, p[i]);
         return;
     }
