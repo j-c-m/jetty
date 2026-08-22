@@ -49,30 +49,28 @@ static Cell blank_cell(const jt_scr *s) {
     return c;
 }
 
-static int32_t phys_y(const jt_buf *b, int32_t rows, int32_t y) {
-    int32_t r = b->origin + y;
-    if (r >= rows) r -= rows;
-    return r;
+static int32_t phys_y(const jt_buf *b, int32_t y) {
+    return b->rowmap[y];
 }
 
 static Cell *row_at(jt_scr *s, int32_t y) {
     jt_buf *b = s->active;
-    return b->grid + (size_t)phys_y(b, s->rows, y) * (size_t)s->cols;
+    return b->grid + (size_t)phys_y(b, y) * (size_t)s->cols;
 }
 
 static const Cell *row_at_c(const jt_scr *s, int32_t y) {
     const jt_buf *b = s->active;
-    return b->grid + (size_t)phys_y(b, s->rows, y) * (size_t)s->cols;
+    return b->grid + (size_t)phys_y(b, y) * (size_t)s->cols;
 }
 
 static uint8_t *wrap_at(jt_scr *s, int32_t y) {
     jt_buf *b = s->active;
-    return &b->wrap[phys_y(b, s->rows, y)];
+    return &b->wrap[phys_y(b, y)];
 }
 
 static uint8_t *dirty_at(jt_scr *s, int32_t y) {
     jt_buf *b = s->active;
-    return &b->dirty[phys_y(b, s->rows, y)];
+    return &b->dirty[phys_y(b, y)];
 }
 
 static void mark_row(jt_scr *s, int32_t y) {
@@ -101,14 +99,20 @@ static void clamp_cursor(jt_buf *b, int32_t cols, int32_t rows) {
     if (b->cy >= rows) b->cy = rows - 1;
 }
 
+static void rowmap_identity(int32_t *map, int32_t rows) {
+    for (int32_t i = 0; i < rows; i++) map[i] = i;
+}
+
 static int buf_init(jt_buf *b, int32_t cols, int32_t rows, Cell blank) {
     memset(b, 0, sizeof *b);
     b->grid = (Cell *)malloc((size_t)cols * (size_t)rows * sizeof(Cell));
+    b->rowmap = (int32_t *)malloc((size_t)rows * sizeof(int32_t));
     b->tabstops = (uint8_t *)malloc((size_t)cols);
     b->dirty = (uint8_t *)calloc((size_t)rows, 1);
     b->wrap = (uint8_t *)calloc((size_t)rows, 1);
-    if (!b->grid || !b->tabstops || !b->dirty || !b->wrap) {
+    if (!b->grid || !b->rowmap || !b->tabstops || !b->dirty || !b->wrap) {
         free(b->grid);
+        free(b->rowmap);
         free(b->tabstops);
         free(b->dirty);
         free(b->wrap);
@@ -116,6 +120,7 @@ static int buf_init(jt_buf *b, int32_t cols, int32_t rows, Cell blank) {
         return 0;
     }
     fill_cells(b->grid, cols * rows, blank);
+    rowmap_identity(b->rowmap, rows);
     default_tabs(b->tabstops, cols);
     memset(b->dirty, 1, (size_t)rows);
     b->scroll_bottom = rows - 1;
@@ -124,6 +129,7 @@ static int buf_init(jt_buf *b, int32_t cols, int32_t rows, Cell blank) {
 
 static void buf_free(jt_buf *b) {
     free(b->grid);
+    free(b->rowmap);
     free(b->tabstops);
     free(b->dirty);
     free(b->wrap);
@@ -200,46 +206,36 @@ static void fix_wide_row(Cell *row, int32_t cols, Cell blank) {
     }
 }
 
-static void copy_rows_up(jt_scr *s, int32_t top, int32_t bot) {
-    size_t n = (size_t)s->cols * sizeof(Cell);
-    jt_buf *b = s->active;
-    for (int32_t y = top; y < bot; y++) {
-        memcpy(row_at(s, y), row_at(s, y + 1), n);
-        *wrap_at(s, y) = *wrap_at(s, y + 1);
-        *dirty_at(s, y) = 1;
+static void rotate_up(jt_buf *b, int32_t top, int32_t bot) {
+    int32_t span = bot - top;
+    int32_t first = b->rowmap[top];
+    if (span > 0) {
+        memmove(&b->rowmap[top], &b->rowmap[top + 1], (size_t)span * sizeof(int32_t));
     }
-    (void)b;
+    b->rowmap[bot] = first;
 }
 
-static void copy_rows_down(jt_scr *s, int32_t top, int32_t bot) {
-    size_t n = (size_t)s->cols * sizeof(Cell);
-    for (int32_t y = bot; y > top; y--) {
-        memcpy(row_at(s, y), row_at(s, y - 1), n);
-        *wrap_at(s, y) = *wrap_at(s, y - 1);
-        *dirty_at(s, y) = 1;
+static void rotate_down(jt_buf *b, int32_t top, int32_t bot) {
+    int32_t span = bot - top;
+    int32_t last = b->rowmap[bot];
+    if (span > 0) {
+        memmove(&b->rowmap[top + 1], &b->rowmap[top], (size_t)span * sizeof(int32_t));
     }
+    b->rowmap[top] = last;
 }
 
 static void scroll_up(jt_scr *s) {
     jt_buf *b = s->active;
     int32_t top = b->scroll_top, bot = b->scroll_bottom;
-    int full = (top == 0 && bot == s->rows - 1);
-    if (full) {
-        if (!s->in_alt) sb_push(s, row_at(s, 0), *wrap_at(s, 0));
-        b->origin++;
-        if (b->origin >= s->rows) b->origin = 0;
-        fill_row(s, s->rows - 1);
-        return;
-    }
     if (top == 0 && !s->in_alt) sb_push(s, row_at(s, 0), *wrap_at(s, 0));
-    if (bot > top) copy_rows_up(s, top, bot);
+    if (bot > top) rotate_up(b, top, bot);
     fill_row(s, bot);
 }
 
 static void scroll_down(jt_scr *s) {
     jt_buf *b = s->active;
     int32_t top = b->scroll_top, bot = b->scroll_bottom;
-    if (bot > top) copy_rows_down(s, top, bot);
+    if (bot > top) rotate_down(b, top, bot);
     fill_row(s, top);
 }
 
@@ -421,7 +417,7 @@ void jt_scr_il(jt_scr *s, int n) {
     int nn = n < 1 ? 1 : n;
     int32_t top = b->cy, bot = b->scroll_bottom;
     for (int k = 0; k < nn; k++) {
-        if (bot > top) copy_rows_down(s, top, bot);
+        if (bot > top) rotate_down(b, top, bot);
         fill_row(s, top);
     }
 }
@@ -432,7 +428,7 @@ void jt_scr_dl(jt_scr *s, int n) {
     int nn = n < 1 ? 1 : n;
     int32_t top = b->cy, bot = b->scroll_bottom;
     for (int k = 0; k < nn; k++) {
-        if (bot > top) copy_rows_up(s, top, bot);
+        if (bot > top) rotate_up(b, top, bot);
         fill_row(s, bot);
     }
 }
@@ -627,42 +623,47 @@ void jt_scr_wrap_at(jt_scr *s, int32_t y) {
 int jt_scr_is_wrapped(const jt_scr *s, int32_t y) {
     if (!s || !s->active || !s->active->wrap || y < 0 || y >= s->rows) return 0;
     const jt_buf *b = s->active;
-    return b->wrap[phys_y(b, s->rows, y)] != 0;
+    return b->wrap[phys_y(b, y)] != 0;
 }
 
 static int buf_resize(jt_buf *b, int32_t oc, int32_t orows, int32_t nc, int32_t nr, Cell blank) {
     Cell *next = (Cell *)malloc((size_t)nc * (size_t)nr * sizeof(Cell));
+    int32_t *rowmap = (int32_t *)malloc((size_t)nr * sizeof(int32_t));
     uint8_t *tabs = (uint8_t *)malloc((size_t)nc);
     uint8_t *dirty = (uint8_t *)calloc((size_t)nr, 1);
     uint8_t *wrap = (uint8_t *)calloc((size_t)nr, 1);
-    if (!next || !tabs || !dirty || !wrap) {
+    if (!next || !rowmap || !tabs || !dirty || !wrap) {
         free(next);
+        free(rowmap);
         free(tabs);
         free(dirty);
         free(wrap);
         return 0;
     }
     fill_cells(next, nc * nr, blank);
+    rowmap_identity(rowmap, nr);
     memset(dirty, 1, (size_t)nr);
     default_tabs(tabs, nc);
     int32_t copyC = oc < nc ? oc : nc;
     int32_t copyR = orows < nr ? orows : nr;
-    if (b->grid) {
+    if (b->grid && b->rowmap) {
         for (int32_t y = 0; y < copyR; y++) {
-            int32_t py = phys_y(b, orows, y);
+            int32_t py = b->rowmap[y];
             memcpy(next + (size_t)y * (size_t)nc, b->grid + (size_t)py * (size_t)oc,
                    (size_t)copyC * sizeof(Cell));
+            wrap[y] = b->wrap ? b->wrap[py] : 0;
         }
     }
     free(b->grid);
+    free(b->rowmap);
     free(b->tabstops);
     free(b->dirty);
     free(b->wrap);
     b->grid = next;
+    b->rowmap = rowmap;
     b->tabstops = tabs;
     b->dirty = dirty;
     b->wrap = wrap;
-    b->origin = 0;
     b->scroll_top = 0;
     b->scroll_bottom = nr - 1;
     clamp_cursor(b, nc, nr);

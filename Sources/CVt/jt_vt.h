@@ -25,7 +25,7 @@ typedef struct jt_saved {
 
 typedef struct jt_buf {
     Cell *grid;
-    int32_t origin;
+    int32_t *rowmap;
     int32_t cx, cy, pending_wrap;
     int32_t scroll_top, scroll_bottom;
     uint8_t *tabstops;

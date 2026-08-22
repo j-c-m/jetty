@@ -20,6 +20,34 @@ final class ScreenTests: XCTestCase {
         XCTAssertEqual(s.paletteColor(0), RGB(r: 0x11, g: 0x11, b: 0x11))
     }
 
+    func testScrollRegionParseCost() {
+        func ms(cols: Int, rows: Int, top: Int, bot: Int, alt: Bool, n: Int = 200_000) -> Double {
+            let s = Screen(cols: cols, rows: rows, scrollbackCapRows: 8)
+            if alt { s.switchScreenMode(1049, enabled: true) }
+            s.decstbm(top: top, bot: bot)
+            let p = Parser()
+            p.screen = s
+            var bytes = [UInt8]()
+            bytes.reserveCapacity(n * 2)
+            for _ in 0..<n {
+                bytes.append(UInt8(ascii: "y"))
+                bytes.append(0x0A)
+            }
+            let t0 = ProcessInfo.processInfo.systemUptime
+            p.feed(bytes)
+            return (ProcessInfo.processInfo.systemUptime - t0) * 1000
+        }
+        let rows = 40
+        let full = ms(cols: 80, rows: rows, top: 0, bot: rows - 1, alt: true)
+        let bottom = ms(cols: 80, rows: rows, top: 0, bot: rows - 2, alt: true)
+        let top = ms(cols: 80, rows: rows, top: 1, bot: rows - 1, alt: true)
+        let small = ms(cols: 80, rows: rows, top: rows / 2, bot: rows - 1, alt: true)
+        fputs(String(format: "scroll parse ms full=%.1f bottom=%.1f top=%.1f small=%.1f\n",
+                     full, bottom, top, small), stderr)
+        fflush(stderr)
+        XCTAssertLessThan(top / max(bottom, 0.1), 2.5, "top region parse should be near bottom region")
+    }
+
     func testPrintAndCursor() {
         let s = Screen(cols: 5, rows: 5, scrollbackCapRows: 8)
         s.printRun("1A")
@@ -130,6 +158,24 @@ final class ScreenTests: XCTestCase {
         s.index()
         XCTAssertEqual(s.cursorY, 4)
         XCTAssertEqual(s.scrollbackCount, before + 1)
+    }
+
+    func testRegionScrollKeepsRowsAboveSTBM() {
+        let s = Screen(cols: 4, rows: 4, scrollbackCapRows: 0)
+        s.printRun("AAAA")
+        s.printRun("BBBB")
+        s.printRun("CCCC")
+        s.printRun("DDDD")
+        s.decstbm(top: 1, bot: 3)
+        s.cup(row: 3, col: 0)
+        s.index()
+        XCTAssertEqual(s.glyph(0, 0), UInt32(UInt8(ascii: "A")))
+        XCTAssertEqual(s.glyph(0, 1), UInt32(UInt8(ascii: "C")))
+        XCTAssertEqual(s.glyph(0, 2), UInt32(UInt8(ascii: "D")))
+        XCTAssertEqual(s.glyph(0, 3), UInt32(UInt8(ascii: " ")))
+        s.index()
+        XCTAssertEqual(s.glyph(0, 0), UInt32(UInt8(ascii: "A")))
+        XCTAssertEqual(s.glyph(0, 1), UInt32(UInt8(ascii: "D")))
     }
 
     func testResizeFloor() {
