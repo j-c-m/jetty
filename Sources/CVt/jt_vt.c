@@ -643,9 +643,19 @@ void jt_vt_feed(jt_vt *p, const uint8_t *bytes, size_t n,
                 i += m;
                 continue;
             }
-            /* DEC special GL: PR 5 maps 0x60-0x7E. Until then print bytes. */
+            size_t low = jt_scan_ascii_no_acs(sp, rest);
+            if (low > 0) {
+                if (scr) jt_scr_print_run(scr, sp, low);
+                i += low;
+                continue;
+            }
+            if (b >= 0x60 && b <= 0x7E) {
+                if (scr) jt_scr_print_scalar(scr, jt_acs_map(b));
+                i++;
+                continue;
+            }
             size_t m = jt_scan_until_c0(sp, rest);
-            if (scr) jt_scr_print_run(scr, sp, m);
+            emit_utf8_run(p, scr, sp, m);
             i += m;
             continue;
         }

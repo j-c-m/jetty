@@ -79,6 +79,26 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(jt_scan_first_esc(bytes, bytes.count), 2)
     }
 
+    func testSmacsQIsHline() {
+        let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}(0q")
+        XCTAssertEqual(s.glyph(0, 0), 0x2500)
+        p.feed("\u{1B}(Bq")
+        XCTAssertEqual(s.glyph(1, 0), UInt32(UInt8(ascii: "q")))
+    }
+
+    func testSOandSI() {
+        let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{0E}x")
+        XCTAssertEqual(s.glyph(0, 0), 0x2502)
+        p.feed("\u{0F}x")
+        XCTAssertEqual(s.glyph(1, 0), UInt32(UInt8(ascii: "x")))
+    }
+
     func testCUP() {
         let s = Screen(cols: 20, rows: 10, scrollbackCapRows: 0)
         let p = Parser()

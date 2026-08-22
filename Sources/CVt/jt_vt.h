@@ -136,6 +136,8 @@ int jt_vt_state(const jt_vt *p);
 size_t jt_scan_printable_ascii(const uint8_t *p, size_t n);
 size_t jt_scan_until_c0(const uint8_t *p, size_t n);
 size_t jt_scan_first_esc(const uint8_t *p, size_t n);
+size_t jt_scan_ascii_no_acs(const uint8_t *p, size_t n);
+uint32_t jt_acs_map(uint8_t b);
 int jt_utf8_next(uint8_t *st, uint32_t *acc, uint8_t b, uint32_t *out);
 
 #ifdef __cplusplus
