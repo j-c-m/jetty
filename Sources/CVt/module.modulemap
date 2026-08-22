@@ -1,4 +1,5 @@
 module CVt {
     header "jt_cell.h"
+    header "jt_vt.h"
     export *
 }
