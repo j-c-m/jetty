@@ -25,7 +25,8 @@ public enum XtermKeyEncoder {
             return [0x1B, UInt8(ch.value)]
         }
 
-        if event.keyCode == UInt16(kVK_Return) || event.keyCode == UInt16(kVK_ANSI_KeypadEnter) {
+        if isReturn(event.keyCode) {
+            if flags.contains(.shift) { return [0x0A] }
             return [0x0D]
         }
         if event.keyCode == UInt16(kVK_Delete) { return [0x08] }
@@ -46,9 +47,18 @@ public enum XtermKeyEncoder {
         !hasMarkedText && !wasMarked && !insertTextConsumed
     }
 
-    /// Option-as-meta when IME is idle. insertText must not eat that key.
-    public static func insertTextDefersToMeta(composing: Bool, option: Bool) -> Bool {
-        !composing && option
+    /// Option-as-meta and Shift+Enter when IME is idle. insertText must not eat those keys.
+    public static func insertTextDefersToEncoder(composing: Bool, event: NSEvent?) -> Bool {
+        guard !composing, let event, event.type == .keyDown else { return false }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if flags.contains(.command) { return false }
+        if flags.contains(.option) { return true }
+        if flags.contains(.shift), isReturn(event.keyCode) { return true }
+        return false
+    }
+
+    static func isReturn(_ keyCode: UInt16) -> Bool {
+        keyCode == UInt16(kVK_Return) || keyCode == UInt16(kVK_ANSI_KeypadEnter)
     }
 
     /// Committed IME / insertText. LF → CR. While composing, ignore empty and C0-only.

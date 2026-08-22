@@ -54,10 +54,27 @@ final class KeyEncoderTests: XCTestCase {
         ))
     }
 
-    func testIMEInsertTextDefersToMeta() {
-        XCTAssertTrue(XtermKeyEncoder.insertTextDefersToMeta(composing: false, option: true))
-        XCTAssertFalse(XtermKeyEncoder.insertTextDefersToMeta(composing: true, option: true))
-        XCTAssertFalse(XtermKeyEncoder.insertTextDefersToMeta(composing: false, option: false))
+    func testIMEInsertTextDefersToEncoder() {
+        let opt = keyEvent(flags: .option, characters: "é", ignoring: "e", keyCode: kVK_ANSI_E)
+        XCTAssertTrue(XtermKeyEncoder.insertTextDefersToEncoder(composing: false, event: opt))
+        XCTAssertFalse(XtermKeyEncoder.insertTextDefersToEncoder(composing: true, event: opt))
+        let shiftRet = keyEvent(flags: .shift, characters: "\r", ignoring: "\r", keyCode: kVK_Return)
+        XCTAssertTrue(XtermKeyEncoder.insertTextDefersToEncoder(composing: false, event: shiftRet))
+        XCTAssertFalse(XtermKeyEncoder.insertTextDefersToEncoder(composing: true, event: shiftRet))
+        let ret = keyEvent(flags: [], characters: "\r", ignoring: "\r", keyCode: kVK_Return)
+        XCTAssertFalse(XtermKeyEncoder.insertTextDefersToEncoder(composing: false, event: ret))
+    }
+
+    func testEnterIsCR() {
+        let event = keyEvent(flags: [], characters: "\r", ignoring: "\r", keyCode: kVK_Return)
+        XCTAssertEqual(XtermKeyEncoder.bytes(for: event, applicationCursor: false), [0x0D])
+    }
+
+    func testShiftEnterIsLF() {
+        let event = keyEvent(flags: .shift, characters: "\r", ignoring: "\r", keyCode: kVK_Return)
+        XCTAssertEqual(XtermKeyEncoder.bytes(for: event, applicationCursor: false), [0x0A])
+        let pad = keyEvent(flags: .shift, characters: "\r", ignoring: "\r", keyCode: kVK_ANSI_KeypadEnter)
+        XCTAssertEqual(XtermKeyEncoder.bytes(for: pad, applicationCursor: false), [0x0A])
     }
 
     func testIMECommittedUTF8() {
@@ -69,24 +86,30 @@ final class KeyEncoderTests: XCTestCase {
     }
 
     func testOptionASCIIIsMeta() {
-        guard let event = NSEvent.keyEvent(
-            with: .keyDown,
-            location: .zero,
-            modifierFlags: .option,
-            timestamp: 0,
-            windowNumber: 0,
-            context: nil,
-            characters: "é",
-            charactersIgnoringModifiers: "e",
-            isARepeat: false,
-            keyCode: UInt16(kVK_ANSI_E)
-        ) else {
-            XCTFail("NSEvent")
-            return
-        }
+        let event = keyEvent(flags: .option, characters: "é", ignoring: "e", keyCode: kVK_ANSI_E)
         XCTAssertEqual(
             XtermKeyEncoder.bytes(for: event, applicationCursor: false),
             [0x1B, UInt8(ascii: "e")]
         )
+    }
+
+    private func keyEvent(
+        flags: NSEvent.ModifierFlags,
+        characters: String,
+        ignoring: String,
+        keyCode: Int
+    ) -> NSEvent {
+        NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: flags,
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: characters,
+            charactersIgnoringModifiers: ignoring,
+            isARepeat: false,
+            keyCode: UInt16(keyCode)
+        )!
     }
 }

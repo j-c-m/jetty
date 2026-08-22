@@ -1030,10 +1030,7 @@ extension MetalTerminalView: @preconcurrency NSTextInputClient {
         }
         let composing = hasMarkedText()
         unmarkText()
-        let option = NSApp.currentEvent?.type == .keyDown
-            && (NSApp.currentEvent?.modifierFlags.contains(.option) ?? false)
-            && !(NSApp.currentEvent?.modifierFlags.contains(.command) ?? false)
-        if XtermKeyEncoder.insertTextDefersToMeta(composing: composing, option: option) {
+        if XtermKeyEncoder.insertTextDefersToEncoder(composing: composing, event: NSApp.currentEvent) {
             return
         }
         writeInsert(text, composing: composing)
