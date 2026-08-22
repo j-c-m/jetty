@@ -21,8 +21,8 @@ final class ScreenTests: XCTestCase {
     }
 
     func testScrollRegionParseCost() {
-        func ms(cols: Int, rows: Int, top: Int, bot: Int, alt: Bool, n: Int = 200_000) -> Double {
-            let s = Screen(cols: cols, rows: rows, scrollbackCapRows: 8)
+        func ms(cols: Int, rows: Int, top: Int, bot: Int, alt: Bool, cap: Int = 8, n: Int = 200_000) -> Double {
+            let s = Screen(cols: cols, rows: rows, scrollbackCapRows: cap)
             if alt { s.switchScreenMode(1049, enabled: true) }
             s.decstbm(top: top, bot: bot)
             let p = Parser()
@@ -42,10 +42,136 @@ final class ScreenTests: XCTestCase {
         let bottom = ms(cols: 80, rows: rows, top: 0, bot: rows - 2, alt: true)
         let top = ms(cols: 80, rows: rows, top: 1, bot: rows - 1, alt: true)
         let small = ms(cols: 80, rows: rows, top: rows / 2, bot: rows - 1, alt: true)
-        fputs(String(format: "scroll parse ms full=%.1f bottom=%.1f top=%.1f small=%.1f\n",
-                     full, bottom, top, small), stderr)
+        let primary = ms(cols: 105, rows: 35, top: 0, bot: 34, alt: false, cap: 50_000)
+        func fullWidthMs() -> Double {
+            let cols = 105, rows = 35, n = 10_000
+            let s = Screen(cols: cols, rows: rows, scrollbackCapRows: 50_000)
+            let p = Parser()
+            p.screen = s
+            var line = [UInt8](repeating: UInt8(ascii: "A"), count: cols)
+            line.append(0x0A)
+            var bytes = [UInt8]()
+            bytes.reserveCapacity(n * line.count)
+            for _ in 0..<n { bytes.append(contentsOf: line) }
+            let t0 = ProcessInfo.processInfo.systemUptime
+            p.feed(bytes)
+            return (ProcessInfo.processInfo.systemUptime - t0) * 1000
+        }
+        let wide = fullWidthMs()
+        fputs(String(format: "scroll parse ms full=%.1f bottom=%.1f top=%.1f small=%.1f primary=%.1f wide=%.1f\n",
+                     full, bottom, top, small, primary, wide), stderr)
         fflush(stderr)
         XCTAssertLessThan(top / max(bottom, 0.1), 2.5, "top region parse should be near bottom region")
+        XCTAssertLessThan(primary / max(full, 0.1), 3.0, "primary 50k sb parse should stay near alt")
+    }
+
+    func testScrollbackKeepsScrolledRows() {
+        let s = Screen(cols: 4, rows: 2, scrollbackCapRows: 4)
+        s.printRun("AAAA")
+        s.printRun("BBBB")
+        s.printRun("CCCC")
+        XCTAssertEqual(s.scrollbackCount, 1)
+        XCTAssertEqual(s.historyRow(0)[0].contentPayload, UInt32(UInt8(ascii: "A")))
+        XCTAssertEqual(s.glyph(0, 0), UInt32(UInt8(ascii: "B")))
+        XCTAssertEqual(s.glyph(0, 1), UInt32(UInt8(ascii: "C")))
+        s.printRun("DDDD")
+        XCTAssertEqual(s.scrollbackCount, 2)
+        XCTAssertEqual(s.historyRow(0)[0].contentPayload, UInt32(UInt8(ascii: "A")))
+        XCTAssertEqual(s.historyRow(1)[0].contentPayload, UInt32(UInt8(ascii: "B")))
+        s.printRun("EEEE")
+        s.printRun("FFFF")
+        s.printRun("GGGG")
+        XCTAssertEqual(s.scrollbackCount, 4)
+        XCTAssertEqual(s.historyRow(0)[0].contentPayload, UInt32(UInt8(ascii: "B")))
+        XCTAssertEqual(s.historyRow(3)[0].contentPayload, UInt32(UInt8(ascii: "E")))
+        s.resize(cols: 6, rows: 2)
+        XCTAssertEqual(s.scrollbackCount, 4)
+        XCTAssertEqual(s.historyRow(0)[0].contentPayload, UInt32(UInt8(ascii: "B")))
+        XCTAssertEqual(s.historyRow(0)[4].contentPayload, 0x20)
+        s.ed(3)
+        XCTAssertEqual(s.scrollbackCount, 0)
+        XCTAssertEqual(s.glyph(0, 0), UInt32(UInt8(ascii: "F")))
+        XCTAssertEqual(s.glyph(0, 1), UInt32(UInt8(ascii: "G")))
+    }
+
+    func testLazyEraseUnreadRowIsBlank() {
+        let s = Screen(cols: 4, rows: 2, scrollbackCapRows: 4)
+        s.printRun("AAAA")
+        s.printRun("BBBB")
+        s.index()
+        XCTAssertEqual(s.historyRow(0).map(\.contentPayload),
+                       Array(repeating: UInt32(UInt8(ascii: "A")), count: 4))
+        XCTAssertEqual(s.row(0).map(\.contentPayload),
+                       Array(repeating: UInt32(UInt8(ascii: "B")), count: 4))
+        XCTAssertEqual(s.row(1).map(\.contentPayload),
+                       Array(repeating: UInt32(0x20), count: 4))
+    }
+
+    func testWrapFillsEveryCellThenStealsIntact() {
+        let cols = 4, rows = 3
+        let s = Screen(cols: cols, rows: rows, scrollbackCapRows: 8)
+        let p = Parser()
+        p.screen = s
+        var bytes = [UInt8]()
+        for ch in [UInt8(ascii: "A"), UInt8(ascii: "B"), UInt8(ascii: "C"),
+                   UInt8(ascii: "D"), UInt8(ascii: "E")] {
+            bytes += repeatElement(ch, count: cols)
+        }
+        p.feed(bytes)
+        XCTAssertEqual(s.scrollbackCount, 2)
+        XCTAssertEqual(s.historyRow(0).map(\.contentPayload),
+                       Array(repeating: UInt32(UInt8(ascii: "A")), count: cols))
+        XCTAssertEqual(s.historyRow(1).map(\.contentPayload),
+                       Array(repeating: UInt32(UInt8(ascii: "B")), count: cols))
+        XCTAssertEqual(s.row(0).map(\.contentPayload),
+                       Array(repeating: UInt32(UInt8(ascii: "C")), count: cols))
+        XCTAssertEqual(s.row(1).map(\.contentPayload),
+                       Array(repeating: UInt32(UInt8(ascii: "D")), count: cols))
+        XCTAssertEqual(s.row(2).map(\.contentPayload),
+                       Array(repeating: UInt32(UInt8(ascii: "E")), count: cols))
+        for y in 0..<rows {
+            XCTAssertFalse(s.row(y).contains { $0.contentPayload == 0 })
+        }
+    }
+
+    func testVtebenchFullscreenLFPayload() {
+        let cols = 8, rows = 4
+        let s = Screen(cols: cols, rows: rows, scrollbackCapRows: 16)
+        let p = Parser()
+        p.screen = s
+        var bytes = [UInt8]()
+        for ch in [UInt8(ascii: "A"), UInt8(ascii: "B"), UInt8(ascii: "C"),
+                   UInt8(ascii: "D"), UInt8(ascii: "E"), UInt8(ascii: "F")] {
+            bytes += repeatElement(ch, count: cols)
+            bytes.append(0x0A)
+        }
+        p.feed(bytes)
+        func dump(_ cells: [Cell]) -> String {
+            String(cells.map { c -> Character in
+                let v = c.contentPayload
+                if v == 0 { return "·" }
+                if v == 0x20 { return " " }
+                return Character(UnicodeScalar(v)!)
+            })
+        }
+        XCTAssertEqual((0..<s.scrollbackCount).map { dump(s.historyRow($0)) }, [
+            "AAAAAAAA",
+            "       B",
+            "BBBBBBB ",
+            "       C",
+            "CCCCCCC ",
+            "       D",
+            "DDDDDDD ",
+            "       E",
+        ])
+        XCTAssertEqual((0..<rows).map { dump(s.row($0)) }, [
+            "EEEEEEE ",
+            "       F",
+            "FFFFFFF ",
+            "        ",
+        ])
+        XCTAssertEqual(s.cursorX, 7)
+        XCTAssertEqual(s.cursorY, 3)
     }
 
     func testPrintAndCursor() {

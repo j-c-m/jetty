@@ -26,11 +26,13 @@ typedef struct jt_saved {
 typedef struct jt_buf {
     Cell *grid;
     int32_t *rowmap;
+    int32_t grid_rows;
     int32_t cx, cy, pending_wrap;
     int32_t scroll_top, scroll_bottom;
     uint8_t *tabstops;
     uint8_t *dirty;
     uint8_t *wrap;
+    uint8_t *erased;
 } jt_buf;
 
 typedef struct jt_scr {
@@ -41,7 +43,9 @@ typedef struct jt_scr {
     int32_t auto_wrap, insert_mode, origin_mode;
     int32_t g0, g1, gl;
     uint64_t lines_scrolled;
-    Cell *sb;
+    int32_t *sb_idx;
+    int32_t *sb_free;
+    int32_t sb_free_n;
     uint8_t *sb_wrap;
     int32_t sb_head, sb_len, sb_stride, scrollback_cap;
     jt_pen pen;

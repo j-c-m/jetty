@@ -3,6 +3,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
+
 static void default_tabs(uint8_t *t, int32_t cols) {
     for (int32_t i = 0; i < cols; i++)
         t[i] = (i > 0 && (i % 8) == 0) ? 1 : 0;
@@ -73,6 +77,49 @@ static uint8_t *dirty_at(jt_scr *s, int32_t y) {
     return &b->dirty[phys_y(b, y)];
 }
 
+static uint8_t *erased_at(jt_scr *s, int32_t y) {
+    jt_buf *b = s->active;
+    return &b->erased[phys_y(b, y)];
+}
+
+static void fill_cells(Cell *row, int32_t n, Cell b) {
+    if (n <= 0) return;
+#if defined(__ARM_NEON)
+    uint8x16_t v = vld1q_u8((const uint8_t *)&b);
+    int32_t x = 0;
+    for (; x + 8 <= n; x += 8) {
+        vst1q_u8((uint8_t *)(row + x + 0), v);
+        vst1q_u8((uint8_t *)(row + x + 1), v);
+        vst1q_u8((uint8_t *)(row + x + 2), v);
+        vst1q_u8((uint8_t *)(row + x + 3), v);
+        vst1q_u8((uint8_t *)(row + x + 4), v);
+        vst1q_u8((uint8_t *)(row + x + 5), v);
+        vst1q_u8((uint8_t *)(row + x + 6), v);
+        vst1q_u8((uint8_t *)(row + x + 7), v);
+    }
+    for (; x + 2 <= n; x += 2) {
+        vst1q_u8((uint8_t *)(row + x), v);
+        vst1q_u8((uint8_t *)(row + x + 1), v);
+    }
+    for (; x < n; x++) row[x] = b;
+#else
+    for (int32_t x = 0; x < n; x++) row[x] = b;
+#endif
+}
+
+static int row_erased(const jt_scr *s, int32_t y) {
+    const jt_buf *b = s->active;
+    int32_t py = phys_y(b, y);
+    return b->erased && py >= 0 && py < b->grid_rows && b->erased[py];
+}
+
+static void materialize_row(jt_scr *s, int32_t y) {
+    uint8_t *e = erased_at(s, y);
+    if (!*e) return;
+    fill_cells(row_at(s, y), s->cols, blank_cell(s));
+    *e = 0;
+}
+
 static void mark_row(jt_scr *s, int32_t y) {
     if (y < 0 || y >= s->rows) return;
     *dirty_at(s, y) = 1;
@@ -82,13 +129,9 @@ static void mark_all(jt_scr *s) {
     for (int32_t y = 0; y < s->rows; y++) mark_row(s, y);
 }
 
-static void fill_cells(Cell *row, int32_t n, Cell b) {
-    for (int32_t x = 0; x < n; x++) row[x] = b;
-}
-
 static void fill_row(jt_scr *s, int32_t y) {
-    fill_cells(row_at(s, y), s->cols, blank_cell(s));
     *wrap_at(s, y) = 0;
+    *erased_at(s, y) = 1;
     mark_row(s, y);
 }
 
@@ -103,27 +146,32 @@ static void rowmap_identity(int32_t *map, int32_t rows) {
     for (int32_t i = 0; i < rows; i++) map[i] = i;
 }
 
-static int buf_init(jt_buf *b, int32_t cols, int32_t rows, Cell blank) {
+static int buf_init(jt_buf *b, int32_t cols, int32_t vis_rows, int32_t extra, Cell blank) {
     memset(b, 0, sizeof *b);
-    b->grid = (Cell *)malloc((size_t)cols * (size_t)rows * sizeof(Cell));
-    b->rowmap = (int32_t *)malloc((size_t)rows * sizeof(int32_t));
+    int32_t grid_rows = vis_rows + extra;
+    if (grid_rows < vis_rows) grid_rows = vis_rows;
+    b->grid_rows = grid_rows;
+    b->grid = (Cell *)malloc((size_t)cols * (size_t)grid_rows * sizeof(Cell));
+    b->rowmap = (int32_t *)malloc((size_t)vis_rows * sizeof(int32_t));
     b->tabstops = (uint8_t *)malloc((size_t)cols);
-    b->dirty = (uint8_t *)calloc((size_t)rows, 1);
-    b->wrap = (uint8_t *)calloc((size_t)rows, 1);
-    if (!b->grid || !b->rowmap || !b->tabstops || !b->dirty || !b->wrap) {
+    b->dirty = (uint8_t *)calloc((size_t)grid_rows, 1);
+    b->wrap = (uint8_t *)calloc((size_t)grid_rows, 1);
+    b->erased = (uint8_t *)calloc((size_t)grid_rows, 1);
+    if (!b->grid || !b->rowmap || !b->tabstops || !b->dirty || !b->wrap || !b->erased) {
         free(b->grid);
         free(b->rowmap);
         free(b->tabstops);
         free(b->dirty);
         free(b->wrap);
+        free(b->erased);
         memset(b, 0, sizeof *b);
         return 0;
     }
-    fill_cells(b->grid, cols * rows, blank);
-    rowmap_identity(b->rowmap, rows);
+    fill_cells(b->grid, cols * grid_rows, blank);
+    rowmap_identity(b->rowmap, vis_rows);
     default_tabs(b->tabstops, cols);
-    memset(b->dirty, 1, (size_t)rows);
-    b->scroll_bottom = rows - 1;
+    memset(b->dirty, 1, (size_t)vis_rows);
+    b->scroll_bottom = vis_rows - 1;
     return 1;
 }
 
@@ -133,43 +181,61 @@ static void buf_free(jt_buf *b) {
     free(b->tabstops);
     free(b->dirty);
     free(b->wrap);
+    free(b->erased);
     memset(b, 0, sizeof *b);
 }
 
-static void sb_alloc(jt_scr *s, int32_t cap, int32_t cols) {
-    free(s->sb);
+static void sb_alloc(jt_scr *s, int32_t cap, int32_t cols, int32_t extra_base) {
+    free(s->sb_idx);
+    free(s->sb_free);
     free(s->sb_wrap);
-    s->sb = NULL;
+    s->sb_idx = NULL;
+    s->sb_free = NULL;
     s->sb_wrap = NULL;
     s->sb_head = 0;
     s->sb_len = 0;
+    s->sb_free_n = 0;
     s->sb_stride = cols;
     if (cap <= 0) {
         s->scrollback_cap = 0;
         return;
     }
-    s->sb = (Cell *)malloc((size_t)cap * (size_t)cols * sizeof(Cell));
+    s->sb_idx = (int32_t *)malloc((size_t)cap * sizeof(int32_t));
+    s->sb_free = (int32_t *)malloc((size_t)cap * sizeof(int32_t));
     s->sb_wrap = (uint8_t *)calloc((size_t)cap, 1);
-    if (!s->sb || !s->sb_wrap) {
-        free(s->sb);
+    if (!s->sb_idx || !s->sb_free || !s->sb_wrap) {
+        free(s->sb_idx);
+        free(s->sb_free);
         free(s->sb_wrap);
-        s->sb = NULL;
+        s->sb_idx = NULL;
+        s->sb_free = NULL;
         s->sb_wrap = NULL;
         s->scrollback_cap = 0;
         return;
     }
+    for (int32_t i = 0; i < cap; i++) s->sb_free[i] = extra_base + i;
+    s->sb_free_n = cap;
     s->scrollback_cap = cap;
 }
 
-static void sb_push(jt_scr *s, const Cell *row, uint8_t wrap) {
+static int32_t sb_push_falling(jt_scr *s) {
     s->lines_scrolled++;
-    if (s->scrollback_cap <= 0 || !s->sb) return;
-    Cell *dst = s->sb + (size_t)s->sb_head * (size_t)s->sb_stride;
-    memcpy(dst, row, (size_t)s->cols * sizeof(Cell));
-    s->sb_wrap[s->sb_head] = wrap;
+    if (s->scrollback_cap <= 0 || !s->sb_idx) return -1;
+    jt_buf *b = &s->primary;
+    int32_t falling = b->rowmap[0];
+    uint8_t wrap = (b->wrap && falling >= 0 && falling < b->grid_rows) ? b->wrap[falling] : 0;
+    int32_t incoming;
+    if (s->sb_len < s->scrollback_cap && s->sb_free_n > 0) {
+        incoming = s->sb_free[--s->sb_free_n];
+    } else {
+        incoming = s->sb_idx[s->sb_head];
+    }
+    s->sb_idx[s->sb_head] = falling;
+    if (s->sb_wrap) s->sb_wrap[s->sb_head] = wrap;
     s->sb_head++;
     if (s->sb_head >= s->scrollback_cap) s->sb_head = 0;
     if (s->sb_len < s->scrollback_cap) s->sb_len++;
+    return incoming;
 }
 
 static int32_t sb_phys(const jt_scr *s, int32_t i) {
@@ -180,7 +246,7 @@ static int32_t sb_phys(const jt_scr *s, int32_t i) {
 
 static int ensure_alt(jt_scr *s) {
     if (s->alt.grid) return 1;
-    return buf_init(&s->alt, s->cols, s->rows, blank_cell(s));
+    return buf_init(&s->alt, s->cols, s->rows, 0, blank_cell(s));
 }
 
 static void fix_wide_row(Cell *row, int32_t cols, Cell blank) {
@@ -227,7 +293,18 @@ static void rotate_down(jt_buf *b, int32_t top, int32_t bot) {
 static void scroll_up(jt_scr *s) {
     jt_buf *b = s->active;
     int32_t top = b->scroll_top, bot = b->scroll_bottom;
-    if (top == 0 && !s->in_alt) sb_push(s, row_at(s, 0), *wrap_at(s, 0));
+    if (top == 0 && !s->in_alt) {
+        int32_t incoming = sb_push_falling(s);
+        if (incoming >= 0) {
+            if (bot > top) {
+                memmove(&b->rowmap[top], &b->rowmap[top + 1],
+                        (size_t)(bot - top) * sizeof(int32_t));
+            }
+            b->rowmap[bot] = incoming;
+            fill_row(s, bot);
+            return;
+        }
+    }
     if (bot > top) rotate_up(b, top, bot);
     fill_row(s, bot);
 }
@@ -317,6 +394,7 @@ static void write_one(jt_scr *s, uint32_t scalar, uint32_t wide) {
     if (s->insert_mode) {
         jt_scr_ich(s, wide == WIDE_FULL ? 2 : 1);
     }
+    materialize_row(s, b->cy);
     Cell *cell = row_at(s, b->cy) + b->cx;
     cell->content = content_scalar(scalar, wide);
     cell->fg = s->pen.fg;
@@ -351,6 +429,11 @@ void jt_scr_print_run(jt_scr *s, const uint8_t *p, size_t n) {
             room = 1;
         }
         size_t take = (size_t)room < (n - i) ? (size_t)room : (n - i);
+        if (row_erased(s, b->cy) && b->cx == 0 && (int32_t)take == s->cols) {
+            *erased_at(s, b->cy) = 0;
+        } else {
+            materialize_row(s, b->cy);
+        }
         Cell *dest = row_at(s, b->cy) + b->cx;
         for (size_t k = 0; k < take; k++) {
             dest[k].content = content_scalar(p[i + k], WIDE_NARROW);
@@ -373,6 +456,7 @@ void jt_scr_print_run(jt_scr *s, const uint8_t *p, size_t n) {
 void jt_scr_ich(jt_scr *s, int n) {
     jt_buf *b = s->active;
     if (n <= 0 || b->cx >= s->cols) return;
+    materialize_row(s, b->cy);
     Cell *row = row_at(s, b->cy);
     int32_t count = n < (s->cols - b->cx) ? n : (s->cols - b->cx);
     for (int32_t i = s->cols - 1; i >= b->cx + count; i--) {
@@ -388,6 +472,7 @@ void jt_scr_ich(jt_scr *s, int n) {
 void jt_scr_dch(jt_scr *s, int n) {
     jt_buf *b = s->active;
     if (n <= 0 || b->cx >= s->cols) return;
+    materialize_row(s, b->cy);
     Cell *row = row_at(s, b->cy);
     int count = n < (s->cols - b->cx) ? n : (s->cols - b->cx);
     for (int i = b->cx; i < s->cols - count; i++) {
@@ -405,6 +490,7 @@ void jt_scr_ech(jt_scr *s, int n) {
     Cell blank = blank_cell(s);
     int count = n < (s->cols - b->cx) ? n : (s->cols - b->cx);
     if (count < 0) count = 0;
+    materialize_row(s, b->cy);
     Cell *row = row_at(s, b->cy) + b->cx;
     for (int i = 0; i < count; i++) row[i] = blank;
     fix_wide_row(row_at(s, b->cy), s->cols, blank);
@@ -438,8 +524,12 @@ static void fill_rect(jt_scr *s, int x1, int y1, int x2, int y2, int clear_wrap)
     for (int y = y1; y <= y2; y++) {
         int xa = (y == y1) ? x1 : 0;
         int xb = (y == y2) ? x2 : s->cols - 1;
-        Cell *row = row_at(s, y);
-        for (int x = xa; x <= xb; x++) row[x] = blank;
+        if (xa == 0 && xb == s->cols - 1) {
+            *erased_at(s, y) = 1;
+        } else {
+            materialize_row(s, y);
+            fill_cells(row_at(s, y) + xa, xb - xa + 1, blank);
+        }
         if (clear_wrap && xa == 0 && xb == s->cols - 1) *wrap_at(s, y) = 0;
         mark_row(s, y);
     }
@@ -578,6 +668,13 @@ void jt_scr_switch_screen_mode(jt_scr *s, int mode, int enabled) {
 }
 
 void jt_scr_clear_history(jt_scr *s) {
+    if (s->sb_idx && s->sb_free) {
+        for (int32_t i = 0; i < s->sb_len; i++) {
+            int32_t phys = sb_phys(s, i);
+            if (s->sb_free_n < s->scrollback_cap)
+                s->sb_free[s->sb_free_n++] = s->sb_idx[phys];
+        }
+    }
     s->sb_head = 0;
     s->sb_len = 0;
     s->lines_scrolled = 0;
@@ -587,6 +684,7 @@ int32_t jt_scr_sb_len(const jt_scr *s) { return s->sb_len; }
 
 Cell *jt_scr_row(jt_scr *s, int32_t y) {
     if (!s || !s->active || !s->active->grid || y < 0 || y >= s->rows) return NULL;
+    materialize_row(s, y);
     return row_at(s, y);
 }
 
@@ -597,19 +695,32 @@ void jt_scr_copy_row(const jt_scr *s, int32_t y, Cell *dst, int32_t dst_cols, Ce
         return;
     }
     int32_t n = s->cols < dst_cols ? s->cols : dst_cols;
-    memcpy(dst, row_at_c(s, y), (size_t)n * sizeof(Cell));
+    if (row_erased(s, y)) {
+        fill_cells(dst, n, blank);
+    } else {
+        memcpy(dst, row_at_c(s, y), (size_t)n * sizeof(Cell));
+    }
     for (int32_t x = n; x < dst_cols; x++) dst[x] = blank;
 }
 
 void jt_scr_copy_sb_row(const jt_scr *s, int32_t i, Cell *dst, int32_t dst_cols, Cell blank) {
     if (!dst || dst_cols <= 0) return;
-    if (!s || !s->sb || i < 0 || i >= s->sb_len) {
+    if (!s || !s->sb_idx || !s->primary.grid || i < 0 || i >= s->sb_len) {
         for (int32_t x = 0; x < dst_cols; x++) dst[x] = blank;
         return;
     }
     int32_t phys = sb_phys(s, i);
-    int32_t n = s->sb_stride < dst_cols ? s->sb_stride : dst_cols;
-    memcpy(dst, s->sb + (size_t)phys * (size_t)s->sb_stride, (size_t)n * sizeof(Cell));
+    int32_t idx = s->sb_idx[phys];
+    if (idx < 0 || idx >= s->primary.grid_rows) {
+        for (int32_t x = 0; x < dst_cols; x++) dst[x] = blank;
+        return;
+    }
+    int32_t n = s->cols < dst_cols ? s->cols : dst_cols;
+    if (s->primary.erased && s->primary.erased[idx]) {
+        fill_cells(dst, n, blank);
+    } else {
+        memcpy(dst, s->primary.grid + (size_t)idx * (size_t)s->cols, (size_t)n * sizeof(Cell));
+    }
     for (int32_t x = n; x < dst_cols; x++) dst[x] = blank;
 }
 
@@ -626,21 +737,26 @@ int jt_scr_is_wrapped(const jt_scr *s, int32_t y) {
     return b->wrap[phys_y(b, y)] != 0;
 }
 
-static int buf_resize(jt_buf *b, int32_t oc, int32_t orows, int32_t nc, int32_t nr, Cell blank) {
-    Cell *next = (Cell *)malloc((size_t)nc * (size_t)nr * sizeof(Cell));
+static int buf_resize(jt_buf *b, int32_t oc, int32_t orows, int32_t nc, int32_t nr, int32_t extra,
+                      Cell blank) {
+    int32_t grid_rows = nr + extra;
+    if (grid_rows < nr) grid_rows = nr;
+    Cell *next = (Cell *)malloc((size_t)nc * (size_t)grid_rows * sizeof(Cell));
     int32_t *rowmap = (int32_t *)malloc((size_t)nr * sizeof(int32_t));
     uint8_t *tabs = (uint8_t *)malloc((size_t)nc);
-    uint8_t *dirty = (uint8_t *)calloc((size_t)nr, 1);
-    uint8_t *wrap = (uint8_t *)calloc((size_t)nr, 1);
-    if (!next || !rowmap || !tabs || !dirty || !wrap) {
+    uint8_t *dirty = (uint8_t *)calloc((size_t)grid_rows, 1);
+    uint8_t *wrap = (uint8_t *)calloc((size_t)grid_rows, 1);
+    uint8_t *erased = (uint8_t *)calloc((size_t)grid_rows, 1);
+    if (!next || !rowmap || !tabs || !dirty || !wrap || !erased) {
         free(next);
         free(rowmap);
         free(tabs);
         free(dirty);
         free(wrap);
+        free(erased);
         return 0;
     }
-    fill_cells(next, nc * nr, blank);
+    fill_cells(next, nc * grid_rows, blank);
     rowmap_identity(rowmap, nr);
     memset(dirty, 1, (size_t)nr);
     default_tabs(tabs, nc);
@@ -649,9 +765,14 @@ static int buf_resize(jt_buf *b, int32_t oc, int32_t orows, int32_t nc, int32_t 
     if (b->grid && b->rowmap) {
         for (int32_t y = 0; y < copyR; y++) {
             int32_t py = b->rowmap[y];
-            memcpy(next + (size_t)y * (size_t)nc, b->grid + (size_t)py * (size_t)oc,
-                   (size_t)copyC * sizeof(Cell));
-            wrap[y] = b->wrap ? b->wrap[py] : 0;
+            if (py < 0 || py >= b->grid_rows) continue;
+            if (b->erased && b->erased[py]) {
+                erased[y] = 1;
+            } else {
+                memcpy(next + (size_t)y * (size_t)nc, b->grid + (size_t)py * (size_t)oc,
+                       (size_t)copyC * sizeof(Cell));
+            }
+            wrap[y] = b->wrap && py < b->grid_rows ? b->wrap[py] : 0;
         }
     }
     free(b->grid);
@@ -659,11 +780,14 @@ static int buf_resize(jt_buf *b, int32_t oc, int32_t orows, int32_t nc, int32_t 
     free(b->tabstops);
     free(b->dirty);
     free(b->wrap);
+    free(b->erased);
     b->grid = next;
     b->rowmap = rowmap;
     b->tabstops = tabs;
     b->dirty = dirty;
     b->wrap = wrap;
+    b->erased = erased;
+    b->grid_rows = grid_rows;
     b->scroll_top = 0;
     b->scroll_bottom = nr - 1;
     clamp_cursor(b, nc, nr);
@@ -677,37 +801,60 @@ void jt_scr_resize(jt_scr *s, int32_t nc, int32_t nr) {
     if (nc == s->cols && nr == s->rows) return;
     Cell blank = blank_cell(s);
     int32_t oc = s->cols, orows = s->rows;
-    buf_resize(&s->primary, oc, orows, nc, nr, blank);
-    if (s->alt.grid) buf_resize(&s->alt, oc, orows, nc, nr, blank);
-    s->active = s->in_alt ? &s->alt : &s->primary;
+    int32_t cap = s->scrollback_cap;
+    int32_t slen = s->sb_len;
 
-    if (s->scrollback_cap > 0 && s->sb) {
-        int32_t cap = s->scrollback_cap;
-        int32_t len = s->sb_len;
-        int32_t old_stride = s->sb_stride;
-        Cell *nsb = (Cell *)malloc((size_t)cap * (size_t)nc * sizeof(Cell));
-        uint8_t *nw = (uint8_t *)calloc((size_t)cap, 1);
-        if (nsb && nw) {
-            for (int32_t i = 0; i < len; i++) {
-                Cell *dst = nsb + (size_t)i * (size_t)nc;
+    Cell *hist = NULL;
+    uint8_t *hw = NULL;
+    if (cap > 0 && slen > 0 && s->primary.grid && s->sb_idx) {
+        hist = (Cell *)malloc((size_t)slen * (size_t)oc * sizeof(Cell));
+        hw = (uint8_t *)malloc((size_t)slen);
+        if (hist && hw) {
+            for (int32_t i = 0; i < slen; i++) {
                 int32_t phys = sb_phys(s, i);
-                const Cell *src = s->sb + (size_t)phys * (size_t)old_stride;
-                int32_t n = old_stride < nc ? old_stride : nc;
-                memcpy(dst, src, (size_t)n * sizeof(Cell));
-                for (int32_t x = n; x < nc; x++) dst[x] = blank;
-                nw[i] = s->sb_wrap ? s->sb_wrap[phys] : 0;
+                int32_t idx = s->sb_idx[phys];
+                Cell *dst = hist + (size_t)i * (size_t)oc;
+                if (idx >= 0 && idx < s->primary.grid_rows &&
+                    !(s->primary.erased && s->primary.erased[idx])) {
+                    memcpy(dst, s->primary.grid + (size_t)idx * (size_t)oc,
+                           (size_t)oc * sizeof(Cell));
+                } else {
+                    fill_cells(dst, oc, blank);
+                }
+                hw[i] = s->sb_wrap ? s->sb_wrap[phys] : 0;
             }
-            free(s->sb);
-            free(s->sb_wrap);
-            s->sb = nsb;
-            s->sb_wrap = nw;
-            s->sb_stride = nc;
-            s->sb_head = len < cap ? len : 0;
         } else {
-            free(nsb);
-            free(nw);
+            free(hist);
+            free(hw);
+            hist = NULL;
+            hw = NULL;
+            slen = 0;
         }
     }
+
+    buf_resize(&s->primary, oc, orows, nc, nr, cap, blank);
+    if (s->alt.grid) buf_resize(&s->alt, oc, orows, nc, nr, 0, blank);
+    s->active = s->in_alt ? &s->alt : &s->primary;
+
+    sb_alloc(s, cap, nc, nr);
+    if (hist && hw && s->sb_idx && s->sb_free) {
+        int32_t ncopy = oc < nc ? oc : nc;
+        if (slen > cap) slen = cap;
+        for (int32_t i = 0; i < slen; i++) {
+            if (s->sb_free_n <= 0) break;
+            int32_t idx = s->sb_free[--s->sb_free_n];
+            Cell *dst = s->primary.grid + (size_t)idx * (size_t)nc;
+            memcpy(dst, hist + (size_t)i * (size_t)oc, (size_t)ncopy * sizeof(Cell));
+            if (ncopy < nc) fill_cells(dst + ncopy, nc - ncopy, blank);
+            s->sb_idx[i] = idx;
+            s->sb_wrap[i] = hw[i];
+        }
+        s->sb_len = slen;
+        s->sb_head = slen < cap ? slen : 0;
+        s->sb_stride = nc;
+    }
+    free(hist);
+    free(hw);
 
     s->cols = nc;
     s->rows = nr;
@@ -728,17 +875,20 @@ void jt_scr_init(jt_scr *s, int32_t cols, int32_t rows, int32_t sb_cap) {
     s->pen.fg = COLOR_DEFAULT;
     s->pen.bg = COLOR_DEFAULT;
     jt_defaults_reset(s);
-    if (!buf_init(&s->primary, cols, rows, blank_cell(s))) return;
+    int32_t cap = sb_cap < 0 ? 0 : sb_cap;
+    if (!buf_init(&s->primary, cols, rows, cap, blank_cell(s))) return;
     s->active = &s->primary;
-    sb_alloc(s, sb_cap < 0 ? 0 : sb_cap, cols);
+    sb_alloc(s, cap, cols, rows);
 }
 
 void jt_scr_deinit(jt_scr *s) {
     buf_free(&s->primary);
     buf_free(&s->alt);
-    free(s->sb);
+    free(s->sb_idx);
+    free(s->sb_free);
     free(s->sb_wrap);
-    s->sb = NULL;
+    s->sb_idx = NULL;
+    s->sb_free = NULL;
     s->sb_wrap = NULL;
     s->active = NULL;
 }
