@@ -62,29 +62,40 @@ public final class GlyphAtlas {
 
         let w = cellW
         let h = cellH
-        var pixels = [UInt8](repeating: 0, count: w * h)
-        let cs = CGColorSpaceCreateDeviceGray()
+        let bpr = (w * 4 + 15) & ~15
+        var rgba = [UInt8](repeating: 0, count: bpr * h)
+        let cs = CGColorSpaceCreateDeviceRGB()
         guard let ctx = CGContext(
-            data: &pixels,
+            data: &rgba,
             width: w,
             height: h,
             bitsPerComponent: 8,
-            bytesPerRow: w,
+            bytesPerRow: bpr,
             space: cs,
-            bitmapInfo: CGImageAlphaInfo.none.rawValue
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { return .empty }
-        ctx.setFillColor(gray: 0, alpha: 1)
-        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        ctx.clear(CGRect(x: 0, y: 0, width: w, height: h))
         ctx.setFillColor(gray: 1, alpha: 1)
         ctx.textMatrix = .identity
-
         let attrs: [NSAttributedString.Key: Any] = [
             kCTFontAttributeName as NSAttributedString.Key: used,
             kCTForegroundColorAttributeName as NSAttributedString.Key: CGColor(gray: 1, alpha: 1),
         ]
-        let line = CTLineCreateWithAttributedString(NSAttributedString(string: String(Character(us)), attributes: attrs))
+        let line = CTLineCreateWithAttributedString(
+            NSAttributedString(string: String(Character(us)), attributes: attrs)
+        )
         ctx.textPosition = CGPoint(x: 0, y: CGFloat(metrics.cellBaselinePx))
         CTLineDraw(line, ctx)
+
+        var coverage = [UInt8](repeating: 0, count: w * h)
+        for row in 0..<h {
+            let src = row * bpr
+            let dst = row * w
+            for col in 0..<w {
+                let o = src + col * 4
+                coverage[dst + col] = max(rgba[o + 3], rgba[o])
+            }
+        }
 
         if shelfX + w > atlasW {
             shelfX = 0
@@ -102,7 +113,7 @@ public final class GlyphAtlas {
         texture.replace(
             region: MTLRegionMake2D(x, y, w, h),
             mipmapLevel: 0,
-            withBytes: pixels,
+            withBytes: coverage,
             bytesPerRow: w
         )
         shelfX += w
@@ -111,9 +122,9 @@ public final class GlyphAtlas {
         let fh = Float(atlasH)
         return UV(
             u0: Float(x) / fw,
-            v0: Float(y + h) / fh,
+            v0: Float(y) / fh,
             u1: Float(x + w) / fw,
-            v1: Float(y) / fh
+            v1: Float(y + h) / fh
         )
     }
 }
