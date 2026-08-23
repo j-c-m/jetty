@@ -3,7 +3,7 @@ import Foundation
 public struct AppConfig: Sendable {
     public var fontFamily: String? = nil
     public var fontSize: CGFloat = 20
-    public var ligatures: Ligatures = .off
+    public var ligatures: Ligatures = .programming
     public var fontFeature: String = ""
     public var adjustCellWidth: Int = 0
     public var adjustCellHeight: Int = 0

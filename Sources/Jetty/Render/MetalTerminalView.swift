@@ -46,6 +46,9 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var lastBlinkOn = true
     private var lastDamageGen: UInt32 = 0
     private var forceFullRebuild = true
+    private let shaper = ShaperCache()
+    private var ligaHide = ContiguousArray<UInt8>()
+    private var lastInk = false
 
     public init(session: TerminalSession, config: AppConfig, device: MTLDevice, backingScale: CGFloat) {
         self.session = session
@@ -289,7 +292,31 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 )
             }
         }
-        if n > 0, let inst = renderer.prepareInstances(count: n) {
+        if ligaHide.count != n {
+            ligaHide = ContiguousArray(repeating: 0, count: max(n, 0))
+        }
+        var ligaSpans: [LigaSpan] = []
+        if config.ligatures != .off, n > 0, cols > 0, paintRows > 0 {
+            ligaSpans = ligaHide.withUnsafeMutableBufferPointer { hideBuf in
+                paint.withUnsafeBufferPointer { cellBuf in
+                    guard let cp = cellBuf.baseAddress, let hp = hideBuf.baseAddress else { return [] }
+                    return LigatureExpand.collect(
+                        cells: cp,
+                        cols: cols,
+                        rows: paintRows,
+                        mode: config.ligatures,
+                        shaper: shaper,
+                        font: { bold, italic in self.metrics.face(bold: bold, italic: italic) },
+                        fontPx: Int(metrics.fontPx.rounded()),
+                        feature: config.fontFeature,
+                        hide: hp
+                    )
+                }
+            }
+        }
+        let wantInk = config.ligatures != .off && (!ligaSpans.isEmpty || lastInk)
+        let instCount = n + (wantInk ? n : 0)
+        if n > 0, let inst = renderer.prepareInstances(count: instCount) {
             rgb.withUnsafeMutableBufferPointer { pal in
                 palPacked.withUnsafeBufferPointer { packed in
                     guard let pp = packed.baseAddress, let dp = pal.baseAddress else { return }
@@ -297,10 +324,13 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 }
                 let dfg = SIMD3(Float(defFG.r) / 255, Float(defFG.g) / 255, Float(defFG.b) / 255)
                 let dbg = SIMD3(Float(defBG.r) / 255, Float(defBG.g) / 255, Float(defBG.b) / 255)
+                ligaHide.withUnsafeBufferPointer { hideBuf in
                 paint.withUnsafeBufferPointer { cellBuf in
                     guard let cp = cellBuf.baseAddress, let palBase = pal.baseAddress else { return }
+                    let hidePtr: UnsafePointer<UInt8>? =
+                        config.ligatures == .off ? nil : hideBuf.baseAddress
                     var useSkip = skipExpand
-                    if useSkip != nil && !renderer.canCopyFromPresented(count: n) {
+                    if useSkip != nil && !renderer.canCopyFromPresented(count: instCount) {
                         useSkip = nil
                     }
                     for _ in 0..<3 {
@@ -327,10 +357,14 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                                         blinkOff: !phaseOn,
                                         selection: sel,
                                         graphemes: graphemes,
+                                        hideGlyphs: hidePtr,
                                         dest: inst + y * cols
                                     )
                                 } else {
-                                    renderer.copyPresentedRow(to: inst, row: y, cols: cols)
+                                    renderer.copyPresentedRow(
+                                        to: inst, row: y, cols: cols,
+                                        inkBase: wantInk ? n : nil
+                                    )
                                 }
                                 y += 1
                             }
@@ -353,7 +387,30 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                                 blinkOff: !phaseOn,
                                 selection: sel,
                                 graphemes: graphemes,
+                                hideGlyphs: hidePtr,
                                 dest: inst
+                            )
+                        }
+                        if wantInk {
+                            let ink = inst + n
+                            ink.update(repeating: CellInstance(
+                                ox: 0, oy: 0, sx: 0, sy: 0,
+                                u0: 0, v0: 0, u1: 0, v1: 0,
+                                fr: 0, fg: 0, fb: 0, fa: 1,
+                                br: 0, bg: 0, bb: 0, ba: 1,
+                                atlas: 0, _pad0: 0, _pad1: 0, _pad2: 0
+                            ), count: n)
+                            writeLigaInk(
+                                spans: ligaSpans,
+                                dest: ink,
+                                cells: cp,
+                                cols: cols,
+                                cellW: cw,
+                                cellH: ch,
+                                palette: palBase,
+                                defFG: dfg,
+                                defBG: dbg,
+                                blinkOff: !phaseOn
                             )
                         }
                         if !preedit.isEmpty {
@@ -374,6 +431,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                         if renderer.atlas.packGeneration == gen { break }
                         useSkip = nil
                     }
+                }
                 }
             }
         }
@@ -427,6 +485,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let presented = renderer.draw(
             view: self,
             instanceCount: n,
+            inkCount: wantInk ? n : 0,
             overlayCount: overlayN,
             viewport: SIMD2(Float(dw), Float(dh)),
             contentOffsetY: Float(visRows) * ch
@@ -442,6 +501,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 rowDocId = []
             }
             forceFullRebuild = false
+            lastInk = wantInk
         } else {
             forceFullRebuild = true
         }
@@ -798,6 +858,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
 
     private func replaceMetrics(_ next: CellMetrics) {
         guard let device else { return }
+        shaper.clear()
         metrics = next
         if let atlas = GlyphAtlas(device: device, metrics: metrics) {
             renderer?.atlas = atlas
@@ -1249,6 +1310,43 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             x += cells
         }
         return w
+    }
+
+    private func writeLigaInk(
+        spans: [LigaSpan],
+        dest: UnsafeMutablePointer<CellInstance>,
+        cells: UnsafePointer<CVt.Cell>,
+        cols: Int,
+        cellW: Float,
+        cellH: Float,
+        palette: UnsafePointer<SIMD3<Float>>,
+        defFG: SIMD3<Float>,
+        defBG: SIMD3<Float>,
+        blinkOff: Bool
+    ) {
+        guard let atlas = renderer?.atlas else { return }
+        for span in spans {
+            let cell = cells[span.row * cols + span.x]
+            if blinkOff && (cell.attrs & UInt16(ATTR_BLINK)) != 0 { continue }
+            let face = shaper.featuredFont(
+                metrics.face(bold: span.bold, italic: span.italic),
+                feature: config.fontFeature
+            )
+            let g = atlas.spanCoverage(text: span.text, font: face, cells: span.n)
+            var fg = GridExpand.resolve(cell.fg, palette: palette, def: defFG)
+            var bg = GridExpand.resolve(cell.bg, palette: palette, def: defBG)
+            if (cell.attrs & UInt16(ATTR_REVERSE)) != 0 { swap(&fg, &bg) }
+            if (cell.attrs & UInt16(ATTR_HIDDEN)) != 0 { fg = bg }
+            dest[span.row * cols + span.x] = CellInstance(
+                ox: insetLeftPx + Float(span.x) * cellW,
+                oy: insetTopPx + Float(span.row) * cellH,
+                sx: cellW * Float(span.n), sy: cellH,
+                u0: g.uv.u0, v0: g.uv.v0, u1: g.uv.u1, v1: g.uv.v1,
+                fr: fg.x, fg: fg.y, fb: fg.z, fa: 1,
+                br: bg.x, bg: bg.y, bb: bg.z, ba: 1,
+                atlas: g.color ? 1 : 0, _pad0: 0, _pad1: 0, _pad2: 0
+            )
+        }
     }
 
     private func stampPreedit(

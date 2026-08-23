@@ -44,5 +44,5 @@ Further `y\n` wins that skip BCE-filling unread cells on a new row are a design 
 ## Other locks
 
 - 16-byte `Cell`, colors tagged per channel. No Ghostty style table.
-- Ligatures off. ExtraBold is SGR 1.
+- Ligatures default `programming`; letters stay cell-boxed. ExtraBold is SGR 1.
 - Tests travel with the code they prove.

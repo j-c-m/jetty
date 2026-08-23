@@ -179,6 +179,7 @@ public final class GlyphAtlas {
 
     public private(set) var texture: MTLTexture
     public private(set) var colorTexture: MTLTexture
+    private var spanCache: [UInt64: Glyph] = [:]
     public let cellW: Int
     public let cellH: Int
     public let metrics: CellMetrics
@@ -244,6 +245,30 @@ public final class GlyphAtlas {
         return g
     }
 
+    /// Coverage for a shaped ligature span. Same DeviceRGB recipe as letters, width `cells * cellW`.
+    func spanCoverage(text: String, font: CTFont, cells: Int) -> Glyph {
+        let n = max(1, cells)
+        var key: UInt64 = 0xcbf29ce484222325
+        key ^= UInt64(n)
+        key &*= 0x100000001b3
+        key ^= UInt64(text.utf8.count)
+        key &*= 0x100000001b3
+        for b in text.utf8 {
+            key ^= UInt64(b)
+            key &*= 0x100000001b3
+        }
+        key ^= UInt64(bitPattern: Int64(ObjectIdentifier(font as AnyObject).hashValue))
+        key &*= 0x100000001b3
+        if let hit = spanCache[key] { return hit }
+        let g = rasterizeSpan(text: text, font: font, cells: n)
+        spanCache[key] = g
+        return g
+    }
+
+    private func rasterizeSpan(text: String, font: CTFont, cells: Int) -> Glyph {
+        rasterizeGray(text: text, font: font, wide: false, widthCells: cells)
+    }
+
     private func rasterize(
         scalar: UInt32,
         bold: Bool,
@@ -276,7 +301,7 @@ public final class GlyphAtlas {
         if CTFontGetSymbolicTraits(used).contains(.traitColorGlyphs) {
             return rasterizeColor(text: text, font: used, wide: wide)
         }
-        return rasterizeGray(text: text, font: used, wide: wide)
+        return rasterizeGray(text: text, font: used, wide: wide, widthCells: wide ? 2 : 1)
     }
 
     private func rasterizeSprite(_ cp: UInt32, wide: Bool) -> Glyph {
@@ -302,8 +327,8 @@ public final class GlyphAtlas {
         return Glyph(uv: writeGray(coverage, width: w, height: h, rect: rect), color: false)
     }
 
-    private func rasterizeGray(text: String, font: CTFont, wide: Bool) -> Glyph {
-        let w = max(1, wide ? cellW * 2 : cellW)
+    private func rasterizeGray(text: String, font: CTFont, wide: Bool, widthCells: Int = 1) -> Glyph {
+        let w = max(1, (wide ? 2 : max(1, widthCells)) * cellW)
         let h = cellH
         let bpr = (w * 4 + 15) & ~15
         var rgba = [UInt8](repeating: 0, count: bpr * h)
@@ -466,6 +491,12 @@ public final class GlyphAtlas {
                 color: false
             )
         }
+        for (key, g) in spanCache {
+            spanCache[key] = Glyph(
+                uv: UV(u0: g.uv.u0 * sx, v0: g.uv.v0 * sy, u1: g.uv.u1 * sx, v1: g.uv.v1 * sy),
+                color: false
+            )
+        }
         texture = tex
         uploadGrayFull()
         return true
@@ -497,6 +528,7 @@ public final class GlyphAtlas {
 
     private func clearGray() {
         cache = cache.filter { $0.value.color }
+        spanCache.removeAll(keepingCapacity: true)
         shelf.clear()
         uploadGrayFull()
     }

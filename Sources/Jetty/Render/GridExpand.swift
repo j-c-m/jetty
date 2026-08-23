@@ -54,6 +54,7 @@ public enum GridExpand {
         blinkOff: Bool = false,
         selection: (x0: Int, y0: Int, x1: Int, y1: Int)?,
         graphemes: [UInt32: [UInt32]] = [:],
+        hideGlyphs: UnsafePointer<UInt8>? = nil,
         dest: UnsafeMutablePointer<CellInstance>
     ) {
         let selCols = selection.flatMap { CellSelection.columns($0, row: rowY, cols: cols) }
@@ -79,9 +80,15 @@ public enum GridExpand {
             var g = GlyphAtlas.Glyph.empty
             var sx = cellW
             var sy = cellH
-            if wide == WIDE_TAIL {
-                sx = 0
-                sy = 0
+            let hide = hideGlyphs != nil && hideGlyphs![rowY * cols + x] != 0
+            if hide || wide == WIDE_TAIL {
+                if hide {
+                    sx = cellW
+                    sy = cellH
+                } else {
+                    sx = 0
+                    sy = 0
+                }
             } else if wide != WIDE_HEAD {
                 let bold = (cell.attrs & UInt16(ATTR_BOLD)) != 0
                 let italic = (cell.attrs & UInt16(ATTR_ITALIC)) != 0
@@ -128,6 +135,7 @@ public enum GridExpand {
         blinkOff: Bool = false,
         selection: (x0: Int, y0: Int, x1: Int, y1: Int)?,
         graphemes: [UInt32: [UInt32]] = [:],
+        hideGlyphs: UnsafePointer<UInt8>? = nil,
         dest: UnsafeMutablePointer<CellInstance>
     ) {
         var y = 0
@@ -150,6 +158,7 @@ public enum GridExpand {
                 blinkOff: blinkOff,
                 selection: selection,
                 graphemes: graphemes,
+                hideGlyphs: hideGlyphs,
                 dest: dest + y * cols
             )
             y += 1

@@ -136,7 +136,7 @@ Ghostty is a multi-OS product with tabs, splits, Kitty graphics, an ImGui inspec
 
 2. **v1 cell/parser/TERM/sandbox/sprites/ExtraBold stay locked.** Follow-ons paint, config, GPU upload, and host UI. DEC 2027 is the only VT-semantics relaxation, and it is a **mode** default-off. Rationale: canaries and honesty.
 
-3. **Ligatures are `off` / `programming` / `on`. Default `off`.** `false`/`true` still parse as `off`/`on`. `off`: no run hash, no row `CTLine` (atlas may still `CTLine` one cached character). `programming`: longest-first hardcoded ASCII spans only (`=>`, `!=`, …); shape those spans; every other cell stays the v1 letter path. `on`: shape each run (liga+calt); 1:1 / `xOffset≈0` cells still **paint** with the v1 cell-boxed letter path so `a` does not change. `font-feature` applies only where the shaper runs (`on` runs, and `programming` spans). Rationale: canary path; daily-driver `=>` without retuning letters.
+3. **Ligatures are `off` / `programming` / `on`. Default `programming`.** `false`/`true` still parse as `off`/`on`. `off`: no run hash, no row `CTLine` (atlas may still `CTLine` one cached character). `programming`: longest-first hardcoded ASCII spans only (`=>`, `!=`, …); shape those spans; every other cell stays the v1 letter path. `on`: shape each run (liga+calt); 1:1 / `xOffset≈0` cells still **paint** with the v1 cell-boxed letter path so `a` does not change. `font-feature` applies only where the shaper runs (`on` runs, and `programming` spans). Rationale: canary path; daily-driver `=>` without retuning letters.
 
 4. **Letters stay cell-boxed.** Do not switch default text to tight bbox / `CTFontDrawGlyphs` / blend-on ink. That is the Ghostty letter look. Italic and Nerd **clip**. Ligature spans that overflow use a **coverage** ink pass over per-cell bg (blend-on, `sx=0` on non-liga cells). Do not invent `N×cellW` tiles. Do not land a second instance range while `ligatures = off`. Rationale: keep jetty’s letter raster; `=>` cannot bake two cells of bg into one mix tile.
 
@@ -171,7 +171,7 @@ Ghostty is a multi-OS product with tabs, splits, Kitty graphics, an ImGui inspec
 | Decision | Resolution |
 | --- | --- |
 | Grouping | Daily-driver follow-on only |
-| Ligatures | **`off` / `programming` / `on`**. Default **`off`**. `false`/`true` → `off`/`on`. `programming` is the daily `=>` mode. `font-feature` only where the shaper runs. Letters stay cell-boxed. |
+| Ligatures | **`off` / `programming` / `on`**. Default **`programming`**. `false`/`true` → `off`/`on`. `programming` is the daily `=>` mode. `font-feature` only where the shaper runs. Letters stay cell-boxed. |
 | DEC 2027 default | **Off**; DECRPM 2 when reset, 1 when set |
 | Command palette / quick terminal / inspector | Out of scope |
 | Keybind language | Small host table; no Ghostty chains/global/all |
@@ -293,7 +293,7 @@ Goldens: SGR `4:3m` / `4:4m` / `4:5m` / `9m` / `53m` / `5m` produce overlay or b
 # ~/.config/jetty/config
 font-family = JetBrainsMono Nerd Font Mono
 font-size = 20
-ligatures = off
+ligatures = programming
 font-feature =                 # optional; e.g. calt  or  -calt
 adjust-cell-width = 0
 adjust-cell-height = 0
@@ -318,7 +318,7 @@ Rules:
 - SGR 1 is still ExtraBold **of that family** if a heavy/black/extrabold face exists, else Bold, else regular (no synthetic outline in this follow-on).
 - `palette-N` overlays compiled Eighties Black. C owns the overlay: `jt_scr_set_palette_overlay(s, rgb16, mask)` stores 16 RGB values + a 16-bit mask. `jt_scr_palette_reset` writes compiled 0–15 then applies masked overlay entries, then the xterm cube 16–255. OSC 104 / RIS call that reset. Swift load/reload calls the setter then reset. Do not re-apply from Swift on every `palette_changed` — C already did. Compiled Eighties Black is not reopened.
 - `adjust-cell-width` / `adjust-cell-height`: integer pixels added to `CellMetrics.cellWidthPx` / `cellHeightPx` after the existing `round(max ASCII advance)+1` / `round(ascent+descent+leading)` measure. Clamp so cell ≥ 1×1. Negative allowed. Recompute `TIOCSWINSZ` on change.
-- `ligatures` is `off` / `programming` / `on` (default `off`). Aliases: `false`/`0`/`no` → `off`; `true`/`1`/`yes` → `on`. Unknown values ignored (stay `off`). `off` ignores `font-feature` and must not hash runs. `programming` matches a hardcoded longest-first ASCII table and shapes **only those spans**. `on` shapes each run (liga+calt) then still paints 1:1 cells with the v1 letter path. `font-feature` (`+tag` / `-tag` / `tag=0`) applies only on shaped spans/runs. Invalid tags ignored. `-calt` with `on` disables `calt` on the shaper (user wins).
+- `ligatures` is `off` / `programming` / `on` (default `programming`). Aliases: `false`/`0`/`no` → `off`; `true`/`1`/`yes` → `on`. Unknown values ignored (stay `programming`). `off` ignores `font-feature` and must not hash runs. `programming` matches a hardcoded longest-first ASCII table and shapes **only those spans**. `on` shapes each run (liga+calt) then still paints 1:1 cells with the v1 letter path. `font-feature` (`+tag` / `-tag` / `tag=0`) applies only on shaped spans/runs. Invalid tags ignored. `-calt` with `on` disables `calt` on the shaper (user wins).
 - Reload: menu **Reload Config** (`Cmd+Shift+,`). Live: font, size, ligatures, palette overlay, opacity, keybinds, notifications, link-url, secure-input. New-window only: `scrollback-lines`, launch cols/rows.
 
 Do not add Ghostty’s `font-family-bold` stack or synthetic italic in this follow-on unless the family has no italic (then italic request uses regular; italic ink may clip).
@@ -406,7 +406,7 @@ Goldens: box `U+2502` still meets the cell top and bottom (sprite path). Italic 
 
 **Does not retune letters.** **Files:** new `Sources/Jetty/Render/ShaperCache.swift` (port ghosvt `ShaperCache` patterns, not Ghostty Zig), `GridExpand.swift`, `GlyphAtlas` keys, `Config.swift` (`AppConfig.Ligatures`).
 
-v1 rasterizes one glyph per cell. JetBrains `calt` ligatures are typically: spacer glyph on cell 0, wide ink on cell 1 with **negative** `xOffset` so ink spans both. ghosvt: “We do **not** invent multi-cell quads.” Do not use `N×cellW` tiles. A 2-cell mix tile bakes bg and breaks when the two cells differ (selection).
+v1 rasterizes one glyph per cell. JetBrains `calt` ligatures are typically: spacer glyph on cell 0, liga glyph on cell 1. Core Text positions both at `xOffset≈0`; overflow is the liga glyph’s left side bearing. Detect by **cmap mismatch** (shaped glyph ≠ `CTFontGetGlyphsForCharacters`), not by `xOffset`. Coverage ink is an **N-cell R8** tile over per-cell bg (blend-on, no baked bg). Letters stay 1-cell mix tiles. A 2-cell mix tile would bake bg and break when the two cells differ (selection).
 
 ```mermaid
 flowchart LR
@@ -426,7 +426,7 @@ flowchart LR
   CT --> Ink
 ```
 
-**`off` (default):** do not enter the shaper. No run hash. Per-cell letter path as v1. Atlas `rasterize` may still `CTLine` one cached character.
+**`off`:** do not enter the shaper. No run hash. Per-cell letter path as v1. Atlas `rasterize` may still `CTLine` one cached character.
 
 **`programming`:** scan visible cells for a hardcoded longest-first table (narrow ASCII only). Shape **that span only**. Everything else is the v1 letter path. No row hash. Start small:
 
@@ -932,7 +932,7 @@ Status: **now** = v1 HEAD `573cf05`. **follow-on** = this document. **out** = wi
 | Ghostty | jetty now | follow-on | notes |
 | --- | --- | --- | --- |
 | `font-family` list + styles | bundled Mono only | follow-on | one family name |
-| `font-feature` / ligatures | off, no shaper | follow-on | default off |
+| `font-feature` / ligatures | off, no shaper | follow-on | default `programming` |
 | Ink-bearing / CoreText shape | cell-boxed | follow-on | ghosvt bearings |
 | Sprites before font | now (`573cf05`) | now | lock |
 | `adjust-cell-width/height` | no | follow-on | px delta |
@@ -1027,7 +1027,7 @@ void (*history_cleared)(void *ctx);              /* lock held; ED 3 only, from j
 public struct AppConfig: Sendable {
     public var fontFamily: String = EmbeddedFonts.familyName
     public var fontSize: CGFloat = 20
-    public var ligatures: Ligatures = .off // off | programming | on
+    public var ligatures: Ligatures = .programming // off | programming | on
     public var adjustCellWidthPx: Int = 0
     public var adjustCellHeightPx: Int = 0
     public var backgroundOpacity: CGFloat = 1
@@ -1046,7 +1046,7 @@ public struct AppConfig: Sendable {
 - Ring stays 3 slots. Skip = memcpy from `instanceBuffers[presentedSlot]` (set only after successful present). Nil or cap/stride mismatch → expand all.
 - Layout: `inst[y*cols+x]` one range (`off`). Second ink range only on liga frames (PR 22).
 - Letter atlas stays cell-boxed. Liga glyphs use a coverage key, not a retuned letter `Entry`.
-- `ShaperCache` only when `ligatures` is `on`. `programming` shapes table spans only.
+- `ShaperCache` when `ligatures` is not `off`. `programming` shapes table spans only.
 - `CellInstance.stride`: 80 (20–22) then 32 (PR 23), `int16` origin, u16 **pixel** UVs. `FrameUniforms` 32 bytes after PR 23.
 - Preedit underline: `OverlayInstance`.
 
@@ -1271,9 +1271,10 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 ### PR 22 — Ligatures (`off` / `programming` / `on`)
 
 - **Title:** `feat: programming ligatures without retuning letters`
-- **Files:** new `Sources/Jetty/Render/ShaperCache.swift`, `GridExpand.swift`, `GlyphAtlas.swift`, `Config.swift`, `TerminalRenderer.swift` (blend-on ink pass)
+- **Status:** **done** (this commit)
+- **Files:** new `ShaperCache.swift`, `ProgrammingLigatures.swift`, `LigatureExpand.swift`; `GridExpand.swift`, `GlyphAtlas.swift`, `Config.swift`, `MetalTerminalView.swift`, `TerminalRenderer.swift` (blend-on ink pass)
 - **Dependencies:** PR 18, PR 20 (not 21)
-- **Changes:** `off`: no run hash, no row `CTLine`. `programming`: longest-first ASCII table; `CTLine` **only** those spans. `on`: shape runs; paint 1:1 with the v1 letter path. Coverage ink over per-cell bg for merged/`xOffset` cells; `sx=0` otherwise. Second instance range **only** on liga frames. Run breaks on sprites / wide / bold / italic / grapheme (not OSC 8). Golden: `=>` ligates in `programming`/`on`; `hello` never `CTLine`s in `programming`; `off` is two characters.
+- **Changes:** Default **`programming`**. `off`: no run hash, no row `CTLine`. `programming`: longest-first ASCII table; `CTLine` **only** those spans. `on`: shape runs; paint 1:1 with the v1 letter path. Detect liga by cmap mismatch (JetBrains spacer+liga at `xOffset≈0`). Coverage ink over per-cell bg for liga spans; `sx=0` otherwise. Second instance range **only** on liga frames. Run breaks on sprites / wide / bold / italic / grapheme (not OSC 8). Golden: `=>` ligates in `programming`/`on`; `hello` never `CTLine`s in `programming`; `off` is two characters.
 
 ### PR 23 — Compact 32-byte instances
 
@@ -1382,4 +1383,4 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 
 ---
 
-**Tracks:** 18–21 done/withdrawn. **22** ligatures. **23** compact (after 20). Host 24, 25–26, 27, 28, 29, 30, 31, 33 in parallel. 32 anytime. VT 34. Chore 35–37.
+**Tracks:** 18–21 done/withdrawn. **22** ligatures (this change). **23** compact (after 20). Host 24, 25–26, 27, 28, 29, 30, 31, 33 in parallel. 32 anytime. VT 34. Chore 35–37.

@@ -55,7 +55,7 @@ final class ConfigTests: XCTestCase {
         let c = AppConfig.parse("")
         XCTAssertNil(c.fontFamily)
         XCTAssertEqual(c.fontSize, 20)
-        XCTAssertEqual(c.ligatures, .off)
+        XCTAssertEqual(c.ligatures, .programming)
         XCTAssertEqual(c.adjustCellWidth, 0)
         XCTAssertEqual(c.paletteOverlayMask, 0)
         XCTAssertEqual(c.backgroundOpacity, 1)
@@ -68,7 +68,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(AppConfig.parse("ligatures = programming").ligatures, .programming)
         XCTAssertEqual(AppConfig.parse("ligatures = on").ligatures, .on)
         XCTAssertEqual(AppConfig.parse("ligatures = true").ligatures, .on)
-        XCTAssertEqual(AppConfig.parse("ligatures = nope").ligatures, .off)
+        XCTAssertEqual(AppConfig.parse("ligatures = nope").ligatures, .programming)
     }
 
     func testAdjustCellClampsToOne() {

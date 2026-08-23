@@ -7,6 +7,7 @@ public final class TerminalRenderer {
     public let device: MTLDevice
     public let queue: MTLCommandQueue
     public let pipeline: MTLRenderPipelineState
+    public let inkPipeline: MTLRenderPipelineState
     public let overlayPipeline: MTLRenderPipelineState
     public let sampler: MTLSamplerState
     public var atlas: GlyphAtlas
@@ -47,6 +48,22 @@ public final class TerminalRenderer {
             self.pipeline = try device.makeRenderPipelineState(descriptor: desc)
         } catch {
             fputs("jetty: pipeline: \(error)\n", stderr)
+            return nil
+        }
+        guard let ifn = lib.makeFunction(name: "ink_fragment") else { return nil }
+        let idesc = MTLRenderPipelineDescriptor()
+        idesc.vertexFunction = vfn
+        idesc.fragmentFunction = ifn
+        idesc.colorAttachments[0].pixelFormat = .bgra8Unorm
+        idesc.colorAttachments[0].isBlendingEnabled = true
+        idesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        idesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        idesc.colorAttachments[0].sourceAlphaBlendFactor = .one
+        idesc.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        do {
+            self.inkPipeline = try device.makeRenderPipelineState(descriptor: idesc)
+        } catch {
+            fputs("jetty: ink pipeline: \(error)\n", stderr)
             return nil
         }
         guard let ovfn = lib.makeFunction(name: "overlay_vertex"),
@@ -104,7 +121,8 @@ public final class TerminalRenderer {
     public func copyPresentedRow(
         to dest: UnsafeMutablePointer<CellInstance>,
         row: Int,
-        cols: Int
+        cols: Int,
+        inkBase: Int? = nil
     ) {
         guard cols > 0, row >= 0,
               let p = presentedSlot,
@@ -114,6 +132,12 @@ public final class TerminalRenderer {
         if start < 0 || start + cols > instanceCaps[p] { return }
         let src = buf.contents().assumingMemoryBound(to: CellInstance.self)
         (dest + start).update(from: src + start, count: cols)
+        if let ink = inkBase {
+            let i = ink + start
+            if i >= 0, i + cols <= instanceCaps[p] {
+                (dest + i).update(from: src + i, count: cols)
+            }
+        }
     }
 
     public func prepareOverlays(count: Int) -> UnsafeMutablePointer<OverlayInstance>? {
@@ -136,6 +160,7 @@ public final class TerminalRenderer {
     public func draw(
         view: MTKView,
         instanceCount: Int,
+        inkCount: Int = 0,
         overlayCount: Int = 0,
         viewport: SIMD2<Float>,
         contentOffsetY: Float = 0
@@ -160,6 +185,15 @@ public final class TerminalRenderer {
         enc.setFragmentSamplerState(sampler, index: 0)
         if instanceCount > 0 {
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: instanceCount)
+        }
+        if inkCount > 0 {
+            enc.setRenderPipelineState(inkPipeline)
+            enc.setVertexBuffer(instanceBuffers[instanceSlot], offset: instanceCount * CellInstance.stride, index: 0)
+            enc.setVertexBuffer(uniformBuffers[uniformSlot], offset: 0, index: 1)
+            enc.setFragmentTexture(atlas.texture, index: 0)
+            enc.setFragmentTexture(atlas.colorTexture, index: 1)
+            enc.setFragmentSamplerState(sampler, index: 0)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: inkCount)
         }
         if overlayCount > 0, let obuf = overlayBuffers[overlaySlot] {
             enc.setRenderPipelineState(overlayPipeline)
@@ -246,6 +280,20 @@ public final class TerminalRenderer {
         }
         float3 rgb = mix(in.bg.rgb, in.fg.rgb, saturate(a));
         return float4(rgb, 1.0);
+    }
+
+    fragment float4 ink_fragment(VertexOut in [[stage_in]],
+                                 texture2d<float> atlas [[texture(0)]],
+                                 texture2d<float> colorAtlas [[texture(1)]],
+                                 sampler samp [[sampler(0)]]) {
+        if (in.hasGlyph < 0.5) {
+            return float4(0, 0, 0, 0);
+        }
+        if (in.atlas > 0.5) {
+            return colorAtlas.sample(samp, in.uv);
+        }
+        float a = atlas.sample(samp, in.uv).r;
+        return float4(in.fg.rgb, saturate(a));
     }
 
     struct OverlayInstance {
