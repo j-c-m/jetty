@@ -12,16 +12,18 @@ public final class ScrollPhysics {
     /// When true, stick to the bottom as new output arrives.
     private(set) var pinnedToBottom: Bool = true
 
-    var friction: Double = 6
+    var friction: Double = 2
     /// Wheel/trackpad → velocity scale.
-    var impulseScale: Double = 18
+    var impulseScale: Double = 4
+    /// Decay for the active coast. Trackpad uses `friction`; page uses 3×.
+    private var coastFriction: Double = 2
     /// Starting visual cap (rows/frame). Grows with `runTime` until unrestricted.
     var maxRowsPerFrame: Double = 1.0
     /// Seconds for the cap to double. ~1.4s to pass 64 rows/frame.
     var accelHalflife: Double = 0.2
 
     private let settlePos: Double = 0.02
-    private let settleVel: Double = 0.15
+    private let settleVel: Double = 0.05
     /// Absolute row offset to ease toward (search / programmatic scroll). Nil = free physics.
     private var seekTarget: Double?
     /// ⌘End: chase the live bottom until we arrive. Output does not use this.
@@ -61,25 +63,23 @@ public final class ScrollPhysics {
         seekFollowsBottom = false
         seekFollowsTop = false
         pinnedToBottom = false
+        coastFriction = max(friction, 0.05)
         // +impulse → older history → lower position → negative velocity.
         velocity -= deltaRows * impulseScale
     }
 
-    /// Smooth page-key fling. `direction` +1 = older (Page Up), −1 = toward bottom.
-    /// `holdCount` starts at 1 on first press and grows with key-repeat for acceleration.
-    func applyPageImpulse(direction: Double, holdCount: Int, viewportRows: Double) {
+    /// Page Up/Down: coast one viewport minus a row. `direction` +1 = older, −1 = toward bottom.
+    func applyPageImpulse(direction: Double, viewportRows: Double) {
         if abs(direction) < 1e-9 { return }
         resetAccelIfIdleOrChase()
         seekTarget = nil
         seekFollowsBottom = false
         seekFollowsTop = false
-        let vp = max(1, viewportRows)
         pinnedToBottom = false
-        // Initial kick ~ coasts about a page; repeats multiply (capped).
-        let base = vp * 5.5
-        let mult = min(1.0 + Double(max(0, holdCount - 1)) * 0.45, 7.0)
-        let kick = base * mult
-        velocity -= direction * kick
+        coastFriction = max(friction, 0.05) * 3
+        let vp = max(1, viewportRows - 1)
+        velocity -= direction * vp * coastFriction
+        runTime = max(runTime, 1.5)
     }
 
     /// Coast to the top (`direction` +1) or bottom (−1). Always reaches the extreme.
@@ -227,7 +227,7 @@ public final class ScrollPhysics {
                 return false
             }
         } else if !seeking {
-            velocity *= exp(-friction * dt)
+            velocity *= exp(-coastFriction * dt)
             if abs(velocity) < settleVel {
                 velocity = 0
             }

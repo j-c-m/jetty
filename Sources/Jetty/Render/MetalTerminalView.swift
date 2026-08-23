@@ -29,8 +29,6 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var lastSafeTop: CGFloat = 0
     private var lastInAlt = false
     private var altScrollPending: Double = 0
-    private var pageHoldKey: UInt16 = 0
-    private var pageHoldCount: Int = 0
     private var lastMouseCell: (x: Int, y: Int)?
     private var mouseWheelPending: Double = 0
     private var mouseHostSelect = false
@@ -815,14 +813,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let maxO = Double(sb)
         let vp = Double(max(1, rows))
         if pageUp || pageDown {
-            if event.isARepeat, pageHoldKey == event.keyCode {
-                pageHoldCount += 1
-            } else {
-                pageHoldKey = event.keyCode
-                pageHoldCount = 1
-            }
             let dir: Double = pageUp ? 1 : -1
-            scrollPhysics.applyPageImpulse(direction: dir, holdCount: pageHoldCount, viewportRows: vp)
+            scrollPhysics.applyPageImpulse(direction: dir, viewportRows: vp)
         } else if home {
             scrollPhysics.seekExtreme(direction: 1, holdCount: 1, viewportRows: vp, maxOffset: maxO)
         } else {
