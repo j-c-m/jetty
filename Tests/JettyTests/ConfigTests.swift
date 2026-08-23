@@ -8,7 +8,7 @@ final class ConfigTests: XCTestCase {
             # comment
             font-family = Menlo
             font-size = 18
-            ligatures = true
+            ligatures = programming
             font-feature = -calt
             adjust-cell-width = -1
             adjust-cell-height = 2
@@ -27,7 +27,7 @@ final class ConfigTests: XCTestCase {
             """)
         XCTAssertEqual(c.fontFamily, "Menlo")
         XCTAssertEqual(c.fontSize, 18)
-        XCTAssertTrue(c.ligatures)
+        XCTAssertEqual(c.ligatures, .programming)
         XCTAssertEqual(c.fontFeature, "-calt")
         XCTAssertEqual(c.adjustCellWidth, -1)
         XCTAssertEqual(c.adjustCellHeight, 2)
@@ -48,18 +48,27 @@ final class ConfigTests: XCTestCase {
     func testEmptyFamilyIsOmitted() {
         let c = AppConfig.parse("font-family =\nligatures = false")
         XCTAssertNil(c.fontFamily)
-        XCTAssertFalse(c.ligatures)
+        XCTAssertEqual(c.ligatures, .off)
     }
 
     func testDefaultsMatchBundledMono() {
         let c = AppConfig.parse("")
         XCTAssertNil(c.fontFamily)
         XCTAssertEqual(c.fontSize, 20)
-        XCTAssertFalse(c.ligatures)
+        XCTAssertEqual(c.ligatures, .off)
         XCTAssertEqual(c.adjustCellWidth, 0)
         XCTAssertEqual(c.paletteOverlayMask, 0)
         XCTAssertEqual(c.backgroundOpacity, 1)
         XCTAssertTrue(c.linkURL)
+    }
+
+    func testLigaturesAliases() {
+        XCTAssertEqual(AppConfig.parse("ligatures = off").ligatures, .off)
+        XCTAssertEqual(AppConfig.parse("ligatures = false").ligatures, .off)
+        XCTAssertEqual(AppConfig.parse("ligatures = programming").ligatures, .programming)
+        XCTAssertEqual(AppConfig.parse("ligatures = on").ligatures, .on)
+        XCTAssertEqual(AppConfig.parse("ligatures = true").ligatures, .on)
+        XCTAssertEqual(AppConfig.parse("ligatures = nope").ligatures, .off)
     }
 
     func testAdjustCellClampsToOne() {

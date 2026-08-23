@@ -3,7 +3,7 @@ import Foundation
 public struct AppConfig: Sendable {
     public var fontFamily: String? = nil
     public var fontSize: CGFloat = 20
-    public var ligatures: Bool = false
+    public var ligatures: Ligatures = .off
     public var fontFeature: String = ""
     public var adjustCellWidth: Int = 0
     public var adjustCellHeight: Int = 0
@@ -20,6 +20,15 @@ public struct AppConfig: Sendable {
     public var osc52Write: Osc52Write = .allow
     public var osc52Read: Osc52Read = .ask
     public var keybinds: [String] = []
+
+    public enum Ligatures: Sendable, Equatable {
+        /// Cell-boxed letters. No run `CTLine`.
+        case off
+        /// Hardcoded programming spans only (`=>`, `!=`, …). Letters stay cell-boxed.
+        case programming
+        /// Shape each run (liga+calt). Can change 1:1 glyphs.
+        case on
+    }
 
     public enum Osc52Write: Sendable {
         case allow, deny
@@ -53,7 +62,7 @@ public struct AppConfig: Sendable {
             case "font-size":
                 if let n = Double(val) { c.fontSize = CGFloat(min(72, max(8, n))) }
             case "ligatures":
-                c.ligatures = parseBool(val)
+                if let v = parseLigatures(val) { c.ligatures = v }
             case "font-feature":
                 c.fontFeature = val
             case "adjust-cell-width":
@@ -100,6 +109,15 @@ public struct AppConfig: Sendable {
 
     public static func parseBool(_ s: String) -> Bool {
         ["true", "1", "yes"].contains(s.lowercased())
+    }
+
+    public static func parseLigatures(_ s: String) -> Ligatures? {
+        switch s.lowercased() {
+        case "off", "false", "0", "no": return .off
+        case "programming": return .programming
+        case "on", "true", "1", "yes": return .on
+        default: return nil
+        }
     }
 
     public static func parseHexRGB(_ raw: String) -> UInt32? {
