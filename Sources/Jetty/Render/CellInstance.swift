@@ -1,38 +1,75 @@
+import simd
+
 @frozen
 public struct CellInstance {
-    public var ox: Float, oy: Float, sx: Float, sy: Float
-    public var u0: Float, v0: Float, u1: Float, v1: Float
-    public var fr: Float, fg: Float, fb: Float, fa: Float
-    public var br: Float, bg: Float, bb: Float, ba: Float
-    public var atlas: Float
-    public var _pad0: Float
-    public var _pad1: Float
-    public var _pad2: Float
+    public var ox: Int16
+    public var oy: Int16
+    public var sx: UInt16
+    public var sy: UInt16
+    public var u0: UInt16
+    public var v0: UInt16
+    public var u1: UInt16
+    public var v1: UInt16
+    public var fg: UInt32
+    public var bg: UInt32
+    public var atlas: UInt8
+    public var flags: UInt8
+    public var _pad0: UInt16
+    public var _pad1: UInt32
 
-    public static let floatCount = 20
     public static var stride: Int { MemoryLayout<CellInstance>.stride }
+    public static let hasGlyphFlag: UInt8 = 1
 
-    public static func make(
+    public static let empty = CellInstance(
+        originX: 0, originY: 0, width: 0, height: 0,
+        uv: GlyphAtlas.UV.empty,
+        fgRGB: .zero, bgRGB: .zero,
+        colorAtlas: false
+    )
+
+    public init(
         originX: Float, originY: Float,
         width: Float, height: Float,
-        u0: Float, v0: Float, u1: Float, v1: Float,
-        fr: Float, fg: Float, fb: Float, fa: Float,
-        br: Float, bg: Float, bb: Float, ba: Float
-    ) -> CellInstance {
-        CellInstance(
-            ox: originX, oy: originY, sx: width, sy: height,
-            u0: u0, v0: v0, u1: u1, v1: v1,
-            fr: fr, fg: fg, fb: fb, fa: fa,
-            br: br, bg: bg, bb: bb, ba: ba,
-            atlas: 0, _pad0: 0, _pad1: 0, _pad2: 0
-        )
+        uv: GlyphAtlas.UV,
+        fgRGB: SIMD3<Float>,
+        bgRGB: SIMD3<Float>,
+        colorAtlas: Bool
+    ) {
+        ox = Self.i16(originX)
+        oy = Self.i16(originY)
+        sx = Self.u16(width)
+        sy = Self.u16(height)
+        u0 = uv.u0
+        v0 = uv.v0
+        u1 = uv.u1
+        v1 = uv.v1
+        fg = Self.pack(fgRGB)
+        bg = Self.pack(bgRGB)
+        atlas = colorAtlas ? 1 : 0
+        flags = (uv.u1 > uv.u0 && uv.v1 > uv.v0) ? Self.hasGlyphFlag : 0
+        _pad0 = 0
+        _pad1 = 0
     }
 
-    public func write(to buf: UnsafeMutablePointer<Float>, at index: Int) {
-        withUnsafeBytes(of: self) { src in
-            let dest = UnsafeMutableRawPointer(buf + index * Self.floatCount)
-            dest.copyMemory(from: src.baseAddress!, byteCount: Self.stride)
+    public static func pack(_ rgb: SIMD3<Float>, a: Float = 1) -> UInt32 {
+        func byte(_ x: Float) -> UInt32 {
+            UInt32(min(255, max(0, x * 255)).rounded())
         }
+        return byte(rgb.x) | (byte(rgb.y) << 8) | (byte(rgb.z) << 16) | (byte(a) << 24)
+    }
+
+    static func i16(_ v: Float) -> Int16 {
+        let r = v.rounded()
+        if r <= Float(Int16.min) { return .min }
+        if r >= Float(Int16.max) { return .max }
+        return Int16(r)
+    }
+
+    static func u16(_ v: Float) -> UInt16 {
+        if v <= 0 { return 0 }
+        let r = v.rounded()
+        if r >= Float(UInt16.max) { return .max }
+        return UInt16(r)
     }
 }
 
@@ -41,7 +78,6 @@ public struct OverlayInstance {
     public var ox: Float, oy: Float, sx: Float, sy: Float
     public var r: Float, g: Float, b: Float, a: Float
 
-    public static let floatCount = 8
     public static var stride: Int { MemoryLayout<OverlayInstance>.stride }
 
     public init(ox: Float, oy: Float, sx: Float, sy: Float, r: Float, g: Float, b: Float, a: Float) {
@@ -60,6 +96,10 @@ public struct FrameUniforms {
     public var viewportX: Float
     public var viewportY: Float
     public var contentOffsetY: Float = 0
-    public var _pad1: Float = 0
-    public static var stride: Int { 4 * MemoryLayout<Float>.size }
+    public var _pad0: Float = 0
+    public var atlasW: Float = 1
+    public var atlasH: Float = 1
+    public var colorAtlasW: Float = 1
+    public var colorAtlasH: Float = 1
+    public static var stride: Int { MemoryLayout<FrameUniforms>.stride }
 }

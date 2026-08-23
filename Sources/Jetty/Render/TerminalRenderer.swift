@@ -173,7 +173,15 @@ public final class TerminalRenderer {
 
         uniformSlot = (uniformSlot + 1) % Self.ringCount
         if let uni = uniformBuffers[uniformSlot] {
-            var u = FrameUniforms(viewportX: viewport.x, viewportY: viewport.y, contentOffsetY: contentOffsetY)
+            var u = FrameUniforms(
+                viewportX: viewport.x,
+                viewportY: viewport.y,
+                contentOffsetY: contentOffsetY,
+                atlasW: Float(atlas.texture.width),
+                atlasH: Float(atlas.texture.height),
+                colorAtlasW: Float(atlas.colorTexture.width),
+                colorAtlasH: Float(atlas.colorTexture.height)
+            )
             memcpy(uni.contents(), &u, FrameUniforms.stride)
         }
 
@@ -213,21 +221,30 @@ public final class TerminalRenderer {
     using namespace metal;
 
     struct CellInstance {
-        float2 origin;
-        float2 size;
-        float4 uv;
-        float4 fg;
-        float4 bg;
-        float atlas;
-        float pad0;
-        float pad1;
-        float pad2;
+        short ox;
+        short oy;
+        ushort sx;
+        ushort sy;
+        ushort u0;
+        ushort v0;
+        ushort u1;
+        ushort v1;
+        uint fg;
+        uint bg;
+        uchar atlas;
+        uchar flags;
+        ushort _pad0;
+        uint _pad1;
     };
 
     struct FrameUniforms {
         float2 viewport;
         float contentOffsetY;
-        float _pad;
+        float _pad0;
+        float atlasW;
+        float atlasH;
+        float colorAtlasW;
+        float colorAtlasH;
     };
 
     struct VertexOut {
@@ -244,24 +261,34 @@ public final class TerminalRenderer {
         float2(1, 0), float2(1, 1), float2(0, 1)
     };
 
+    float4 unpack8(uint c) {
+        return float4(float(c & 0xffu), float((c >> 8) & 0xffu),
+                      float((c >> 16) & 0xffu), float(c >> 24)) * (1.0 / 255.0);
+    }
+
     vertex VertexOut cell_vertex(uint vid [[vertex_id]],
                                  uint iid [[instance_id]],
                                  const device CellInstance *cells [[buffer(0)]],
                                  constant FrameUniforms &uni [[buffer(1)]]) {
         CellInstance c = cells[iid];
         float2 corner = corners[vid];
-        float2 px = c.origin + corner * c.size;
+        float2 origin = float2(float(c.ox), float(c.oy));
+        float2 size = float2(float(c.sx), float(c.sy));
+        float2 px = origin + corner * size;
         px.y += uni.contentOffsetY;
         float2 ndc;
         ndc.x = (px.x / uni.viewport.x) * 2.0 - 1.0;
         ndc.y = 1.0 - (px.y / uni.viewport.y) * 2.0;
+        float aw = c.atlas != 0 ? uni.colorAtlasW : uni.atlasW;
+        float ah = c.atlas != 0 ? uni.colorAtlasH : uni.atlasH;
         VertexOut o;
         o.position = float4(ndc, 0.0, 1.0);
-        o.uv = float2(mix(c.uv.x, c.uv.z, corner.x), mix(c.uv.y, c.uv.w, corner.y));
-        o.fg = c.fg;
-        o.bg = c.bg;
-        o.hasGlyph = (abs(c.uv.z - c.uv.x) > 1e-6 && abs(c.uv.w - c.uv.y) > 1e-6) ? 1.0 : 0.0;
-        o.atlas = c.atlas;
+        o.uv = float2(mix(float(c.u0), float(c.u1), corner.x) / aw,
+                      mix(float(c.v0), float(c.v1), corner.y) / ah);
+        o.fg = unpack8(c.fg);
+        o.bg = unpack8(c.bg);
+        o.hasGlyph = float(c.flags & 1);
+        o.atlas = float(c.atlas);
         return o;
     }
 

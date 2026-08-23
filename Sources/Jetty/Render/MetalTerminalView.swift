@@ -393,13 +393,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                         }
                         if wantInk {
                             let ink = inst + n
-                            ink.update(repeating: CellInstance(
-                                ox: 0, oy: 0, sx: 0, sy: 0,
-                                u0: 0, v0: 0, u1: 0, v1: 0,
-                                fr: 0, fg: 0, fb: 0, fa: 1,
-                                br: 0, bg: 0, bb: 0, ba: 1,
-                                atlas: 0, _pad0: 0, _pad1: 0, _pad2: 0
-                            ), count: n)
+                            ink.update(repeating: .empty, count: n)
                             writeLigaInk(
                                 spans: ligaSpans,
                                 dest: ink,
@@ -1338,13 +1332,12 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             if (cell.attrs & UInt16(ATTR_REVERSE)) != 0 { swap(&fg, &bg) }
             if (cell.attrs & UInt16(ATTR_HIDDEN)) != 0 { fg = bg }
             dest[span.row * cols + span.x] = CellInstance(
-                ox: insetLeftPx + Float(span.x) * cellW,
-                oy: insetTopPx + Float(span.row) * cellH,
-                sx: cellW * Float(span.n), sy: cellH,
-                u0: g.uv.u0, v0: g.uv.v0, u1: g.uv.u1, v1: g.uv.v1,
-                fr: fg.x, fg: fg.y, fb: fg.z, fa: 1,
-                br: bg.x, bg: bg.y, bb: bg.z, ba: 1,
-                atlas: g.color ? 1 : 0, _pad0: 0, _pad1: 0, _pad2: 0
+                originX: insetLeftPx + Float(span.x) * cellW,
+                originY: insetTopPx + Float(span.row) * cellH,
+                width: cellW * Float(span.n), height: cellH,
+                uv: g.uv,
+                fgRGB: fg, bgRGB: bg,
+                colorAtlas: g.color
             )
         }
     }
@@ -1373,19 +1366,19 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             let oy = insetTopPx + Float(cursorY) * cellH
             let i = cursorY * cols + x
             dest[i] = CellInstance(
-                ox: ox, oy: oy, sx: cellW * Float(cells), sy: cellH,
-                u0: g.uv.u0, v0: g.uv.v0, u1: g.uv.u1, v1: g.uv.v1,
-                fr: bg.x, fg: bg.y, fb: bg.z, fa: 1,
-                br: fg.x, bg: fg.y, bb: fg.z, ba: 1,
-                atlas: g.color ? 1 : 0, _pad0: 0, _pad1: 0, _pad2: 0
+                originX: ox, originY: oy,
+                width: cellW * Float(cells), height: cellH,
+                uv: g.uv,
+                fgRGB: bg, bgRGB: fg,
+                colorAtlas: g.color
             )
             if wide, x + 1 < cols {
                 dest[i + 1] = CellInstance(
-                    ox: ox + cellW, oy: oy, sx: 0, sy: 0,
-                    u0: 0, v0: 0, u1: 0, v1: 0,
-                    fr: 0, fg: 0, fb: 0, fa: 1,
-                    br: fg.x, bg: fg.y, bb: fg.z, ba: 1,
-                    atlas: 0, _pad0: 0, _pad1: 0, _pad2: 0
+                    originX: ox + cellW, originY: oy,
+                    width: 0, height: 0,
+                    uv: .empty,
+                    fgRGB: .zero, bgRGB: fg,
+                    colorAtlas: false
                 )
             }
             x += cells

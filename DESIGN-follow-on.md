@@ -556,10 +556,10 @@ struct FrameUniforms {
     float2 viewport;        // 0
     float contentOffsetY;   // 8
     float _pad0;            // 12
-    float atlasW;           // 16
+    float atlasW;           // 16  gray R8
     float atlasH;           // 20
-    float _pad1;            // 24
-    float _pad2;            // 28
+    float colorAtlasW;      // 24  BGRA
+    float colorAtlasH;      // 28
 };
 static_assert(sizeof(FrameUniforms) == 32, "uniform stride");
 ```
@@ -1269,9 +1269,10 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 ### PR 23 — Compact 32-byte instances
 
 - **Title:** `feat: pack CellInstance to 32 bytes`
-- **Files:** `CellInstance.swift`, `TerminalRenderer.swift` shader, `GridExpand.swift`, tests
+- **Status:** **done** (this commit)
+- **Files:** `CellInstance.swift`, `TerminalRenderer.swift` shader, `GridExpand.swift`, `GlyphAtlas.swift` pixel UVs, tests
 - **Dependencies:** **PR 20**
-- **Changes:** `int16_t ox, oy`; `uint16` size; u16 **atlas pixel** UVs (`UV = u/atlasW`, `v/atlasH` — not UNORM 0..65535). RGBA8; pad to 32. `FrameUniforms` 8 floats / 32 bytes (`atlasW`, `atlasH`, two pads). Swift field offsets match Metal. Letter range always; liga ink range only if PR 22 is on and the frame has liga. Fallback 48 B if a driver rejects packed shorts.
+- **Changes:** `int16_t ox, oy`; `uint16` size; u16 **atlas pixel** UVs (`UV = u/atlasW`, `v/atlasH` — not UNORM 0..65535). RGBA8; pad to 32. `FrameUniforms` 8 floats / 32 bytes (`atlasW`, `atlasH`, `colorAtlasW`, `colorAtlasH`). Swift field offsets match Metal. Letter range always; liga ink range only if PR 22 is on and the frame has liga. No 48 B fallback (scalar shorts on Apple Silicon).
 
 ### PR 24 — Auto-detected URLs
 
@@ -1373,4 +1374,4 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 
 ---
 
-**Tracks:** 18–21 done/withdrawn. **22** ligatures (this change). **23** compact (after 20). Host 24, 25–26, 27, 28, 29, 30, 31, 33 in parallel. 32 anytime. VT 34. Chore 35–37.
+**Tracks:** 18–22 done/withdrawn. **23** compact (this change). Host 24, 25–26, 27, 28, 29, 30, 31, 33 in parallel. 32 anytime. VT 34. Chore 35–37.

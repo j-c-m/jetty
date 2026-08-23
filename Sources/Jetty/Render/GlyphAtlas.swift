@@ -167,7 +167,7 @@ final class BGRAShelf {
 
 public final class GlyphAtlas {
     public struct UV: Sendable {
-        public var u0, v0, u1, v1: Float
+        public var u0, v0, u1, v1: UInt16
         public static let empty = UV(u0: 0, v0: 0, u1: 0, v1: 0)
     }
 
@@ -444,13 +444,11 @@ public final class GlyphAtlas {
     ) -> UV {
         shelf.blit(coverage, width: w, height: h, x: rect.x, y: rect.y)
         uploadGray(region: MTLRegionMake2D(rect.x, rect.y, rect.w, rect.h))
-        let fw = Float(shelf.width)
-        let fh = Float(shelf.height)
         return UV(
-            u0: Float(rect.x) / fw,
-            v0: Float(rect.y) / fh,
-            u1: Float(rect.x + w) / fw,
-            v1: Float(rect.y + h) / fh
+            u0: UInt16(rect.x),
+            v0: UInt16(rect.y),
+            u1: UInt16(rect.x + w),
+            v1: UInt16(rect.y + h)
         )
     }
 
@@ -462,13 +460,11 @@ public final class GlyphAtlas {
     ) -> UV {
         colorShelf.blit(bgra, width: w, height: h, x: rect.x, y: rect.y)
         uploadColor(region: MTLRegionMake2D(rect.x, rect.y, rect.w, rect.h))
-        let fw = Float(colorShelf.width)
-        let fh = Float(colorShelf.height)
         return UV(
-            u0: Float(rect.x) / fw,
-            v0: Float(rect.y) / fh,
-            u1: Float(rect.x + w) / fw,
-            v1: Float(rect.y + h) / fh
+            u0: UInt16(rect.x),
+            v0: UInt16(rect.y),
+            u1: UInt16(rect.x + w),
+            v1: UInt16(rect.y + h)
         )
     }
 
@@ -483,20 +479,6 @@ public final class GlyphAtlas {
             return false
         }
         guard shelf.grow() != nil else { return false }
-        let sx = Float(oldW) / Float(shelf.width)
-        let sy = Float(oldH) / Float(shelf.height)
-        for (key, g) in cache where !g.color {
-            cache[key] = Glyph(
-                uv: UV(u0: g.uv.u0 * sx, v0: g.uv.v0 * sy, u1: g.uv.u1 * sx, v1: g.uv.v1 * sy),
-                color: false
-            )
-        }
-        for (key, g) in spanCache {
-            spanCache[key] = Glyph(
-                uv: UV(u0: g.uv.u0 * sx, v0: g.uv.v0 * sy, u1: g.uv.u1 * sx, v1: g.uv.v1 * sy),
-                color: false
-            )
-        }
         texture = tex
         uploadGrayFull()
         return true
@@ -513,14 +495,6 @@ public final class GlyphAtlas {
             return false
         }
         guard colorShelf.grow() != nil else { return false }
-        let sx = Float(oldW) / Float(colorShelf.width)
-        let sy = Float(oldH) / Float(colorShelf.height)
-        for (key, g) in cache where g.color {
-            cache[key] = Glyph(
-                uv: UV(u0: g.uv.u0 * sx, v0: g.uv.v0 * sy, u1: g.uv.u1 * sx, v1: g.uv.v1 * sy),
-                color: true
-            )
-        }
         colorTexture = tex
         uploadColorFull()
         return true

@@ -106,11 +106,11 @@ public enum GridExpand {
                 }
             }
             dest[x] = CellInstance(
-                ox: ox, oy: oy, sx: sx, sy: sy,
-                u0: g.uv.u0, v0: g.uv.v0, u1: g.uv.u1, v1: g.uv.v1,
-                fr: fg.x, fg: fg.y, fb: fg.z, fa: 1,
-                br: bg.x, bg: bg.y, bb: bg.z, ba: 1,
-                atlas: g.color ? 1 : 0, _pad0: 0, _pad1: 0, _pad2: 0
+                originX: ox, originY: oy,
+                width: sx, height: sy,
+                uv: g.uv,
+                fgRGB: fg, bgRGB: bg,
+                colorAtlas: g.color
             )
             x += 1
             ox += cellW
