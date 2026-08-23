@@ -83,6 +83,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hideOthers.keyEquivalentModifierMask = [.command, .option]
         appMenu.submenu?.addItem(hideOthers)
         appMenu.submenu?.addItem(.separator())
+        let reload = NSMenuItem(
+            title: "Reload Config",
+            action: #selector(reloadConfig(_:)),
+            keyEquivalent: ","
+        )
+        reload.keyEquivalentModifierMask = [.command, .shift]
+        reload.target = self
+        appMenu.submenu?.addItem(reload)
+        appMenu.submenu?.addItem(.separator())
         appMenu.submenu?.addItem(
             withTitle: "Quit jetty",
             action: #selector(NSApplication.terminate(_:)),
@@ -153,12 +162,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc func reloadConfig(_ sender: Any?) {
+        let next = AppConfig.load()
+        config = next
+        for term in terms {
+            term.view.applyLiveConfig(next)
+        }
+    }
+
     @discardableResult
     private func openWindow() -> TermWindow? {
         guard let device, let config else { return nil }
         let screen = NSScreen.main ?? NSScreen.screens[0]
         let backing = screen.backingScaleFactor
-        let metrics = CellMetrics.measure(fontSize: config.fontSize, backingScale: backing)
+        let metrics = CellMetrics.measure(
+            family: config.fontFamily,
+            fontSize: config.fontSize,
+            backingScale: backing,
+            adjustWidth: config.adjustCellWidth,
+            adjustHeight: config.adjustCellHeight
+        )
         let session = TerminalSession(
             cols: config.launchCols,
             rows: config.launchRows,
@@ -166,6 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             cellHeightPx: UInt32(metrics.cellHeightPx),
             scrollbackCapRows: config.scrollbackLines
         )
+        session.screen.setPaletteOverlay(config.paletteOverlay, mask: config.paletteOverlayMask)
         let view = MetalTerminalView(
             session: session,
             config: config,

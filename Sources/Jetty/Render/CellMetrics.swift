@@ -11,13 +11,20 @@ public struct CellMetrics {
     public var fontItalic: CTFont
     public var fontBoldItalic: CTFont
 
-    public static func measure(fontSize: CGFloat, backingScale: CGFloat) -> CellMetrics {
+    public static func measure(
+        family: String? = nil,
+        fontSize: CGFloat,
+        backingScale: CGFloat,
+        adjustWidth: Int = 0,
+        adjustHeight: Int = 0
+    ) -> CellMetrics {
         let s = max(backingScale, 1)
         let pxSize = fontSize * s
-        let regular = EmbeddedFonts.font(size: pxSize, bold: false, italic: false)
-        let bold = EmbeddedFonts.font(size: pxSize, bold: true, italic: false)
-        let italic = EmbeddedFonts.font(size: pxSize, bold: false, italic: true)
-        let boldItalic = EmbeddedFonts.font(size: pxSize, bold: true, italic: true)
+        let faces = EmbeddedFonts.fonts(family: family, size: pxSize)
+        let regular = faces.regular
+        let bold = faces.bold
+        let italic = faces.italic
+        let boldItalic = faces.boldItalic
 
         var faceWidth: CGFloat = 0
         for code in 32...126 {
@@ -34,8 +41,8 @@ public struct CellMetrics {
         let descent = CTFontGetDescent(regular)
         let leading = CTFontGetLeading(regular)
         let faceHeight = ascent + descent + leading
-        let cellWPx = max(1, Int(faceWidth.rounded()) + 1)
-        let cellHPx = max(1, Int(faceHeight.rounded()))
+        let cellWPx = max(1, Int(faceWidth.rounded()) + 1 + adjustWidth)
+        let cellHPx = max(1, Int(faceHeight.rounded()) + adjustHeight)
         let halfLineGap = leading / 2
         let faceBaseline = halfLineGap + descent
         let cellBaseline = max(0, Int((faceBaseline - (CGFloat(cellHPx) - faceHeight) / 2).rounded()))

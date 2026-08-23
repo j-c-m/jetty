@@ -50,7 +50,13 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     public init(session: TerminalSession, config: AppConfig, device: MTLDevice, backingScale: CGFloat) {
         self.session = session
         self.config = config
-        self.metrics = CellMetrics.measure(fontSize: config.fontSize, backingScale: backingScale)
+        self.metrics = CellMetrics.measure(
+            family: config.fontFamily,
+            fontSize: config.fontSize,
+            backingScale: backingScale,
+            adjustWidth: config.adjustCellWidth,
+            adjustHeight: config.adjustCellHeight
+        )
         super.init(frame: .zero, device: device)
         self.colorPixelFormat = .bgra8Unorm
         self.isPaused = true
@@ -756,14 +762,41 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         return true
     }
 
+    public func applyLiveConfig(_ next: AppConfig) {
+        config = next
+        session.osc52WriteAllow = next.osc52Write == .allow
+        session.osc52ReadAsk = next.osc52Read == .ask
+        session.lock.lock()
+        session.screen.setPaletteOverlay(next.paletteOverlay, mask: next.paletteOverlayMask)
+        session.lock.unlock()
+        let bs = window?.backingScaleFactor ?? 2
+        replaceMetrics(measureMetrics(fontSize: next.fontSize, backingScale: bs))
+    }
+
+    private func measureMetrics(fontSize: CGFloat, backingScale: CGFloat) -> CellMetrics {
+        CellMetrics.measure(
+            family: config.fontFamily,
+            fontSize: fontSize,
+            backingScale: backingScale,
+            adjustWidth: config.adjustCellWidth,
+            adjustHeight: config.adjustCellHeight
+        )
+    }
+
     private func applyFontSize(_ next: CGFloat) {
         let next = min(72, max(8, next.rounded()))
-        guard abs(next - metrics.fontSize) > 0.1, let device else { return }
+        guard abs(next - metrics.fontSize) > 0.1 else { return }
         let bs = window?.backingScaleFactor ?? 2
-        metrics = CellMetrics.measure(fontSize: next, backingScale: bs)
+        replaceMetrics(measureMetrics(fontSize: next, backingScale: bs))
+    }
+
+    private func replaceMetrics(_ next: CellMetrics) {
+        guard let device else { return }
+        metrics = next
         if let atlas = GlyphAtlas(device: device, metrics: metrics) {
             renderer?.atlas = atlas
         }
+        forceFullRebuild = true
         session.cellWidthPx = UInt32(cellWPx)
         session.cellHeightPx = UInt32(cellHPx)
         relayout()

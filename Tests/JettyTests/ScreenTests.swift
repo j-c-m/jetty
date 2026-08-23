@@ -20,6 +20,25 @@ final class ScreenTests: XCTestCase {
         XCTAssertEqual(s.paletteColor(0), RGB(r: 0x11, g: 0x11, b: 0x11))
     }
 
+    func testPaletteOverlaySurvivesRisAndOsc104() {
+        let s = Screen(cols: 8, rows: 2, scrollbackCapRows: 0)
+        var overlay = [UInt32](repeating: 0, count: 16)
+        overlay[0] = 0x010203
+        overlay[7] = 0xAABBCC
+        s.setPaletteOverlay(overlay, mask: (1 << 0) | (1 << 7))
+        XCTAssertEqual(s.paletteColor(0), RGB(r: 0x01, g: 0x02, b: 0x03))
+        XCTAssertEqual(s.paletteColor(7), RGB(r: 0xAA, g: 0xBB, b: 0xCC))
+        XCTAssertEqual(s.paletteColor(1), RGB(r: 0xEE, g: 0x45, b: 0x49))
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}]104\u{07}")
+        XCTAssertEqual(s.paletteColor(0), RGB(r: 0x01, g: 0x02, b: 0x03))
+        XCTAssertEqual(s.paletteColor(7), RGB(r: 0xAA, g: 0xBB, b: 0xCC))
+        p.feed("\u{1B}c")
+        XCTAssertEqual(s.paletteColor(0), RGB(r: 0x01, g: 0x02, b: 0x03))
+        XCTAssertEqual(s.paletteColor(15), RGB(r: 0xF2, g: 0xF0, b: 0xEC))
+    }
+
     func testScrollRegionParseCost() {
         func ms(cols: Int, rows: Int, top: Int, bot: Int, alt: Bool, cap: Int = 8, n: Int = 200_000) -> Double {
             let s = Screen(cols: cols, rows: rows, scrollbackCapRows: cap)

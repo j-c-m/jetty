@@ -51,6 +51,8 @@ typedef struct jt_scr {
     jt_pen pen;
     jt_saved saved;
     uint32_t palette[256];
+    uint32_t pal_overlay[16];
+    uint16_t pal_overlay_mask;
     uint32_t default_fg, default_bg, cursor_color;
     uint16_t mouse_event;
     uint8_t mouse_sgr;
@@ -116,6 +118,7 @@ int jt_scr_is_wrapped(const jt_scr *s, int32_t y);
 
 Cell *jt_scr_row(jt_scr *s, int32_t y);
 void jt_scr_ris(jt_scr *s);
+void jt_scr_set_palette_overlay(jt_scr *s, const uint32_t rgb16[16], uint16_t mask);
 void jt_scr_palette_reset(jt_scr *s);
 void jt_sgr_apply(jt_scr *s, const uint16_t *p, int n, uint32_t seps);
 

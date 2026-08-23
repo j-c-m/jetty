@@ -37,16 +37,31 @@ static void jt_palette_reset(uint32_t pal[256]) {
     }
 }
 
+static void apply_pal_overlay(jt_scr *s) {
+    for (int i = 0; i < 16; i++) {
+        if (s->pal_overlay_mask & (uint16_t)(1u << i))
+            s->palette[i] = s->pal_overlay[i] & 0x00FFFFFFu;
+    }
+}
+
 static void jt_defaults_reset(jt_scr *s) {
-    jt_palette_reset(s->palette);
+    jt_scr_palette_reset(s);
     s->default_fg = COLOR_RGB | 0xCCCCCCu;
     s->default_bg = COLOR_RGB | 0x000000u;
     s->cursor_color = COLOR_DEFAULT;
 }
 
+void jt_scr_set_palette_overlay(jt_scr *s, const uint32_t rgb16[16], uint16_t mask) {
+    if (!s) return;
+    if (rgb16) memcpy(s->pal_overlay, rgb16, sizeof(s->pal_overlay));
+    else memset(s->pal_overlay, 0, sizeof(s->pal_overlay));
+    s->pal_overlay_mask = mask;
+}
+
 void jt_scr_palette_reset(jt_scr *s) {
     if (!s) return;
     jt_palette_reset(s->palette);
+    apply_pal_overlay(s);
 }
 
 static Cell blank_cell(const jt_scr *s) {

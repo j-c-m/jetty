@@ -260,6 +260,16 @@ public final class Screen {
         return s.isEmpty ? nil : s
     }
 
+    public func setPaletteOverlay(_ rgb: [UInt32], mask: UInt16) {
+        var colors = rgb
+        if colors.count < 16 { colors.append(contentsOf: repeatElement(0, count: 16 - colors.count)) }
+        colors.withUnsafeBufferPointer { buf in
+            guard let p = buf.baseAddress else { return }
+            jt_scr_set_palette_overlay(implPtr, p, mask)
+            jt_scr_palette_reset(implPtr)
+        }
+    }
+
     @discardableResult
     public func takeDirty(into dest: UnsafeMutablePointer<UInt8>, count: Int) -> UInt32 {
         var gen: UInt32 = 0
