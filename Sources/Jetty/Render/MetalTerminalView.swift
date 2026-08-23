@@ -49,14 +49,17 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private let shaper = ShaperCache()
     private var ligaHide = ContiguousArray<UInt8>()
     private var lastInk = false
+    private var lastBackingScale: CGFloat
 
     public init(session: TerminalSession, config: AppConfig, device: MTLDevice, backingScale: CGFloat) {
         self.session = session
         self.config = config
+        let scale = max(backingScale, 1)
+        self.lastBackingScale = scale
         self.metrics = CellMetrics.measure(
             family: config.fontFamily,
             fontSize: config.fontSize,
-            backingScale: backingScale,
+            backingScale: scale,
             adjustWidth: config.adjustCellWidth,
             adjustHeight: config.adjustCellHeight
         )
@@ -98,7 +101,14 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         super.viewDidMoveToWindow()
         applyChrome(session.screen.defaultBgRGB, reverse: false)
         refreshInsets()
-        relayout()
+        if !syncBackingScale() {
+            relayout()
+        }
+    }
+
+    public override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        _ = syncBackingScale()
     }
 
     public override func layout() {
@@ -829,7 +839,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         session.lock.lock()
         session.screen.setPaletteOverlay(next.paletteOverlay, mask: next.paletteOverlayMask)
         session.lock.unlock()
-        let bs = window?.backingScaleFactor ?? 2
+        let bs = max(window?.backingScaleFactor ?? lastBackingScale, 1)
+        lastBackingScale = bs
         replaceMetrics(measureMetrics(fontSize: next.fontSize, backingScale: bs))
     }
 
@@ -846,8 +857,19 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private func applyFontSize(_ next: CGFloat) {
         let next = min(72, max(8, next.rounded()))
         guard abs(next - metrics.fontSize) > 0.1 else { return }
-        let bs = window?.backingScaleFactor ?? 2
+        let bs = max(window?.backingScaleFactor ?? lastBackingScale, 1)
+        lastBackingScale = bs
         replaceMetrics(measureMetrics(fontSize: next, backingScale: bs))
+    }
+
+    /// Remeasure cells when the window moves to a different scale (Retina ↔ 1x).
+    @discardableResult
+    private func syncBackingScale() -> Bool {
+        let bs = max(window?.backingScaleFactor ?? lastBackingScale, 1)
+        guard abs(bs - lastBackingScale) > 0.01 else { return false }
+        lastBackingScale = bs
+        replaceMetrics(measureMetrics(fontSize: metrics.fontSize, backingScale: bs))
+        return true
     }
 
     private func replaceMetrics(_ next: CellMetrics) {
