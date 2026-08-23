@@ -202,16 +202,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             cols: config.launchCols,
             rows: config.launchRows
         )
-        let titleH = NSWindow.frameRect(
-            forContentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
-            styleMask: [.titled]
-        ).height - 100
-        let size = NSSize(width: grid.width, height: grid.height + titleH)
         let bg = session.screen.defaultBgRGB
 
         let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            contentRect: NSRect(origin: .zero, size: grid),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )

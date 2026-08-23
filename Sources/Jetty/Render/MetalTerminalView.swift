@@ -92,7 +92,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     public override var acceptsFirstResponder: Bool { true }
-    /// Grid clicks select. Titlebar strip still moves the window via `performDrag`.
+    /// Grid clicks select.
     public override var mouseDownCanMoveWindow: Bool { false }
 
     public override func viewDidMoveToWindow() {
@@ -114,6 +114,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let top = safeAreaInsets.top
         if abs(top - lastSafeTop) > 0.5 {
             lastSafeTop = top
+            chromePacked = 0xFFFF_FFFF
             relayout()
             needsDisplay = true
         }
@@ -532,9 +533,32 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let color = NSColor(srgbRed: rf, green: gf, blue: bf, alpha: 1)
         if let window {
             window.backgroundColor = color
+            window.titlebarAppearsTransparent = true
+            window.titlebarSeparatorStyle = .none
+            paintTitlebar(window, color: color)
             let lum = 0.2126 * Double(r) + 0.7152 * Double(g) + 0.0722 * Double(b)
             window.appearance = NSAppearance(named: lum < 128 ? .darkAqua : .aqua)
             NSApp.appearance = window.appearance
+        }
+    }
+
+    /// Solid titlebar fill matching default bg. Native title and traffic lights stay.
+    private func paintTitlebar(_ window: NSWindow, color: NSColor) {
+        guard let titlebar = window.standardWindowButton(.closeButton)?.superview else { return }
+        titlebar.wantsLayer = true
+        titlebar.layer?.backgroundColor = color.cgColor
+        guard let container = titlebar.superview else { return }
+        container.wantsLayer = true
+        container.layer?.backgroundColor = color.cgColor
+        for sub in container.subviews {
+            if sub is NSVisualEffectView {
+                sub.isHidden = true
+            }
+        }
+        if let cls = NSClassFromString("NSTitlebarBackgroundView") {
+            for sub in container.subviews where sub.isKind(of: cls) {
+                sub.isHidden = true
+            }
         }
     }
 
