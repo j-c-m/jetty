@@ -326,6 +326,27 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(s.penAttrs & UInt16(ATTR_UL_MASK), UInt16(UL_DOUBLE))
     }
 
+    func testSGRSmulxStrikeOverlineBlink() {
+        let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[4:3m")
+        XCTAssertEqual(s.penAttrs & UInt16(ATTR_UL_MASK), UInt16(UL_CURLY))
+        p.feed("\u{1B}[4:4m")
+        XCTAssertEqual(s.penAttrs & UInt16(ATTR_UL_MASK), UInt16(UL_DOTTED))
+        p.feed("\u{1B}[4:5m")
+        XCTAssertEqual(s.penAttrs & UInt16(ATTR_UL_MASK), UInt16(UL_DASHED))
+        p.feed("\u{1B}[9;53;5m")
+        XCTAssertEqual(s.penAttrs & UInt16(ATTR_STRIKETHROUGH), UInt16(ATTR_STRIKETHROUGH))
+        XCTAssertEqual(s.penAttrs & UInt16(ATTR_OVERLINE), UInt16(ATTR_OVERLINE))
+        XCTAssertEqual(s.penAttrs & UInt16(ATTR_BLINK), UInt16(ATTR_BLINK))
+        p.feed("\u{1B}[24;29;55;25m")
+        XCTAssertEqual(s.penAttrs & UInt16(ATTR_UL_MASK), 0)
+        XCTAssertEqual(s.penAttrs & UInt16(ATTR_STRIKETHROUGH), 0)
+        XCTAssertEqual(s.penAttrs & UInt16(ATTR_OVERLINE), 0)
+        XCTAssertEqual(s.penAttrs & UInt16(ATTR_BLINK), 0)
+    }
+
     func testCUP() {
         let s = Screen(cols: 20, rows: 10, scrollbackCapRows: 0)
         let p = Parser()

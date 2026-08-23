@@ -235,7 +235,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let curY = cy + liveOrigin
         let focused = window?.isKeyWindow == true
         let blinks = curStyle == 0 || curStyle == 1 || curStyle == 3 || curStyle == 5
-        let blinkOn = !blinks || Int(dtNow * 2) % 2 == 0
+        let phaseOn = Int(dtNow * 2) % 2 == 0
+        let blinkOn = !blinks || phaseOn
         let blockStyle = curStyle <= 2
         let cursorOn = vis && focused && blockStyle && blinkOn && curY >= 0 && curY < paintRows
         if vis, blinks, focused { armCursorBlink() }
@@ -267,7 +268,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         if !forceFullRebuild,
            !DirtySkip.fullRebuild(now: skipKey, last: skipLast)
         {
-            let blinkPhaseChanged = blinkOn != lastBlinkOn
+            let blinkPhaseChanged = phaseOn != lastBlinkOn
             let cursorPaintY = (vis && curY >= 0 && curY < paintRows) ? curY : nil
             let lastCur = lastCursorPaintY.flatMap { y in (y >= 0 && y < paintRows) ? y : nil }
             skipExpand = liveDirty.withUnsafeBufferPointer { buf in
@@ -323,6 +324,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                                         cursorX: cx,
                                         cursorY: curY,
                                         cursorVisible: cursorOn && preedit.isEmpty,
+                                        blinkOff: !phaseOn,
                                         selection: sel,
                                         graphemes: graphemes,
                                         dest: inst + y * cols
@@ -348,6 +350,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                                 cursorX: cx,
                                 cursorY: curY,
                                 cursorVisible: cursorOn && preedit.isEmpty,
+                                blinkOff: !phaseOn,
                                 selection: sel,
                                 graphemes: graphemes,
                                 dest: inst
@@ -378,6 +381,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let ulNeed = underlineOverlayCount(cols: cols, paintRows: paintRows)
         let preNeed = preeditUnderlineCount(preedit, cols: cols, cursorX: cx)
         let curNeed = (vis && preedit.isEmpty && curY >= 0 && curY < paintRows && (blinkOn || !focused)) ? 4 : 0
+        let dfg = SIMD3(Float(defFG.r) / 255, Float(defFG.g) / 255, Float(defFG.b) / 255)
+        let dbg = SIMD3(Float(defBG.r) / 255, Float(defBG.g) / 255, Float(defBG.b) / 255)
         if ulNeed + curNeed + preNeed > 0, let ov = renderer.prepareOverlays(count: ulNeed + curNeed + preNeed) {
             if curNeed > 0 {
                 overlayN += writeCursorOverlay(
@@ -399,7 +404,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 paintRows: paintRows,
                 cellW: cw,
                 cellH: ch,
-                defFG: defFG,
+                defFG: dfg,
+                defBG: dbg,
                 ulColors: ulColors
             )
             if preNeed > 0 {
@@ -428,7 +434,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         if presented {
             skipLast = skipKey
             lastDamageGen = damageGen
-            lastBlinkOn = blinkOn
+            lastBlinkOn = phaseOn
             lastCursorPaintY = (vis && curY >= 0 && curY < paintRows) ? curY : nil
             if paintRows > 0 {
                 rowDocId = (0..<paintRows).map { start + $0 }
@@ -619,15 +625,18 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
 
     private func underlineOverlayCount(cols: Int, paintRows: Int) -> Int {
         var n = 0
+        var hasBlink = false
         let cap = min(paint.count, cols * paintRows)
         var i = 0
         while i < cap {
-            let ul = paint[i].attrs & UInt16(ATTR_UL_MASK)
-            if ul != 0 && paint[i].wide != WIDE_TAIL && paint[i].wide != WIDE_HEAD {
-                n += ul == UInt16(UL_DOUBLE) ? 2 : 1
-            }
+            let cell = paint[i]
+            if (cell.attrs & UInt16(ATTR_BLINK)) != 0 { hasBlink = true }
+            n += OverlayPaint.count(
+                attrs: cell.attrs, wide: cell.wide, cellW: Float(cellWPx), cellH: Float(cellHPx)
+            )
             i += 1
         }
+        if hasBlink { armCursorBlink() }
         return n
     }
 
@@ -638,37 +647,34 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         paintRows: Int,
         cellW: Float,
         cellH: Float,
-        defFG: RGB,
+        defFG: SIMD3<Float>,
+        defBG: SIMD3<Float>,
         ulColors: [UInt16: UInt32]
     ) -> Int {
         var w = 0
         let cap = min(paint.count, cols * paintRows)
-        let t = max(1, cellH * 0.06)
-        var i = 0
-        while i < cap {
-            let cell = paint[i]
-            let ul = cell.attrs & UInt16(ATTR_UL_MASK)
-            if ul != 0 && cell.wide != WIDE_TAIL && cell.wide != WIDE_HEAD {
+        rgb.withUnsafeBufferPointer { pal in
+            guard let palBase = pal.baseAddress else { return }
+            var i = 0
+            while i < cap {
+                let cell = paint[i]
                 let x = i % cols
                 let y = i / cols
-                let ox = insetLeftPx + Float(x) * cellW
-                let oy = insetTopPx + Float(y) * cellH + cellH - t * 2
-                var rgb = defFG
-                if cell.extra != 0, let packed = ulColors[cell.extra],
-                   PackedColor.type(of: packed) == 2 {
-                    rgb = RGB.packed(packed)
-                }
-                let r = Float(rgb.r) / 255, g = Float(rgb.g) / 255, b = Float(rgb.b) / 255
-                dest[at + w] = OverlayInstance(ox: ox, oy: oy, sx: cellW, sy: t, r: r, g: g, b: b, a: 1)
-                w += 1
-                if ul == UInt16(UL_DOUBLE) {
-                    dest[at + w] = OverlayInstance(
-                        ox: ox, oy: oy - t * 2, sx: cellW, sy: t, r: r, g: g, b: b, a: 1
-                    )
-                    w += 1
-                }
+                w += OverlayPaint.write(
+                    cell: cell,
+                    ox: insetLeftPx + Float(x) * cellW,
+                    oy: insetTopPx + Float(y) * cellH,
+                    cellW: cellW,
+                    cellH: cellH,
+                    palette: palBase,
+                    defFG: defFG,
+                    defBG: defBG,
+                    ulColor: cell.extra != 0 ? ulColors[cell.extra] : nil,
+                    dest: dest,
+                    at: at + w
+                )
+                i += 1
             }
-            i += 1
         }
         return w
     }

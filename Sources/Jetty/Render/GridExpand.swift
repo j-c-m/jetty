@@ -51,6 +51,7 @@ public enum GridExpand {
         cursorX: Int,
         cursorY: Int,
         cursorVisible: Bool,
+        blinkOff: Bool = false,
         selection: (x0: Int, y0: Int, x1: Int, y1: Int)?,
         graphemes: [UInt32: [UInt32]] = [:],
         dest: UnsafeMutablePointer<CellInstance>
@@ -68,7 +69,9 @@ public enum GridExpand {
             if reverse { swap(&fg, &bg) }
             if let sel = selCols, x >= sel.lo, x <= sel.hi { swap(&fg, &bg) }
             if cursorOnRow && x == cursorX { swap(&fg, &bg) }
-            if (cell.attrs & UInt16(ATTR_HIDDEN)) != 0 { fg = bg }
+            if (cell.attrs & UInt16(ATTR_HIDDEN)) != 0
+                || (blinkOff && (cell.attrs & UInt16(ATTR_BLINK)) != 0)
+            { fg = bg }
             if (cell.attrs & UInt16(ATTR_DIM)) != 0 {
                 fg = fg * (2.0 / 3.0)
             }
@@ -122,6 +125,7 @@ public enum GridExpand {
         cursorX: Int,
         cursorY: Int,
         cursorVisible: Bool,
+        blinkOff: Bool = false,
         selection: (x0: Int, y0: Int, x1: Int, y1: Int)?,
         graphemes: [UInt32: [UInt32]] = [:],
         dest: UnsafeMutablePointer<CellInstance>
@@ -143,6 +147,7 @@ public enum GridExpand {
                 cursorX: cursorX,
                 cursorY: cursorY,
                 cursorVisible: cursorVisible,
+                blinkOff: blinkOff,
                 selection: selection,
                 graphemes: graphemes,
                 dest: dest + y * cols
