@@ -1,54 +1,89 @@
 import CVt
 
 enum ProgrammingLigatures {
-    /// Longest first. Narrow ASCII only.
-    static let table: [String] = {
-        let raw = [
-            "!==", "===", "==", "!=",
-            "<=", ">=", "=>", "->", "<-",
-            "::", "//", "/*", "*/",
-            "++", "--", "&&", "||", "??",
-            ":=",
-        ]
-        return raw.sorted { a, b in
-            if a.count != b.count { return a.count > b.count }
-            return a < b
+    /// JetBrains Mono `calt` ligatures (official list).
+    /// https://github.com/JetBrains/JetBrainsMono/wiki/List-of-supported-symbols
+    /// Indexed longest-first by first byte at load.
+    static let raw: [String] = [
+        "--", "---", "==", "===", "!=", "!==", "=!=", "=:=", "=/=",
+        "<=", ">=", "&&", "&&&", "&=", "++", "+++", "***", ";;", "!!",
+        "??", "???", "?:", "?.", "?=", "<:", ":<", ":>", ">:", "<:<",
+        "<>", "<<<", ">>>", "<<", ">>", "||", "-|", "_|_", "|-", "||-",
+        "|=", "||=", "##", "###", "####", "#{", "#[", "]#", "#(", "#?",
+        "#_", "#_(", "#:", "#!", "#=", "^=", "<$>", "<$", "$>", "<+>",
+        "<+", "+>", "<*>", "<*", "*>", "</", "</>", "/>", "<!--",
+        "<#--", "-->", "->", "->>", "<<-", "<-", "<=<", "=<<", "<<=",
+        "<==", "<=>", "<==>", "==>", "=>", "=>>", ">=>", ">>=", ">>-",
+        ">-", "-<", "-<<", ">->", "<-<", "<-|", "<=|", "|=>", "|->",
+        "<->", "<<~", "<~~", "<~", "<~>", "~~", "~~>", "~>", "~-",
+        "-~", "~@", "[||]", "|]", "[|", "|}", "{|", "[<", ">]", "|>",
+        "<|", "||>", "<||", "|||>", "<|||", "<|>", "...", "..", ".=",
+        "..<", ".?", "::", ":::", ":=", "::=", ":?", ":?>", "//",
+        "///", "/*", "*/", "/=", "//=", "/==", "@_", "__", ";;;",
+    ]
+
+    /// `raw` sorted longest first. Tests and docs; the scan uses `byFirst`.
+    static let table: [String] = raw.sorted { a, b in
+        if a.count != b.count { return a.count > b.count }
+        return a < b
+    }
+
+    /// `byFirst[b]` is the patterns that start with byte `b`, longest first.
+    private static let byFirst: [[[UInt8]]] = {
+        var buckets: [[[UInt8]]] = Array(repeating: [], count: 128)
+        for s in table {
+            let bytes = Array(s.utf8)
+            guard let first = bytes.first, first < 128, bytes.count >= 2 else { continue }
+            buckets[Int(first)].append(bytes)
         }
+        return buckets
     }()
 
     static func ascii(_ cell: Cell) -> UInt8? {
-        if (cell.content & CONTENT_KIND_MASK) != CONTENT_SCALAR { return nil }
-        if (cell.content & CONTENT_WIDE_MASK) != WIDE_NARROW { return nil }
-        let p = cell.contentPayload
+        let c = cell.content
+        if (c & (CONTENT_KIND_MASK | CONTENT_WIDE_MASK)) != 0 { return nil }
+        let p = c & CONTENT_PAYLOAD
         if p < 0x20 || p > 0x7E { return nil }
-        if SpriteFace.covers(p) { return nil }
         return UInt8(truncatingIfNeeded: p)
-    }
-
-    /// Bytes of `pat` at `x`, same bold/italic, no sprite/wide/grapheme.
-    static func match(
-        row: UnsafePointer<Cell>,
-        x: Int,
-        cols: Int,
-        pat: String
-    ) -> Bool {
-        let n = pat.utf8.count
-        if n == 0 || x < 0 || x + n > cols { return false }
-        let a0 = row[x].attrs & UInt16(ATTR_BOLD | ATTR_ITALIC)
-        var i = 0
-        for b in pat.utf8 {
-            if ProgrammingLigatures.ascii(row[x + i]) != b { return false }
-            if (row[x + i].attrs & UInt16(ATTR_BOLD | ATTR_ITALIC)) != a0 { return false }
-            i += 1
-        }
-        return true
     }
 
     /// Length of the table hit at `x`, or 0.
     static func spanLength(row: UnsafePointer<Cell>, x: Int, cols: Int) -> Int {
-        for pat in table {
-            if match(row: row, x: x, cols: cols, pat: pat) { return pat.utf8.count }
+        if x < 0 || x >= cols { return 0 }
+        let c0 = row[x].content
+        if (c0 & (CONTENT_KIND_MASK | CONTENT_WIDE_MASK)) != 0 { return 0 }
+        let p0 = c0 & CONTENT_PAYLOAD
+        if p0 < 0x21 || p0 > 0x7E { return 0 }
+        let pats = byFirst[Int(p0)]
+        var i = 0
+        while i < pats.count {
+            let pat = pats[i]
+            if match(row: row, x: x, cols: cols, pat: pat) { return pat.count }
+            i += 1
         }
         return 0
+    }
+
+    /// Bytes of `pat` at `x`, same bold/italic, no wide/grapheme.
+    private static func match(
+        row: UnsafePointer<Cell>,
+        x: Int,
+        cols: Int,
+        pat: [UInt8]
+    ) -> Bool {
+        let n = pat.count
+        if n == 0 || x + n > cols { return false }
+        let style = UInt16(ATTR_BOLD | ATTR_ITALIC)
+        let a0 = row[x].attrs & style
+        var i = 0
+        while i < n {
+            let cell = row[x + i]
+            let c = cell.content
+            if (c & (CONTENT_KIND_MASK | CONTENT_WIDE_MASK)) != 0 { return false }
+            if (c & CONTENT_PAYLOAD) != UInt32(pat[i]) { return false }
+            if (cell.attrs & style) != a0 { return false }
+            i += 1
+        }
+        return true
     }
 }

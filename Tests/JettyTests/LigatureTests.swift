@@ -5,12 +5,27 @@ import XCTest
 final class LigatureTests: XCTestCase {
     func testTableIsLongestFirst() {
         let t = ProgrammingLigatures.table
+        XCTAssertEqual(Set(t), Set(ProgrammingLigatures.raw))
         XCTAssertGreaterThanOrEqual(t.first?.count ?? 0, t.last?.count ?? 0)
         XCTAssertTrue(t.contains("=>"))
         XCTAssertTrue(t.contains("!=="))
+        XCTAssertTrue(t.contains("///"))
+        XCTAssertTrue(t.contains("<=>"))
+        XCTAssertTrue(t.contains("||="))
+        XCTAssertTrue(t.contains("<!--"))
+        XCTAssertTrue(t.contains("####"))
+        XCTAssertTrue(t.contains("__"))
+        XCTAssertEqual(t.count, Set(t).count)
         let iEq = t.firstIndex(of: "==")!
         let iNeqeq = t.firstIndex(of: "!==")!
         XCTAssertLessThan(iNeqeq, iEq)
+        XCTAssertLessThan(t.firstIndex(of: "///")!, t.firstIndex(of: "//")!)
+        XCTAssertLessThan(t.firstIndex(of: "<=>")!, t.firstIndex(of: "<=")!)
+        XCTAssertLessThan(t.firstIndex(of: "<==>")!, t.firstIndex(of: "<=>")!)
+        XCTAssertLessThan(t.firstIndex(of: "||=")!, t.firstIndex(of: "||")!)
+        XCTAssertLessThan(t.firstIndex(of: "####")!, t.firstIndex(of: "###")!)
+        XCTAssertLessThan(t.firstIndex(of: "...")!, t.firstIndex(of: "..")!)
+        XCTAssertLessThan(t.firstIndex(of: "<!--")!, t.firstIndex(of: "</")!)
     }
 
     func testSpanMatchConsumesLongest() {
@@ -27,6 +42,20 @@ final class LigatureTests: XCTestCase {
             ProgrammingLigatures.spanLength(row: buf.baseAddress!, x: 1, cols: cols)
         }
         XCTAssertEqual(n2, 2)
+        func span(_ s: String) -> Int {
+            let row = Array(s.utf8).map { ascii($0) }
+            XCTAssertEqual(row.count, cols)
+            return row.withUnsafeBufferPointer { buf in
+                ProgrammingLigatures.spanLength(row: buf.baseAddress!, x: 0, cols: cols)
+            }
+        }
+        XCTAssertEqual(span("///     "), 3)
+        XCTAssertEqual(span("<=>     "), 3)
+        XCTAssertEqual(span("||=     "), 3)
+        XCTAssertEqual(span("<!--    "), 4)
+        XCTAssertEqual(span("####    "), 4)
+        XCTAssertEqual(span("<==>    "), 4)
+        XCTAssertEqual(span("...     "), 3)
     }
 
     func testHelloIsNotASpan() {

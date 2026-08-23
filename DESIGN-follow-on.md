@@ -428,17 +428,7 @@ flowchart LR
 
 **`off`:** do not enter the shaper. No run hash. Per-cell letter path as v1. Atlas `rasterize` may still `CTLine` one cached character.
 
-**`programming`:** scan visible cells for a hardcoded longest-first table (narrow ASCII only). Shape **that span only**. Everything else is the v1 letter path. No row hash. Start small:
-
-```
-!== === == !=
-<= >= => -> <-
-:: // /* */
-++ -- && || ??
-:=
-```
-
-If the font does not ligate the span, paint the cells as today. Add rows to the table only when a real font+workflow needs them.
+**`programming`:** scan visible cells for a hardcoded longest-first table (narrow ASCII only). Shape **that span only**. Everything else is the v1 letter path. No row hash. The table is JetBrains Mono’s official `calt` list (`ProgrammingLigatures.raw`; [wiki](https://github.com/JetBrains/JetBrainsMono/wiki/List-of-supported-symbols)). If the font does not ligate the span, paint the cells as today.
 
 **`on`:** split runs, hash, `CTLine` liga+calt. **Paint** 1:1 / `xOffset≈0` with the v1 letter path (`a` does not change). Only merged cells or non-zero `xOffset` use coverage ink. Single-cell `calt` swaps stay the old letter (the letter lock).
 
