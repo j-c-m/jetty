@@ -95,7 +95,7 @@ final class DirtySkipTests: XCTestCase {
             reverse: false,
             paletteSignature: 9,
             selection: nil,
-            searchActive: false,
+            searchSig: 0,
             preedit: false
         )
         XCTAssertFalse(DirtySkip.fullRebuild(now: base, last: base))
@@ -116,6 +116,10 @@ final class DirtySkipTests: XCTestCase {
         row.integerRow = 11
         XCTAssertTrue(DirtySkip.fullRebuild(now: row, last: base))
         XCTAssertTrue(DirtySkip.fullRebuild(now: base, last: nil))
+        var search = base
+        search.searchSig = 1
+        XCTAssertTrue(DirtySkip.fullRebuild(now: search, last: base))
+        XCTAssertFalse(DirtySkip.fullRebuild(now: search, last: search))
     }
 
     private func expand(

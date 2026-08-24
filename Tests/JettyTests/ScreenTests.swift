@@ -113,6 +113,60 @@ final class ScreenTests: XCTestCase {
         XCTAssertEqual(s.glyph(0, 1), UInt32(UInt8(ascii: "G")))
     }
 
+    func testCompressRoundtripHistory() {
+        let s = Screen(cols: 8, rows: 2, scrollbackCapRows: 400)
+        for i in 0..<80 {
+            let ch = Character(UnicodeScalar(65 + (i % 26))!)
+            s.printRun(String(repeating: String(ch), count: 8))
+        }
+        let n = s.scrollbackCount
+        XCTAssertGreaterThanOrEqual(n, 64)
+        let before = (0..<n).map { s.historyRow($0).map(\.contentPayload) }
+        let wraps = (0..<n).map { s.isHistoryWrapped($0) }
+        XCTAssertGreaterThan(s.compressKeep(newest: 2, maxPages: 8), 0)
+        XCTAssertEqual(s.scrollbackCount, n)
+        XCTAssertEqual((0..<n).map { s.historyRow($0).map(\.contentPayload) }, before)
+        XCTAssertEqual((0..<n).map { s.isHistoryWrapped($0) }, wraps)
+        s.printRun("ZZZZZZZZ")
+        XCTAssertEqual(s.scrollbackCount, n + 1)
+        XCTAssertEqual((0..<n).map { s.historyRow($0).map(\.contentPayload) }, before)
+        XCTAssertEqual(s.glyph(0, 1), UInt32(UInt8(ascii: "Z")))
+    }
+
+    func testCompressGraphemeED3ReleasesPool() {
+        let s = Screen(cols: 8, rows: 2, scrollbackCapRows: 400)
+        let p = Parser()
+        p.screen = s
+        for _ in 0..<80 {
+            p.feed("e\u{0301}xxxxxxx")
+        }
+        XCTAssertGreaterThan(s.poolCells, 0)
+        XCTAssertGreaterThan(s.compressKeep(newest: 2, maxPages: 8), 0)
+        XCTAssertEqual(s.historyRow(0)[0].contentKind, CONTENT_GRAPHEME)
+        s.ed(3)
+        for _ in 0..<500 {
+            s.printRun("yyyyyyyy")
+        }
+        XCTAssertEqual(s.poolCells, 0)
+    }
+
+    func testCompressGraphemeSurvivesResize() {
+        let s = Screen(cols: 8, rows: 2, scrollbackCapRows: 400)
+        let p = Parser()
+        p.screen = s
+        for _ in 0..<80 {
+            p.feed("e\u{0301}xxxxxxx")
+        }
+        XCTAssertGreaterThan(s.compressKeep(newest: 2, maxPages: 8), 0)
+        s.resize(cols: 10, rows: 2)
+        XCTAssertEqual(s.historyRow(0)[0].contentKind, CONTENT_GRAPHEME)
+        s.ed(3)
+        for _ in 0..<500 {
+            s.printRun("yyyyyyyyyy")
+        }
+        XCTAssertEqual(s.poolCells, 0)
+    }
+
     func testCopyJoinsHistoryWrap() {
         let s = Screen(cols: 4, rows: 2, scrollbackCapRows: 4)
         let p = Parser()

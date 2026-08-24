@@ -122,6 +122,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             action: #selector(MetalTerminalView.selectAll(_:)),
             keyEquivalent: "a"
         )
+        edit.submenu?.addItem(.separator())
+        edit.submenu?.addItem(
+            withTitle: "Find",
+            action: #selector(MetalTerminalView.startFind(_:)),
+            keyEquivalent: "f"
+        )
+        edit.submenu?.addItem(
+            withTitle: "Find Next",
+            action: #selector(MetalTerminalView.findNext(_:)),
+            keyEquivalent: "g"
+        )
+        let findPrev = NSMenuItem(
+            title: "Find Previous",
+            action: #selector(MetalTerminalView.findPrevious(_:)),
+            keyEquivalent: "g"
+        )
+        findPrev.keyEquivalentModifierMask = [.command, .shift]
+        edit.submenu?.addItem(findPrev)
         menu.addItem(edit)
         let viewMenu = NSMenuItem()
         viewMenu.submenu = NSMenu(title: "View")

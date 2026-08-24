@@ -53,6 +53,7 @@ public enum GridExpand {
         cursorVisible: Bool,
         blinkOff: Bool = false,
         selection: (x0: Int, y0: Int, x1: Int, y1: Int)?,
+        searchSpans: [(lo: Int, hi: Int)] = [],
         graphemes: [UInt32: [UInt32]] = [:],
         hideGlyphs: UnsafePointer<UInt8>? = nil,
         dest: UnsafeMutablePointer<CellInstance>
@@ -69,6 +70,7 @@ public enum GridExpand {
             let reverse = (cell.attrs & UInt16(ATTR_REVERSE)) != 0
             if reverse { swap(&fg, &bg) }
             if let sel = selCols, x >= sel.lo, x <= sel.hi { swap(&fg, &bg) }
+            if searchSpans.contains(where: { x >= $0.lo && x <= $0.hi }) { swap(&fg, &bg) }
             if cursorOnRow && x == cursorX { swap(&fg, &bg) }
             if (cell.attrs & UInt16(ATTR_HIDDEN)) != 0
                 || (blinkOff && (cell.attrs & UInt16(ATTR_BLINK)) != 0)
@@ -134,6 +136,7 @@ public enum GridExpand {
         cursorVisible: Bool,
         blinkOff: Bool = false,
         selection: (x0: Int, y0: Int, x1: Int, y1: Int)?,
+        searchSpans: [(lo: Int, hi: Int)] = [],
         graphemes: [UInt32: [UInt32]] = [:],
         hideGlyphs: UnsafePointer<UInt8>? = nil,
         dest: UnsafeMutablePointer<CellInstance>
@@ -157,6 +160,7 @@ public enum GridExpand {
                 cursorVisible: cursorVisible,
                 blinkOff: blinkOff,
                 selection: selection,
+                searchSpans: searchSpans,
                 graphemes: graphemes,
                 hideGlyphs: hideGlyphs,
                 dest: dest + y * cols

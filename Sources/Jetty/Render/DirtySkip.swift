@@ -39,7 +39,7 @@ enum DirtySkip {
         var reverse: Bool
         var paletteSignature: UInt64
         var selection: Sel?
-        var searchActive: Bool
+        var searchSig: UInt64
         var preedit: Bool
     }
 
@@ -55,7 +55,7 @@ enum DirtySkip {
         if now.reverse != last.reverse { return true }
         if now.paletteSignature != last.paletteSignature { return true }
         if now.selection != nil || now.selection != last.selection { return true }
-        if now.searchActive || now.searchActive != last.searchActive { return true }
+        if now.searchSig != last.searchSig { return true }
         if now.preedit || now.preedit != last.preedit { return true }
         return false
     }

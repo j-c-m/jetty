@@ -48,6 +48,13 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var ligaHide = ContiguousArray<UInt8>()
     private var lastInk = false
     private var lastBackingScale: CGFloat
+    private var findAccessory: NSTitlebarAccessoryViewController?
+    private var findField: NSTextField?
+    private var findCountLabel: NSTextField?
+    private var findHits: [ScrollSearch.Hit] = []
+    private var findSpansByDoc: [Int: [(lo: Int, hi: Int)]] = [:]
+    private var findSig: UInt64 = 0
+    private var findIndex = 0
 
     public init(session: TerminalSession, config: AppConfig, device: MTLDevice, backingScale: CGFloat) {
         self.session = session
@@ -172,7 +179,11 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             if trim > 0.5, !scrollPhysics.pinnedToBottom {
                 scrollPhysics.trimTop(trim)
             }
+            if findAccessory != nil, trim > 0.5 {
+                shiftFindHits(by: Int(trim.rounded()))
+            }
             scrollPhysics.followBottomIfPinned(maxOffset: maxO)
+            session.maybeCompressHistory()
             let moving = scrollPhysics.step(dt: dt, maxOffset: maxO, viewportRows: Double(max(1, rows)))
             if moving { kickScroll() }
             start = Int(scrollPhysics.integerRow(maxOffset: maxO))
@@ -273,7 +284,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             reverse: rev,
             paletteSignature: palSig,
             selection: sel.map { DirtySkip.Sel(x0: $0.x0, y0: $0.y0, x1: $0.x1, y1: $0.y1) },
-            searchActive: false,
+            searchSig: findSig,
             preedit: !preedit.isEmpty
         )
         var skipExpand: [Bool]?
@@ -365,6 +376,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                                         cursorVisible: cursorOn && preedit.isEmpty,
                                         blinkOff: !phaseOn,
                                         selection: sel,
+                                        searchSpans: searchSpans(docRow: start + y, cols: cols),
                                         graphemes: graphemes,
                                         hideGlyphs: hidePtr,
                                         dest: inst + y * cols
@@ -375,6 +387,33 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                                         inkBase: wantInk ? n : nil
                                     )
                                 }
+                                y += 1
+                            }
+                        } else if findAccessory != nil {
+                            var y = 0
+                            while y < paintRows {
+                                GridExpand.expandRow(
+                                    rowCells: cp + y * cols,
+                                    cols: cols,
+                                    rowY: y,
+                                    cellW: cw,
+                                    cellH: ch,
+                                    originX: insetLeftPx,
+                                    originY: insetTopPx,
+                                    palette: palBase,
+                                    defFG: dfg,
+                                    defBG: dbg,
+                                    atlas: renderer.atlas,
+                                    cursorX: cx,
+                                    cursorY: curY,
+                                    cursorVisible: cursorOn && preedit.isEmpty,
+                                    blinkOff: !phaseOn,
+                                    selection: sel,
+                                    searchSpans: searchSpans(docRow: start + y, cols: cols),
+                                    graphemes: graphemes,
+                                    hideGlyphs: hidePtr,
+                                    dest: inst + y * cols
+                                )
                                 y += 1
                             }
                         } else {
@@ -602,6 +641,10 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     public override func keyDown(with event: NSEvent) {
+        if event.keyCode == UInt16(kVK_Escape), findAccessory != nil {
+            endFind()
+            return
+        }
         if handleZoomKeys(event) { return }
         if handleScrollbackKeys(event) { return }
         if event.modifierFlags.contains(.command) {
@@ -984,6 +1027,178 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
 
     private func kickScroll() {
         needsDisplay = true
+    }
+
+    private func searchSpans(docRow: Int, cols: Int) -> [(lo: Int, hi: Int)] {
+        guard let spans = findSpansByDoc[docRow] else { return [] }
+        return spans.map { (max(0, $0.lo), min(cols - 1, $0.hi)) }
+    }
+
+    @objc public func startFind(_ sender: Any?) {
+        showFind()
+    }
+
+    @objc public func findNext(_ sender: Any?) {
+        if findAccessory == nil { showFind(); return }
+        stepFind(1)
+    }
+
+    @objc public func findPrevious(_ sender: Any?) {
+        if findAccessory == nil { showFind(); return }
+        stepFind(-1)
+    }
+
+    private func showFind() {
+        if let field = findField, findAccessory != nil {
+            window?.makeFirstResponder(field)
+            return
+        }
+        let field = FindField(string: "")
+        field.finder = self
+        field.isBordered = true
+        field.bezelStyle = .roundedBezel
+        field.focusRingType = .none
+        field.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        field.delegate = self
+        field.frame = NSRect(x: 8, y: 3, width: 180, height: 22)
+        let count = NSTextField(labelWithString: "0/0")
+        count.font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        count.textColor = .secondaryLabelColor
+        count.alignment = .right
+        count.drawsBackground = false
+        count.frame = NSRect(x: 192, y: 5, width: 52, height: 18)
+        let up = findNavButton(symbol: "chevron.up", action: #selector(findNext(_:)))
+        let down = findNavButton(symbol: "chevron.down", action: #selector(findPrevious(_:)))
+        up.frame = NSRect(x: 248, y: 3, width: 22, height: 22)
+        down.frame = NSRect(x: 270, y: 3, width: 22, height: 22)
+        let wrap = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 28))
+        wrap.addSubview(field)
+        wrap.addSubview(count)
+        wrap.addSubview(up)
+        wrap.addSubview(down)
+        let acc = NSTitlebarAccessoryViewController()
+        acc.view = wrap
+        acc.layoutAttribute = .right
+        window?.addTitlebarAccessoryViewController(acc)
+        findAccessory = acc
+        findField = field
+        findCountLabel = count
+        window?.makeFirstResponder(field)
+        relayout()
+        needsDisplay = true
+    }
+
+    private func findNavButton(symbol: String, action: Selector) -> NSButton {
+        let img = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        let b = NSButton(image: img ?? NSImage(), target: self, action: action)
+        b.isBordered = false
+        b.bezelStyle = .inline
+        b.imagePosition = .imageOnly
+        b.imageScaling = .scaleProportionallyDown
+        return b
+    }
+
+    private func endFind() {
+        if let acc = findAccessory {
+            if let i = window?.titlebarAccessoryViewControllers.firstIndex(of: acc) {
+                window?.removeTitlebarAccessoryViewController(at: i)
+            }
+        }
+        findAccessory = nil
+        findField = nil
+        findCountLabel = nil
+        findHits = []
+        findSpansByDoc = [:]
+        findSig = 0
+        findIndex = 0
+        window?.makeFirstResponder(self)
+        relayout()
+        needsDisplay = true
+    }
+
+    private func rescanFind() {
+        let q = findField?.stringValue ?? ""
+        session.lock.lock()
+        let rows = session.screen.rows
+        session.lock.unlock()
+        findHits = ScrollSearch.hits(
+            query: q, screen: session.screen, liveRows: rows, lock: session.lock
+        )
+        session.lock.lock()
+        let sb = session.screen.scrollbackCount
+        session.lock.unlock()
+        findIndex = 0
+        indexFindSpans()
+        if let hit = findHits.first {
+            jumpToHit(hit, sb: sb)
+        }
+        refreshFindCount()
+        needsDisplay = true
+    }
+
+    private func stepFind(_ dir: Int) {
+        guard !findHits.isEmpty else { return }
+        findIndex = (findIndex + dir + findHits.count * 4) % findHits.count
+        session.lock.lock()
+        let sb = session.screen.scrollbackCount
+        session.lock.unlock()
+        jumpToHit(findHits[findIndex], sb: sb)
+        refreshFindCount()
+        needsDisplay = true
+    }
+
+    private func refreshFindCount() {
+        if findHits.isEmpty {
+            findCountLabel?.stringValue = "0/0"
+        } else {
+            findCountLabel?.stringValue = "\(findIndex + 1)/\(findHits.count)"
+        }
+    }
+
+    private func indexFindSpans() {
+        var map: [Int: [(lo: Int, hi: Int)]] = [:]
+        for hit in findHits {
+            for sp in hit.spans {
+                map[sp.docRow, default: []].append((sp.x0, sp.x1))
+            }
+        }
+        findSpansByDoc = map
+        var sig: UInt64 = UInt64(findHits.count)
+        if let h = findHits.first, let s = h.spans.first {
+            sig = sig &* 16_777_619 ^ UInt64(bitPattern: Int64(h.docRow))
+            sig = sig &* 16_777_619 ^ UInt64(s.x0) ^ (UInt64(s.x1) << 16)
+        }
+        findSig = findHits.isEmpty ? 0 : sig
+    }
+
+    private func shiftFindHits(by trim: Int) {
+        if trim <= 0 { return }
+        var next: [ScrollSearch.Hit] = []
+        for hit in findHits {
+            let spans = hit.spans.compactMap { sp -> ScrollSearch.Span? in
+                let r = sp.docRow - trim
+                if r < 0 { return nil }
+                return ScrollSearch.Span(docRow: r, x0: sp.x0, x1: sp.x1)
+            }
+            if spans.isEmpty { continue }
+            let jump = spans.map(\.docRow).max() ?? (hit.docRow - trim)
+            if jump < 0 { continue }
+            next.append(ScrollSearch.Hit(docRow: jump, spans: spans))
+        }
+        findHits = next
+        if findIndex >= findHits.count { findIndex = 0 }
+        indexFindSpans()
+        refreshFindCount()
+    }
+
+    private func jumpToHit(_ hit: ScrollSearch.Hit, sb: Int) {
+        let maxO = Double(sb)
+        if hit.docRow >= sb {
+            scrollPhysics.pinBottom(maxOffset: maxO)
+        } else {
+            scrollPhysics.smoothTo(offset: Double(hit.docRow), maxOffset: maxO)
+        }
+        kickScroll()
     }
 
     public override func mouseDown(with event: NSEvent) {
@@ -1551,5 +1766,62 @@ extension MetalTerminalView: @preconcurrency NSTextInputClient {
             return
         }
         writeInsert(text, composing: composing)
+    }
+}
+
+extension MetalTerminalView: NSTextFieldDelegate {
+    public func controlTextDidChange(_ obj: Notification) {
+        rescanFind()
+    }
+
+    public func control(
+        _ control: NSControl,
+        textView: NSTextView,
+        doCommandBy commandSelector: Selector
+    ) -> Bool {
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            endFind()
+            return true
+        }
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            let shift = NSApp.currentEvent?.modifierFlags.contains(.shift) == true
+            stepFind(shift ? -1 : 1)
+            return true
+        }
+        return false
+    }
+}
+
+final class FindField: NSTextField {
+    weak var finder: MetalTerminalView?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let chars = event.charactersIgnoringModifiers?.lowercased()
+        if flags.contains(.command), chars == "g" {
+            if flags.contains(.shift) {
+                finder?.findPrevious(nil)
+            } else {
+                finder?.findNext(nil)
+            }
+            return true
+        }
+        if flags.contains(.command), !flags.contains(.shift), chars == "f" {
+            currentEditor()?.selectAll(nil)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    @objc func startFind(_ sender: Any?) {
+        currentEditor()?.selectAll(nil)
+    }
+
+    @objc func findNext(_ sender: Any?) {
+        finder?.findNext(sender)
+    }
+
+    @objc func findPrevious(_ sender: Any?) {
+        finder?.findPrevious(sender)
     }
 }
