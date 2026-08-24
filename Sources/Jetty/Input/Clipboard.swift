@@ -25,4 +25,14 @@ public enum Clipboard {
     public static func focusBytes(gained: Bool) -> [UInt8] {
         gained ? [0x1B, 0x5B, 0x49] : [0x1B, 0x5B, 0x4F]
     }
+
+    /// POSIX single-quote. `'` inside the path becomes `'\''`.
+    public static func posixQuote(_ path: String) -> String {
+        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    /// Quote paths and join with spaces for a drop onto the PTY.
+    public static func droppedPaths(_ paths: [String]) -> String {
+        paths.map(posixQuote).joined(separator: " ")
+    }
 }

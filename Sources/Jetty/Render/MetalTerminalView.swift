@@ -87,6 +87,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 self?.needsDisplay = true
             }
         }
+        registerForDraggedTypes([.fileURL, .string])
     }
 
     required init(coder: NSCoder) { fatalError() }
@@ -1439,6 +1440,45 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
 
     @objc public func paste(_ sender: Any?) {
         guard let str = NSPasteboard.general.string(forType: .string) else { return }
+        pasteText(str)
+    }
+
+    public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        dropOperation(sender)
+    }
+
+    public override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        dropOperation(sender)
+    }
+
+    public override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        dropOperation(sender) != []
+    }
+
+    public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let pb = sender.draggingPasteboard
+        let files = pb.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL]
+        if let files, !files.isEmpty {
+            pasteText(Clipboard.droppedPaths(files.map(\.path)))
+            return true
+        }
+        if let str = pb.string(forType: .string), !str.isEmpty {
+            pasteText(str)
+            return true
+        }
+        return false
+    }
+
+    private func dropOperation(_ sender: NSDraggingInfo) -> NSDragOperation {
+        let types = sender.draggingPasteboard.types ?? []
+        if types.contains(.fileURL) || types.contains(.string) { return .copy }
+        return []
+    }
+
+    private func pasteText(_ str: String) {
         session.lock.lock()
         let bracketed = session.screen.bracketedPaste
         session.lock.unlock()

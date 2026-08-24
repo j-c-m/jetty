@@ -27,4 +27,18 @@ final class ClipboardTests: XCTestCase {
         XCTAssertEqual(Clipboard.focusBytes(gained: true), [0x1B, 0x5B, 0x49])
         XCTAssertEqual(Clipboard.focusBytes(gained: false), [0x1B, 0x5B, 0x4F])
     }
+
+    func testPosixQuote() {
+        XCTAssertEqual(Clipboard.posixQuote(""), "''")
+        XCTAssertEqual(Clipboard.posixQuote("/tmp/foo"), "'/tmp/foo'")
+        XCTAssertEqual(Clipboard.posixQuote("/tmp/foo bar"), "'/tmp/foo bar'")
+        XCTAssertEqual(Clipboard.posixQuote("/tmp/it's"), "'/tmp/it'\\''s'")
+    }
+
+    func testDroppedPathsJoinQuoted() {
+        XCTAssertEqual(
+            Clipboard.droppedPaths(["/a b", "/c"]),
+            "'/a b' '/c'"
+        )
+    }
 }
