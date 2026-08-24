@@ -55,6 +55,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var findSpansByDoc: [Int: [(lo: Int, hi: Int)]] = [:]
     private var findSig: UInt64 = 0
     private var findIndex = 0
+    private var autoURLHit: AutoURL.Hit?
 
     public init(session: TerminalSession, config: AppConfig, device: MTLDevice, backingScale: CGFloat) {
         self.session = session
@@ -484,9 +485,12 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let ulNeed = underlineOverlayCount(cols: cols, paintRows: paintRows)
         let preNeed = preeditUnderlineCount(preedit, cols: cols, cursorX: cx)
         let curNeed = (vis && preedit.isEmpty && curY >= 0 && curY < paintRows && (blinkOn || !focused)) ? 4 : 0
+        let linkNeed = autoURLOverlayCount(liveOrigin: liveOrigin, paintRows: paintRows)
         let dfg = SIMD3(Float(defFG.r) / 255, Float(defFG.g) / 255, Float(defFG.b) / 255)
         let dbg = SIMD3(Float(defBG.r) / 255, Float(defBG.g) / 255, Float(defBG.b) / 255)
-        if ulNeed + curNeed + preNeed > 0, let ov = renderer.prepareOverlays(count: ulNeed + curNeed + preNeed) {
+        if ulNeed + curNeed + preNeed + linkNeed > 0,
+           let ov = renderer.prepareOverlays(count: ulNeed + curNeed + preNeed + linkNeed)
+        {
             if curNeed > 0 {
                 overlayN += writeCursorOverlay(
                     dest: ov,
@@ -523,6 +527,17 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                     cellW: cw,
                     cellH: ch,
                     rgb: defBG
+                )
+            }
+            if linkNeed > 0 {
+                overlayN += writeAutoURLOverlays(
+                    dest: ov,
+                    at: overlayN,
+                    liveOrigin: liveOrigin,
+                    paintRows: paintRows,
+                    cellW: cw,
+                    cellH: ch,
+                    rgb: dfg
                 )
             }
         }
@@ -822,6 +837,50 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         return w
     }
 
+    private func autoURLOverlayCount(liveOrigin: Int, paintRows: Int) -> Int {
+        guard let hit = autoURLHit else { return 0 }
+        var n = 0
+        for s in hit.spans {
+            let py = s.y + liveOrigin
+            if py >= 0, py < paintRows { n += 1 }
+        }
+        return n
+    }
+
+    private func writeAutoURLOverlays(
+        dest: UnsafeMutablePointer<OverlayInstance>,
+        at: Int,
+        liveOrigin: Int,
+        paintRows: Int,
+        cellW: Float,
+        cellH: Float,
+        rgb: SIMD3<Float>
+    ) -> Int {
+        guard let hit = autoURLHit else { return 0 }
+        let t = OverlayPaint.thickness(cellH)
+        var w = 0
+        for s in hit.spans {
+            let py = s.y + liveOrigin
+            if py < 0 || py >= paintRows { continue }
+            let x0 = max(0, s.x0)
+            let x1 = max(x0, s.x1)
+            let ox = insetLeftPx + Float(x0) * cellW
+            let oy = insetTopPx + Float(py) * cellH
+            dest[at + w] = OverlayInstance(
+                ox: ox,
+                oy: oy + cellH - t * 2,
+                sx: cellW * Float(x1 - x0 + 1),
+                sy: t,
+                r: rgb.x,
+                g: rgb.y,
+                b: rgb.z,
+                a: 1
+            )
+            w += 1
+        }
+        return w
+    }
+
     private func armSyncTimeout() {
         if syncTimeoutWork != nil { return }
         let work = DispatchWorkItem { [weak self] in
@@ -907,6 +966,9 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
 
     public func applyLiveConfig(_ next: AppConfig) {
         config = next
+        if !next.linkURL, autoURLHit?.osc8 != true {
+            autoURLHit = nil
+        }
         session.osc52WriteAllow = next.osc52Write == .allow
         session.osc52ReadAsk = next.osc52Read == .ask
         session.lock.lock()
@@ -969,7 +1031,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         for area in trackingAreas { removeTrackingArea(area) }
         addTrackingArea(NSTrackingArea(
             rect: bounds,
-            options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect],
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
             owner: self,
             userInfo: nil
         ))
@@ -1252,32 +1314,70 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     public override func mouseMoved(with event: NSEvent) {
+        updateLinkHover(with: event)
+        if event.modifierFlags.contains(.shift) { return }
+        session.lock.lock()
+        let mode = session.screen.mouseEvent
+        session.lock.unlock()
+        if mode == 1003 {
+            _ = reportMouse(event, action: .motion, button: nil)
+        }
+    }
+
+    public override func mouseEntered(with event: NSEvent) {
+        updateLinkHover(with: event)
+    }
+
+    public override func mouseExited(with event: NSEvent) {
+        setAutoURLHit(nil)
+        NSCursor.arrow.set()
+    }
+
+    public override func flagsChanged(with event: NSEvent) {
+        updateLinkHover(with: event)
+        super.flagsChanged(with: event)
+    }
+
+    private func updateLinkHover(with event: NSEvent) {
         let cell = cellAt(event)
         session.lock.lock()
         let mode = session.screen.mouseEvent
         let cmd = event.modifierFlags.contains(.command)
+        var hit: AutoURL.Hit?
         var hand = false
-        if (mode == 0 || cmd), cell.y >= 0,
-           let uri = session.screen.uri(at: cell.x, y: cell.y),
-           LinkURL.openable(uri) != nil {
-            hand = true
+        if mode == 0 || cmd {
+            if cmd {
+                hit = AutoURL.hover(
+                    screen: session.screen, x: cell.x, y: cell.y, detect: config.linkURL
+                )
+                hand = hit != nil
+            } else if let uri = session.screen.uri(at: cell.x, y: cell.y),
+                      LinkURL.openable(uri) != nil
+            {
+                hand = true
+            }
         }
         session.lock.unlock()
         if mode == 0 || cmd {
             if hand { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
         }
-        if mode == 1003, !event.modifierFlags.contains(.shift) {
-            _ = reportMouse(event, action: .motion, button: nil)
-        }
+        setAutoURLHit(cmd ? hit : nil)
+    }
+
+    private func setAutoURLHit(_ next: AutoURL.Hit?) {
+        if autoURLHit == next { return }
+        autoURLHit = next
+        needsDisplay = true
     }
 
     private func openLink(at event: NSEvent) {
         let cell = cellAt(event)
-        guard cell.y >= 0 else { return }
         session.lock.lock()
-        let uri = session.screen.uri(at: cell.x, y: cell.y)
+        let hit = AutoURL.hover(
+            screen: session.screen, x: cell.x, y: cell.y, detect: config.linkURL
+        )
         session.lock.unlock()
-        guard let uri, let url = LinkURL.openable(uri) else { return }
+        guard let url = hit?.url else { return }
         NSWorkspace.shared.open(url)
     }
 

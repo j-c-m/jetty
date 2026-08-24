@@ -254,8 +254,16 @@ public final class Screen {
     }
 
     public func uri(at x: Int, y: Int) -> String? {
-        guard y >= 0, y < rows, x >= 0, x < cols else { return nil }
-        let extra = row(y)[x].extra
+        guard x >= 0, x < cols else { return nil }
+        let extra: UInt16
+        if y >= 0 {
+            guard y < rows else { return nil }
+            extra = row(y)[x].extra
+        } else {
+            let hi = viewportHistoryCount + y
+            guard hi >= 0 else { return nil }
+            extra = historyRow(hi)[x].extra
+        }
         guard extra != 0 else { return nil }
         var rare = jt_rare()
         guard jt_rare_get(implPtr, extra, &rare) == 1, let p = rare.uri else { return nil }
