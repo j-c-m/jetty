@@ -1124,6 +1124,42 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         stepFind(-1)
     }
 
+    @objc public func previousPrompt(_ sender: Any?) {
+        jumpPrompt(-1)
+    }
+
+    @objc public func nextPrompt(_ sender: Any?) {
+        jumpPrompt(1)
+    }
+
+    private func jumpPrompt(_ dir: Int) {
+        session.lock.lock()
+        let inAlt = session.screen.inAlt
+        let lines = session.screen.linesScrolled
+        let sb = session.screen.viewportHistoryCount
+        let rows = session.screen.rows
+        let marks = session.osc133
+        session.lock.unlock()
+        if inAlt { return }
+        let start = Int(scrollPhysics.integerRow(maxOffset: Double(sb)))
+        guard let line = PromptJump.target(
+            marks: marks.map { ($0.line, $0.action) },
+            dir: dir,
+            linesScrolled: lines,
+            sbLen: sb,
+            rows: rows,
+            integerRow: start
+        ) else { return }
+        let doc = PromptJump.docRow(line: line, linesScrolled: lines, sbLen: sb)
+        let maxO = Double(sb)
+        if doc >= sb {
+            scrollPhysics.pinBottom(maxOffset: maxO)
+        } else {
+            scrollPhysics.smoothTo(offset: Double(doc), maxOffset: maxO)
+        }
+        kickScroll()
+    }
+
     private func showFind() {
         if let field = findField, findAccessory != nil {
             window?.makeFirstResponder(field)

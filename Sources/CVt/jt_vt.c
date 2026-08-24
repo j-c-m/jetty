@@ -312,9 +312,12 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
     case 'd':
         jt_scr_cup(scr, pdef(p->params, p->np, 0, 1) - 1, scr->active->cx);
         break;
-    case 'J':
-        jt_scr_ed(scr, pdef(p->params, p->np, 0, 0));
+    case 'J': {
+        int mode = pdef(p->params, p->np, 0, 0);
+        jt_scr_ed(scr, mode);
+        if (mode == 3 && h && h->history_cleared) h->history_cleared(h->ctx);
         break;
+    }
     case 'K':
         jt_scr_el(scr, pdef(p->params, p->np, 0, 0));
         break;
@@ -423,6 +426,7 @@ static void handle_esc(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
         case 'c':
             utf8_reset(p);
             jt_scr_ris(scr);
+            if (h && h->history_cleared) h->history_cleared(h->ctx);
             break;
         case 'D':
             jt_scr_index(scr);

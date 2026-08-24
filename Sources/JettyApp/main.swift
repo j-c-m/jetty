@@ -140,6 +140,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         findPrev.keyEquivalentModifierMask = [.command, .shift]
         edit.submenu?.addItem(findPrev)
+        edit.submenu?.addItem(.separator())
+        let prevPrompt = NSMenuItem(
+            title: "Previous Prompt",
+            action: #selector(MetalTerminalView.previousPrompt(_:)),
+            keyEquivalent: "\u{F700}"
+        )
+        prevPrompt.keyEquivalentModifierMask = [.command, .shift]
+        edit.submenu?.addItem(prevPrompt)
+        let nextPrompt = NSMenuItem(
+            title: "Next Prompt",
+            action: #selector(MetalTerminalView.nextPrompt(_:)),
+            keyEquivalent: "\u{F701}"
+        )
+        nextPrompt.keyEquivalentModifierMask = [.command, .shift]
+        edit.submenu?.addItem(nextPrompt)
         menu.addItem(edit)
         let viewMenu = NSMenuItem()
         viewMenu.submenu = NSMenu(title: "View")

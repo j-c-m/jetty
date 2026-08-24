@@ -173,6 +173,7 @@ typedef struct jt_vt_host {
     void (*osc133)(void *ctx, uint8_t action, const uint8_t *opts, size_t n);
     void (*palette_changed)(void *ctx);
     void (*size_report)(void *ctx, int kind);
+    void (*history_cleared)(void *ctx);
 } jt_vt_host;
 
 void jt_osc_dispatch(jt_scr *s, const jt_vt_host *h, const uint8_t *p, int n);

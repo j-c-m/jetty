@@ -65,9 +65,13 @@ public final class TerminalSession: @unchecked Sendable {
         }
         parser.onOsc133 = { [weak self] action, opts in
             guard let self else { return }
+            if self.screen.inAlt { return }
             let line = self.screen.linesScrolled + UInt64(max(0, self.screen.cursorY))
             self.osc133.append((line, action, opts))
             if self.osc133.count > 4096 { self.osc133.removeFirst(self.osc133.count - 4096) }
+        }
+        parser.onHistoryCleared = { [weak self] in
+            self?.osc133.removeAll()
         }
         parser.onSizeReport = { [weak self] kind in
             self?.replySizeReport(kind)

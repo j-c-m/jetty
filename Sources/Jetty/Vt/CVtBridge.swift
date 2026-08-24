@@ -66,3 +66,8 @@ func jtHostSizeReport(_ ctx: UnsafeMutableRawPointer?, _ kind: Int32) {
     guard let ctx else { return }
     Unmanaged<ParserGlue>.fromOpaque(ctx).takeUnretainedValue().parser.handleSizeReport(kind)
 }
+
+func jtHostHistoryCleared(_ ctx: UnsafeMutableRawPointer?) {
+    guard let ctx else { return }
+    Unmanaged<ParserGlue>.fromOpaque(ctx).takeUnretainedValue().parser.handleHistoryCleared()
+}

@@ -17,6 +17,7 @@ public final class Parser {
     public var onOsc7: ((String) -> Void)?
     public var onOsc133: ((UInt8, [UInt8]) -> Void)?
     public var onSizeReport: ((Int32) -> Void)?
+    public var onHistoryCleared: (() -> Void)?
     public var onTitle: ((String) -> Void)?
     public var onOsc52Write: ((UInt8, [UInt8]) -> Void)?
     public var onOsc52Read: ((UInt8) -> Void)?
@@ -42,6 +43,7 @@ public final class Parser {
         host.osc7 = jtHostOsc7
         host.osc133 = jtHostOsc133
         host.size_report = jtHostSizeReport
+        host.history_cleared = jtHostHistoryCleared
     }
 
     deinit {
@@ -123,5 +125,9 @@ public final class Parser {
 
     func handleSizeReport(_ kind: Int32) {
         onSizeReport?(kind)
+    }
+
+    func handleHistoryCleared() {
+        onHistoryCleared?()
     }
 }
