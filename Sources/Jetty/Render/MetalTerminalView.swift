@@ -83,6 +83,9 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         self.enableSetNeedsDisplay = true
         self.delegate = self
         self.framebufferOnly = true
+        if let metalLayer = self.layer as? CAMetalLayer {
+            metalLayer.maximumDrawableCount = 2
+        }
         if let atlas = GlyphAtlas(device: device, metrics: metrics) {
             self.renderer = TerminalRenderer(device: device, atlas: atlas)
         }
