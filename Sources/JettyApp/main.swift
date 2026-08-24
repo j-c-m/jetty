@@ -273,6 +273,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         session.osc52WriteAllow = config.osc52Write == .allow
         session.osc52ReadAsk = config.osc52Read == .ask
         session.desktopNotifications = config.desktopNotifications
+        session.isNotifyFocused = { [weak window] in
+            MainActor.assumeIsolated {
+                window?.isKeyWindow == true
+            }
+        }
         session.onTitle = { [weak window] title in
             MainActor.assumeIsolated {
                 window?.title = title.isEmpty ? "jetty" : title

@@ -21,6 +21,7 @@ public final class TerminalSession: @unchecked Sendable {
     public var osc52WriteAllow = true
     public var osc52ReadAsk = true
     public var desktopNotifications = true
+    public var isNotifyFocused: (@Sendable () -> Bool)?
     public var onProgress: (@Sendable (UInt8, UInt8) -> Void)?
     public private(set) var osc7: String = ""
     private var windowTitle = "jetty"
@@ -87,8 +88,11 @@ public final class TerminalSession: @unchecked Sendable {
             }
         }
         parser.onNotify = { [weak self] title, body in
+            let subtitle = self?.windowTitle ?? ""
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.deliverNotify(title: title, body: body) }
+                MainActor.assumeIsolated {
+                    self?.deliverNotify(title: title, body: body, subtitle: subtitle)
+                }
             }
         }
     }
@@ -188,9 +192,10 @@ public final class TerminalSession: @unchecked Sendable {
     }
 
     @MainActor
-    private func deliverNotify(title: String, body: String) {
+    private func deliverNotify(title: String, body: String, subtitle: String) {
         guard desktopNotifications else { return }
-        DesktopNotify.post(title: title, body: body)
+        if isNotifyFocused?() == true { return }
+        DesktopNotify.post(title: title, body: body, subtitle: subtitle)
     }
 
     @MainActor

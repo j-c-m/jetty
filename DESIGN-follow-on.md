@@ -728,7 +728,7 @@ jetty:
 | `OSC 9 ; 4 ; <st> ; <pct>` | progress |
 | other ConEmu 9;1 sleep / 9;2 msgbox | **ignore** |
 
-Sanitize: strip C0/C1/bidi, cap 256 UTF-8 bytes title, 1024 body. Copy into Swift, hop to main. `UNUserNotificationCenter` request authorization once. Config `desktop-notifications = false` drops. Do not take `session.lock`. PR 30 links `UserNotifications.framework` in `Package.swift`. Auth UX without a bundle id is poor; PR 36 plist carries `CFBundleIdentifier=dev.jetty.app` and `NSUserNotificationsUsageDescription` / user-notification usage string.
+Sanitize: strip C0/C1/bidi, cap 256 UTF-8 bytes title, 1024 body. Copy into Swift, hop to main. `UNUserNotificationCenter` request authorization once. Config `desktop-notifications = false` drops. Do not take `session.lock`. Window title is the notification subtitle (Ghostty). Post only when that window is not key. PR 30 links `UserNotifications.framework` in `Package.swift`. Auth UX without a bundle id is poor; PR 36 plist carries `CFBundleIdentifier=dev.jetty.app` and `NSUserNotificationsUsageDescription` / user-notification usage string.
 
 Progress state (ConEmu): 0 remove, 1 set percent, 2 error, 3 indeterminate, 4 paused. Percent 0–100. Paint a **2 px** bar at the top of the grid (overlay quads), color from default fg (error: palette 1). No text. Native fullscreen: still show in-grid so we do not add chrome.
 
