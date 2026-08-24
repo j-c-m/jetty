@@ -75,9 +75,118 @@ void jt_vt_reset(jt_vt *p) {
 
 int jt_vt_state(const jt_vt *p) { return p->state; }
 
+static void write_str(const jt_vt_host *h, const char *s);
+
 static void finish_osc(jt_vt *p, jt_scr *scr, const jt_vt_host *h) {
     if (p->osc_n > 0) jt_osc_dispatch(scr, h, p->osc, p->osc_n);
     p->osc_n = 0;
+}
+
+static int dcs_hex_nibble(uint8_t b) {
+    if (b >= '0' && b <= '9') return b - '0';
+    if (b >= 'a' && b <= 'f') return b - 'a' + 10;
+    if (b >= 'A' && b <= 'F') return b - 'A' + 10;
+    return -1;
+}
+
+static int dcs_hex_decode(const uint8_t *p, int n, char *out, int cap) {
+    int o = 0;
+    for (int i = 0; i + 1 < n && o + 1 < cap; i += 2) {
+        int hi = dcs_hex_nibble(p[i]);
+        int lo = dcs_hex_nibble(p[i + 1]);
+        if (hi < 0 || lo < 0) return -1;
+        out[o++] = (char)((hi << 4) | lo);
+    }
+    out[o] = 0;
+    return o;
+}
+
+static int dcs_hex_encode(const char *s, char *out, int cap) {
+    static const char *hex = "0123456789ABCDEF";
+    int o = 0;
+    for (int i = 0; s[i] && o + 2 < cap; i++) {
+        unsigned b = (unsigned char)s[i];
+        out[o++] = hex[b >> 4];
+        out[o++] = hex[b & 15];
+    }
+    out[o] = 0;
+    return o;
+}
+
+static const char *xtgettcap_val(const char *key) {
+    if (!strcmp(key, "colors")) return "256";
+    if (!strcmp(key, "pairs")) return "32767";
+    if (!strcmp(key, "Tc") || !strcmp(key, "RGB")) return "";
+    if (!strcmp(key, "kbs")) return "\x7f";
+    if (!strcmp(key, "smxx")) return "\033[9m";
+    if (!strcmp(key, "rmxx")) return "\033[29m";
+    if (!strcmp(key, "sitm")) return "\033[3m";
+    if (!strcmp(key, "ritm")) return "\033[23m";
+    if (!strcmp(key, "smul")) return "\033[4m";
+    if (!strcmp(key, "rmul")) return "\033[24m";
+    if (!strcmp(key, "Smulx")) return "\033[4:%p1%dm";
+    if (!strcmp(key, "Setulc")) return "\033[58:2::%p1%{65536}%/%d:%p1%{256}%/%{255}%&%d:%p1%{255}%&%d%;m";
+    if (!strcmp(key, "Sync")) return "\033[?2026%?%p1%{1}%-%tl%eh%;";
+    if (!strcmp(key, "Ms")) return "\033]52;%p1%s;%p2%s\007";
+    if (!strcmp(key, "name")) return "xterm-256color";
+    return NULL;
+}
+
+static void finish_dcs(jt_vt *p, jt_scr *scr, const jt_vt_host *h) {
+    const uint8_t *d = p->osc;
+    int n = p->osc_n;
+    p->osc_n = 0;
+    if (!h || !h->write_pty || n < 2) return;
+    if (d[0] == '+' && d[1] == 'q') {
+        int i = 2;
+        int any = 0;
+        char out[1024];
+        int o = 0;
+        while (i < n) {
+            int start = i;
+            while (i < n && d[i] != ';') i++;
+            char key[64];
+            if (dcs_hex_decode(d + start, i - start, key, (int)sizeof key) > 0) {
+                const char *val = xtgettcap_val(key);
+                if (val) {
+                    char kh[128], vh[256];
+                    dcs_hex_encode(key, kh, (int)sizeof kh);
+                    dcs_hex_encode(val, vh, (int)sizeof vh);
+                    int w = snprintf(out + o, sizeof out - (size_t)o, "%s%s=%s",
+                                     o == 0 ? "\033P1+r" : ";", kh, vh);
+                    if (w > 0) o += w;
+                    any = 1;
+                }
+            }
+            if (i < n && d[i] == ';') i++;
+        }
+        if (any && o + 3 < (int)sizeof out) {
+            memcpy(out + o, "\033\\", 3);
+            o += 2;
+            h->write_pty(h->ctx, (const uint8_t *)out, (size_t)o);
+        } else {
+            write_str(h, "\033P0+r\033\\");
+        }
+        return;
+    }
+    if (d[0] == '$' && d[1] == 'q' && scr) {
+        const uint8_t *q = d + 2;
+        int qn = n - 2;
+        char buf[96];
+        int w = 0;
+        if (qn == 1 && q[0] == 'm') {
+            w = snprintf(buf, sizeof buf, "\033P1$r0m\033\\");
+        } else if (qn == 1 && q[0] == 'r') {
+            int top = scr->active->scroll_top + 1;
+            int bot = scr->active->scroll_bottom + 1;
+            w = snprintf(buf, sizeof buf, "\033P1$r%d;%dr\033\\", top, bot);
+        } else if (qn == 2 && q[0] == ' ' && q[1] == 'q') {
+            w = snprintf(buf, sizeof buf, "\033P1$r%d q\033\\", (int)scr->cursor_style);
+        } else {
+            w = snprintf(buf, sizeof buf, "\033P0$r\033\\");
+        }
+        if (w > 0) h->write_pty(h->ctx, (const uint8_t *)buf, (size_t)w);
+    }
 }
 
 static void enter_ground(jt_vt *p) {
@@ -742,7 +851,9 @@ static void emit_utf8_run(jt_vt *p, jt_scr *scr, const uint8_t *src, size_t n) {
 static void execute_c0(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
     if (b == 0x07) {
         if (p->state == JT_ST_OSC_STRING) finish_osc(p, scr, h);
-        if (p->state == JT_ST_OSC_STRING || p->state == JT_ST_OSC_IGNORE) {
+        if (p->state == JT_ST_DCS_IGNORE) finish_dcs(p, scr, h);
+        if (p->state == JT_ST_OSC_STRING || p->state == JT_ST_OSC_IGNORE
+            || p->state == JT_ST_DCS_IGNORE) {
             enter_ground(p);
             return;
         }
@@ -751,6 +862,7 @@ static void execute_c0(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
     }
     if (b == 0x1B) {
         if (p->state == JT_ST_OSC_STRING) finish_osc(p, scr, h);
+        if (p->state == JT_ST_DCS_IGNORE) finish_dcs(p, scr, h);
         utf8_reset(p);
         enter_escape(p);
         return;
@@ -892,6 +1004,7 @@ static void dispatch(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
     }
     if (b == 0x1B) {
         if (p->state == JT_ST_OSC_STRING) finish_osc(p, scr, h);
+        if (p->state == JT_ST_DCS_IGNORE) finish_dcs(p, scr, h);
         utf8_reset(p);
         enter_escape(p);
         return;
@@ -938,8 +1051,15 @@ static void dispatch(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
         if (b == 0x07) enter_ground(p);
         break;
     case JT_ST_SOS_PM_APC:
-    case JT_ST_DCS_IGNORE:
         if (b == 0x07) enter_ground(p);
+        break;
+    case JT_ST_DCS_IGNORE:
+        if (b == 0x07) {
+            finish_dcs(p, scr, h);
+            enter_ground(p);
+        } else if (p->osc_n < 4096) {
+            p->osc[p->osc_n++] = b;
+        }
         break;
     default:
         break;

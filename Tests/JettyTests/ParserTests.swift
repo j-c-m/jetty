@@ -393,6 +393,22 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(kinds, [14, 18, 16, 21, 22, 23])
     }
 
+    func testXTGETTCAPAndDECRQSS() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}P+q636F6C6F7273\u{1B}\\")
+        let t = String(bytes: p.writes, encoding: .utf8) ?? ""
+        XCTAssertTrue(t.contains("1+r"), t)
+        XCTAssertTrue(t.contains("636F6C6F7273=323536"), t)
+        p.writes.removeAll()
+        p.feed("\u{1B}P$qm\u{1B}\\")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}P1$r0m\u{1B}\\")
+        p.writes.removeAll()
+        p.feed("\u{1B}P+q00\u{1B}\\")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}P0+r\u{1B}\\")
+    }
+
     func testDSRThemeAndVisibility() {
         let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
         let p = Parser()
