@@ -156,6 +156,29 @@ final class ScreenTests: XCTestCase {
         XCTAssertTrue(s.isWrapped(0))
         XCTAssertEqual(s.copySelection(x0: 0, y0: -1, x1: 3, y1: 0), "ABCDEFGH")
         XCTAssertEqual(s.copySelection(x0: 0, y0: -1, x1: 3, y1: 1), "ABCDEFGHIJKL")
+        XCTAssertEqual(
+            s.copySelection(x0: 1, y0: -1, x1: 2, y1: 0, rect: true),
+            "BC\nFG"
+        )
+        XCTAssertEqual(
+            s.copySelection(x0: 2, y0: 0, x1: 1, y1: -1, rect: true),
+            "BC\nFG"
+        )
+    }
+
+    func testCopyRectDoesNotWrapJoin() {
+        let s = Screen(cols: 4, rows: 2, scrollbackCapRows: 4)
+        let p = Parser()
+        p.screen = s
+        p.feed("ABCDEFGHIJKL")
+        XCTAssertEqual(
+            s.copySelection(x0: 0, y0: -1, x1: 3, y1: 0, rect: true),
+            "ABCD\nEFGH"
+        )
+        XCTAssertEqual(
+            s.copySelection(x0: 0, y0: -1, x1: 3, y1: 0, rect: false),
+            "ABCDEFGH"
+        )
     }
 
     func testLazyEraseUnreadRowIsBlank() {

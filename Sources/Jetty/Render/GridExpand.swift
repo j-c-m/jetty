@@ -53,12 +53,15 @@ public enum GridExpand {
         cursorVisible: Bool,
         blinkOff: Bool = false,
         selection: (x0: Int, y0: Int, x1: Int, y1: Int)?,
+        selectionRect: Bool = false,
         searchSpans: [(lo: Int, hi: Int)] = [],
         graphemes: [UInt32: [UInt32]] = [:],
         hideGlyphs: UnsafePointer<UInt8>? = nil,
         dest: UnsafeMutablePointer<CellInstance>
     ) {
-        let selCols = selection.flatMap { CellSelection.columns($0, row: rowY, cols: cols) }
+        let selCols = selection.flatMap {
+            CellSelection.columns($0, row: rowY, cols: cols, rect: selectionRect)
+        }
         let cursorOnRow = cursorVisible && rowY == cursorY
         let oy = originY + Float(rowY) * cellH
         var x = 0
@@ -136,6 +139,7 @@ public enum GridExpand {
         cursorVisible: Bool,
         blinkOff: Bool = false,
         selection: (x0: Int, y0: Int, x1: Int, y1: Int)?,
+        selectionRect: Bool = false,
         searchSpans: [(lo: Int, hi: Int)] = [],
         graphemes: [UInt32: [UInt32]] = [:],
         hideGlyphs: UnsafePointer<UInt8>? = nil,
@@ -160,6 +164,7 @@ public enum GridExpand {
                 cursorVisible: cursorVisible,
                 blinkOff: blinkOff,
                 selection: selection,
+                selectionRect: selectionRect,
                 searchSpans: searchSpans,
                 graphemes: graphemes,
                 hideGlyphs: hideGlyphs,
@@ -174,8 +179,15 @@ enum CellSelection {
     static func columns(
         _ s: (x0: Int, y0: Int, x1: Int, y1: Int),
         row: Int,
-        cols: Int
+        cols: Int,
+        rect: Bool = false
     ) -> (lo: Int, hi: Int)? {
+        if rect {
+            let y0 = min(s.y0, s.y1)
+            let y1 = max(s.y0, s.y1)
+            if row < y0 || row > y1 { return nil }
+            return (min(s.x0, s.x1), max(s.x0, s.x1))
+        }
         var a = (x: s.x0, y: s.y0)
         var b = (x: s.x1, y: s.y1)
         if a.y > b.y || (a.y == b.y && a.x > b.x) { swap(&a, &b) }

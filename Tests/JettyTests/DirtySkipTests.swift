@@ -120,6 +120,11 @@ final class DirtySkipTests: XCTestCase {
         search.searchSig = 1
         XCTAssertTrue(DirtySkip.fullRebuild(now: search, last: base))
         XCTAssertFalse(DirtySkip.fullRebuild(now: search, last: search))
+        var stream = base
+        stream.selection = DirtySkip.Sel(x0: 0, y0: 0, x1: 2, y1: 2, rect: false)
+        var rect = stream
+        rect.selection = DirtySkip.Sel(x0: 0, y0: 0, x1: 2, y1: 2, rect: true)
+        XCTAssertTrue(DirtySkip.fullRebuild(now: rect, last: stream))
     }
 
     private func expand(

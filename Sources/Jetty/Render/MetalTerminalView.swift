@@ -18,6 +18,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var selAnchor: (x: Int, y: Int)?
     private var selEnd: (x: Int, y: Int)?
     private var pendingSelect: (x: Int, y: Int)?
+    private var selRect = false
+    private var pendingRect = false
     private var paint = ContiguousArray<CVt.Cell>()
     private var palPacked = [UInt32](repeating: 0, count: 256)
     private var rgb = [SIMD3<Float>](repeating: .zero, count: 256)
@@ -162,6 +164,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             selEnd = nil
             selecting = false
             pendingSelect = nil
+            selRect = false
+            pendingRect = false
         }
         let produced = session.screen.linesScrolled
         let sbCount = session.screen.scrollbackCount
@@ -287,7 +291,9 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             packGeneration: renderer.atlas.packGeneration,
             reverse: rev,
             paletteSignature: palSig,
-            selection: sel.map { DirtySkip.Sel(x0: $0.x0, y0: $0.y0, x1: $0.x1, y1: $0.y1) },
+            selection: sel.map {
+                DirtySkip.Sel(x0: $0.x0, y0: $0.y0, x1: $0.x1, y1: $0.y1, rect: selRect)
+            },
             searchSig: findSig,
             preedit: !preedit.isEmpty
         )
@@ -380,6 +386,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                                         cursorVisible: cursorOn && preedit.isEmpty,
                                         blinkOff: !phaseOn,
                                         selection: sel,
+                                        selectionRect: selRect,
                                         searchSpans: searchSpans(docRow: start + y, cols: cols),
                                         graphemes: graphemes,
                                         hideGlyphs: hidePtr,
@@ -413,6 +420,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                                     cursorVisible: cursorOn && preedit.isEmpty,
                                     blinkOff: !phaseOn,
                                     selection: sel,
+                                    selectionRect: selRect,
                                     searchSpans: searchSpans(docRow: start + y, cols: cols),
                                     graphemes: graphemes,
                                     hideGlyphs: hidePtr,
@@ -438,6 +446,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                                 cursorVisible: cursorOn && preedit.isEmpty,
                                 blinkOff: !phaseOn,
                                 selection: sel,
+                                selectionRect: selRect,
                                 graphemes: graphemes,
                                 hideGlyphs: hidePtr,
                                 dest: inst
@@ -1069,6 +1078,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 selAnchor = nil
                 selEnd = nil
                 selecting = false
+                selRect = false
+                pendingRect = false
                 session.writeToPty(keys)
             }
             return
@@ -1450,6 +1461,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         session.lock.unlock()
         selAnchor = (0, -sb)
         selEnd = (max(0, cols - 1), max(0, rows - 1))
+        selRect = false
+        pendingRect = false
         needsDisplay = true
     }
 
@@ -1479,6 +1492,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 selEnd = nil
                 selecting = false
                 pendingSelect = nil
+                selRect = false
+                pendingRect = false
                 needsDisplay = true
             }
             _ = reportMouse(event, action: .press, button: button)
@@ -1494,6 +1509,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             selecting = false
             selAnchor = nil
             selEnd = nil
+            selRect = false
+            pendingRect = flags.contains(.option)
         }
         needsDisplay = true
     }
@@ -1537,6 +1554,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         if let pending = pendingSelect, (cell.x != pending.x || cell.y != pending.y) {
             selecting = true
             selAnchor = pending
+            selRect = pendingRect || event.modifierFlags.contains(.option)
             pendingSelect = nil
         }
         if selecting {
@@ -1552,9 +1570,11 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         } else {
             selAnchor = nil
             selEnd = nil
+            selRect = false
         }
         selecting = false
         pendingSelect = nil
+        pendingRect = false
         needsDisplay = true
     }
 
@@ -1655,7 +1675,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     private func selectedText(_ s: (x0: Int, y0: Int, x1: Int, y1: Int)) -> String {
-        session.screen.copySelection(x0: s.x0, y0: s.y0, x1: s.x1, y1: s.y1)
+        session.screen.copySelection(x0: s.x0, y0: s.y0, x1: s.x1, y1: s.y1, rect: selRect)
     }
 
     private struct PreeditRun {

@@ -22,6 +22,7 @@ enum DirtySkip {
         var y0: Int
         var x1: Int
         var y1: Int
+        var rect: Bool = false
     }
 
     struct Key: Equatable {

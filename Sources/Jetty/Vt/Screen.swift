@@ -161,10 +161,18 @@ public final class Screen {
         return hi >= 0 && isHistoryWrapped(hi)
     }
 
-    public func copySelection(x0: Int, y0: Int, x1: Int, y1: Int) -> String {
+    public func copySelection(x0: Int, y0: Int, x1: Int, y1: Int, rect: Bool = false) -> String {
         var a = (x: x0, y: y0)
         var b = (x: x1, y: y1)
-        if a.y > b.y || (a.y == b.y && a.x > b.x) { swap(&a, &b) }
+        if rect {
+            if a.y > b.y { swap(&a, &b) }
+            let xLo = min(a.x, b.x)
+            let xHi = max(a.x, b.x)
+            a.x = xLo
+            b.x = xHi
+        } else if a.y > b.y || (a.y == b.y && a.x > b.x) {
+            swap(&a, &b)
+        }
         let sb = viewportHistoryCount
         var out = ""
         var y = a.y
@@ -177,8 +185,8 @@ public final class Screen {
             } else {
                 row = self.row(liveY)
             }
-            let lo = y == a.y ? a.x : 0
-            let hi = y == b.y ? b.x : row.count - 1
+            let lo = rect ? a.x : (y == a.y ? a.x : 0)
+            let hi = rect ? b.x : (y == b.y ? b.x : row.count - 1)
             if !row.isEmpty {
                 for x in max(0, lo)...min(row.count - 1, hi) {
                     let wide = row[x].wide
@@ -197,7 +205,7 @@ public final class Screen {
                     if let u = UnicodeScalar(p) { out.append(Character(u)) }
                 }
             }
-            if y < b.y && !isDocumentWrapped(liveY) { out.append("\n") }
+            if y < b.y && (rect || !isDocumentWrapped(liveY)) { out.append("\n") }
             y += 1
         }
         return out
