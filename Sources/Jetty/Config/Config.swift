@@ -89,7 +89,11 @@ public struct AppConfig: Sendable {
             case "osc52-read":
                 c.osc52Read = val == "deny" ? .deny : .ask
             case "keybind":
-                if !val.isEmpty { c.keybinds.append(val) }
+                if val == "clear" {
+                    c.keybinds.removeAll()
+                } else if !val.isEmpty {
+                    c.keybinds.append(val)
+                }
             default:
                 if key.hasPrefix("palette-"),
                    let idx = Int(key.dropFirst("palette-".count)),

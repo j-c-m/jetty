@@ -22,6 +22,18 @@ public enum GridExpand {
         }
     }
 
+    /// Default-bg cells use `defaultAlpha`. Explicit, reverse, and highlights stay opaque.
+    public static func backgroundAlpha(
+        cellBg: UInt32,
+        reverse: Bool,
+        highlighted: Bool,
+        defaultAlpha: Float
+    ) -> Float {
+        if reverse || highlighted { return 1 }
+        if (cellBg >> 24) != 0 { return 1 }
+        return defaultAlpha
+    }
+
     public static func resolve(
         _ c: UInt32,
         palette: UnsafePointer<SIMD3<Float>>,
@@ -57,6 +69,7 @@ public enum GridExpand {
         searchSpans: [(lo: Int, hi: Int)] = [],
         graphemes: [UInt32: [UInt32]] = [:],
         hideGlyphs: UnsafePointer<UInt8>? = nil,
+        bgAlpha: Float = 1,
         dest: UnsafeMutablePointer<CellInstance>
     ) {
         let selCols = selection.flatMap {
@@ -72,9 +85,19 @@ public enum GridExpand {
             var bg = resolve(cell.bg, palette: palette, def: defBG)
             let reverse = (cell.attrs & UInt16(ATTR_REVERSE)) != 0
             if reverse { swap(&fg, &bg) }
-            if let sel = selCols, x >= sel.lo, x <= sel.hi { swap(&fg, &bg) }
-            if searchSpans.contains(where: { x >= $0.lo && x <= $0.hi }) { swap(&fg, &bg) }
-            if cursorOnRow && x == cursorX { swap(&fg, &bg) }
+            var highlighted = false
+            if let sel = selCols, x >= sel.lo, x <= sel.hi {
+                swap(&fg, &bg)
+                highlighted = true
+            }
+            if searchSpans.contains(where: { x >= $0.lo && x <= $0.hi }) {
+                swap(&fg, &bg)
+                highlighted = true
+            }
+            if cursorOnRow && x == cursorX {
+                swap(&fg, &bg)
+                highlighted = true
+            }
             if (cell.attrs & UInt16(ATTR_HIDDEN)) != 0
                 || (blinkOff && (cell.attrs & UInt16(ATTR_BLINK)) != 0)
             { fg = bg }
@@ -115,7 +138,10 @@ public enum GridExpand {
                 width: sx, height: sy,
                 uv: g.uv,
                 fgRGB: fg, bgRGB: bg,
-                colorAtlas: g.color
+                colorAtlas: g.color,
+                bgAlpha: Self.backgroundAlpha(
+                    cellBg: cell.bg, reverse: reverse, highlighted: highlighted, defaultAlpha: bgAlpha
+                )
             )
             x += 1
             ox += cellW
@@ -143,6 +169,7 @@ public enum GridExpand {
         searchSpans: [(lo: Int, hi: Int)] = [],
         graphemes: [UInt32: [UInt32]] = [:],
         hideGlyphs: UnsafePointer<UInt8>? = nil,
+        bgAlpha: Float = 1,
         dest: UnsafeMutablePointer<CellInstance>
     ) {
         var y = 0
@@ -168,6 +195,7 @@ public enum GridExpand {
                 searchSpans: searchSpans,
                 graphemes: graphemes,
                 hideGlyphs: hideGlyphs,
+                bgAlpha: bgAlpha,
                 dest: dest + y * cols
             )
             y += 1

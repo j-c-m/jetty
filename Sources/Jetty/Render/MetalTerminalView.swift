@@ -9,6 +9,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     public let session: TerminalSession
     public var config: AppConfig
     public var padPt: CGFloat = 4
+    public var onNewWindow: (() -> Void)?
+    public var onReloadConfig: (() -> Void)?
 
     private var renderer: TerminalRenderer?
     private var metrics: CellMetrics
@@ -25,7 +27,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var rgb = [SIMD3<Float>](repeating: .zero, count: 256)
     private var insetLeftPx: Float = 0
     private var insetTopPx: Float = 0
-    private var chromePacked: UInt32 = 0xFFFF_FFFF
+    private var chromePacked: UInt64 = .max
     private var lastLinesScrolled: UInt64 = 0
     private var lastSbCount: Int = 0
     private var lastSafeTop: CGFloat = 0
@@ -60,6 +62,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var autoURLHit: AutoURL.Hit?
     private var progressState: UInt8 = 0
     private var progressPercent: UInt8 = 0
+    private var hostBinds = Keybinds.Table()
     private var progressAnimWidth: CGFloat = 0
     private let progressChrome = ProgressHairline()
     private let progressTrackLayer = CALayer()
@@ -68,6 +71,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     public init(session: TerminalSession, config: AppConfig, device: MTLDevice, backingScale: CGFloat) {
         self.session = session
         self.config = config
+        self.hostBinds = Keybinds.Table(lines: config.keybinds)
         let scale = max(backingScale, 1)
         self.lastBackingScale = scale
         self.metrics = CellMetrics.measure(
@@ -128,6 +132,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     public override var acceptsFirstResponder: Bool { true }
+    public override var isOpaque: Bool { effectiveBackgroundAlpha() >= 1 }
     /// Grid clicks select.
     public override var mouseDownCanMoveWindow: Bool { false }
 
@@ -153,7 +158,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let top = safeAreaInsets.top
         if abs(top - lastSafeTop) > 0.5 {
             lastSafeTop = top
-            chromePacked = 0xFFFF_FFFF
+            chromePacked = .max
             relayout()
             needsDisplay = true
         }
@@ -287,6 +292,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let dh = drawableSize.height
         let cw = Float(cellWPx)
         let ch = Float(cellHPx)
+        let bgA = effectiveBackgroundAlpha()
         let liveOrigin = inAlt ? 0 : sbCount - start
         var sel = selectionCells()
         if let s = sel {
@@ -419,6 +425,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                                         searchSpans: searchSpans(docRow: start + y, cols: cols),
                                         graphemes: graphemes,
                                         hideGlyphs: hidePtr,
+                                        bgAlpha: bgA,
                                         dest: inst + y * cols
                                     )
                                 } else {
@@ -453,6 +460,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                                     searchSpans: searchSpans(docRow: start + y, cols: cols),
                                     graphemes: graphemes,
                                     hideGlyphs: hidePtr,
+                                    bgAlpha: bgA,
                                     dest: inst + y * cols
                                 )
                                 y += 1
@@ -478,6 +486,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                                 selectionRect: selRect,
                                 graphemes: graphemes,
                                 hideGlyphs: hidePtr,
+                                bgAlpha: bgA,
                                 dest: inst
                             )
                         }
@@ -621,14 +630,23 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             b = 255 &- b
         }
         let packed = UInt32(r) << 16 | UInt32(g) << 8 | UInt32(b)
-        if packed == chromePacked { return }
-        chromePacked = packed
+        let alpha = effectiveBackgroundAlpha()
+        let alphaByte = UInt64(min(255, max(0, alpha * 255)).rounded())
+        let stamp = UInt64(packed) | (alphaByte << 32)
+        if stamp == chromePacked { return }
+        chromePacked = stamp
         let rf = CGFloat(r) / 255
         let gf = CGFloat(g) / 255
         let bf = CGFloat(b) / 255
-        clearColor = MTLClearColorMake(Double(rf), Double(gf), Double(bf), 1)
-        let color = NSColor(srgbRed: rf, green: gf, blue: bf, alpha: 1)
+        let a = CGFloat(alpha)
+        clearColor = MTLClearColorMake(Double(rf), Double(gf), Double(bf), Double(a))
+        let opaque = alpha >= 1
+        if let metalLayer = layer as? CAMetalLayer {
+            metalLayer.isOpaque = opaque
+        }
+        let color = NSColor(srgbRed: rf, green: gf, blue: bf, alpha: a)
         if let window {
+            window.isOpaque = opaque
             window.backgroundColor = color
             window.titlebarAppearsTransparent = true
             window.titlebarSeparatorStyle = .none
@@ -704,6 +722,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             endFind()
             return
         }
+        if handleHostKeybind(event) { return }
         if handleZoomKeys(event) { return }
         if handleScrollbackKeys(event) { return }
         if event.modifierFlags.contains(.command) {
@@ -730,6 +749,11 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         }
         pinLiveBottom()
         session.writeToPty(bytes)
+    }
+
+    public override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.type == .keyDown, handleHostKeybind(event) { return true }
+        return super.performKeyEquivalent(with: event)
     }
 
     public override func doCommand(by selector: Selector) {
@@ -1083,35 +1107,95 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
               !flags.contains(.shift)
         else { return false }
         let code = Int(event.keyCode)
-        let pageUp = code == kVK_PageUp
-        let pageDown = code == kVK_PageDown
-        let home = code == kVK_Home
-        let end = code == kVK_End
-        guard pageUp || pageDown || home || end else { return false }
+        if code == kVK_PageUp {
+            applyHostScroll(.pageUp)
+            return true
+        }
+        if code == kVK_PageDown {
+            applyHostScroll(.pageDown)
+            return true
+        }
+        if code == kVK_Home {
+            applyHostScroll(.top)
+            return true
+        }
+        if code == kVK_End {
+            applyHostScroll(.bottom)
+            return true
+        }
+        return false
+    }
 
+    private enum HostScroll {
+        case pageUp, pageDown, top, bottom
+    }
+
+    private func applyHostScroll(_ which: HostScroll) {
         session.lock.lock()
         let inAlt = session.screen.inAlt
         let sb = session.screen.scrollbackCount
         let rows = session.screen.rows
         session.lock.unlock()
-        if inAlt { return true }
-
+        if inAlt { return }
         let maxO = Double(sb)
         let vp = Double(max(1, rows))
-        if pageUp || pageDown {
-            let dir: Double = pageUp ? 1 : -1
-            scrollPhysics.applyPageImpulse(direction: dir, viewportRows: vp)
-        } else if home {
+        switch which {
+        case .pageUp:
+            scrollPhysics.applyPageImpulse(direction: 1, viewportRows: vp)
+        case .pageDown:
+            scrollPhysics.applyPageImpulse(direction: -1, viewportRows: vp)
+        case .top:
             scrollPhysics.seekExtreme(direction: 1, holdCount: 1, viewportRows: vp, maxOffset: maxO)
-        } else {
+        case .bottom:
             scrollPhysics.seekExtreme(direction: -1, holdCount: 1, viewportRows: vp, maxOffset: maxO)
         }
         kickScroll()
+    }
+
+    @discardableResult
+    private func handleHostKeybind(_ event: NSEvent) -> Bool {
+        guard let action = hostBinds.action(for: event) else { return false }
+        applyHostAction(action)
         return true
     }
 
+    private func applyHostAction(_ action: Keybinds.Action) {
+        switch action {
+        case .copy: copy(nil)
+        case .paste: paste(nil)
+        case .selectAll: selectAll(nil)
+        case .newWindow: onNewWindow?()
+        case .closeWindow: window?.performClose(nil)
+        case .increaseFontSize: zoomIn(nil)
+        case .decreaseFontSize: zoomOut(nil)
+        case .resetFontSize: actualSize(nil)
+        case .scrollToTop: applyHostScroll(.top)
+        case .scrollToBottom: applyHostScroll(.bottom)
+        case .scrollPageUp: applyHostScroll(.pageUp)
+        case .scrollPageDown: applyHostScroll(.pageDown)
+        case .jumpToPrompt(let dir): jumpPrompt(dir)
+        case .startSearch: startFind(nil)
+        case .findNext: findNext(nil)
+        case .findPrev: findPrevious(nil)
+        case .endSearch: endFind()
+        case .reloadConfig: onReloadConfig?()
+        case .toggleSecureInput: break
+        }
+    }
+
+    private func effectiveBackgroundAlpha() -> Float {
+        if window?.styleMask.contains(.fullScreen) == true { return 1 }
+        return Float(min(1, max(0, config.backgroundOpacity)))
+    }
+
     public func applyLiveConfig(_ next: AppConfig) {
+        let opacityChanged = abs(next.backgroundOpacity - config.backgroundOpacity) > 0.001
         config = next
+        hostBinds = Keybinds.Table(lines: next.keybinds)
+        if opacityChanged {
+            forceFullRebuild = true
+            chromePacked = .max
+        }
         if !next.linkURL, autoURLHit?.osc8 != true {
             autoURLHit = nil
         }

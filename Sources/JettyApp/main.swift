@@ -229,6 +229,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             device: device,
             backingScale: backing
         )
+        view.onNewWindow = { [weak self] in self?.newWindow(nil) }
+        view.onReloadConfig = { [weak self] in self?.reloadConfig(nil) }
 
         let grid = view.contentSizePoints(
             backingScale: backing,
@@ -247,11 +249,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
         window.isMovableByWindowBackground = true
+        let winAlpha = CGFloat(min(1, max(0, config.backgroundOpacity)))
+        window.isOpaque = winAlpha >= 1
         window.backgroundColor = NSColor(
             srgbRed: CGFloat(bg.r) / 255,
             green: CGFloat(bg.g) / 255,
             blue: CGFloat(bg.b) / 255,
-            alpha: 1
+            alpha: winAlpha
         )
         window.contentView = view
         window.isReleasedWhenClosed = false

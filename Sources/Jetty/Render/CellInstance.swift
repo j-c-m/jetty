@@ -33,7 +33,8 @@ public struct CellInstance {
         uv: GlyphAtlas.UV,
         fgRGB: SIMD3<Float>,
         bgRGB: SIMD3<Float>,
-        colorAtlas: Bool
+        colorAtlas: Bool,
+        bgAlpha: Float = 1
     ) {
         ox = Self.i16(originX)
         oy = Self.i16(originY)
@@ -44,7 +45,7 @@ public struct CellInstance {
         u1 = uv.u1
         v1 = uv.v1
         fg = Self.pack(fgRGB)
-        bg = Self.pack(bgRGB)
+        bg = Self.pack(bgRGB, a: bgAlpha)
         atlas = colorAtlas ? 1 : 0
         flags = (uv.u1 > uv.u0 && uv.v1 > uv.v0) ? Self.hasGlyphFlag : 0
         _pad0 = 0

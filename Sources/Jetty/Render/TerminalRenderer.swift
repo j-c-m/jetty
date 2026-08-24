@@ -298,15 +298,17 @@ public final class TerminalRenderer {
                                   sampler samp [[sampler(0)]]) {
         if (in.atlas > 0.5 && in.hasGlyph > 0.5) {
             float4 c = colorAtlas.sample(samp, in.uv);
-            float3 rgb = c.rgb + in.bg.rgb * (1.0 - saturate(c.a));
-            return float4(rgb, 1.0);
+            float cover = saturate(c.a);
+            float3 rgb = c.rgb + in.bg.rgb * (1.0 - cover);
+            return float4(rgb, mix(in.bg.a, 1.0, cover));
         }
         float a = 0.0;
         if (in.hasGlyph > 0.5) {
             a = atlas.sample(samp, in.uv).r;
         }
-        float3 rgb = mix(in.bg.rgb, in.fg.rgb, saturate(a));
-        return float4(rgb, 1.0);
+        float cover = saturate(a);
+        float3 rgb = mix(in.bg.rgb, in.fg.rgb, cover);
+        return float4(rgb, mix(in.bg.a, 1.0, cover));
     }
 
     fragment float4 ink_fragment(VertexOut in [[stage_in]],

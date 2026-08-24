@@ -21,7 +21,7 @@ Ghostty (`/Users/jmiller/dev/ghostty`) is the **parity baseline** for xterm sema
 
 v1 is a truthful `TERM=xterm-256color` macOS terminal: 16-byte inline `Cell`, C parse/grid, AppKit + `MTKView` instanced cells, IME, mouse, OSC 0/2/4/7/8/10/11/12/52/133, DEC 2026, ExtraBold SGR 1, sprites before the font. It is correct enough to daily-drive neovim and tmux. It is not yet pleasant enough to switch to from Ghostty: ligatures are off and cannot paint, italic/Nerd ink clips to the cell, GPU expand rebuilds every visible row every frame, OSC 133 marks have no UI, URLs require OSC 8, Smulx curly/dotted/dashed store bits but paint as a single bar, and several DESIGN.md config keys were never wired.
 
-This follow-on is **daily-driver parity** on macOS. It lands the named v1 leftovers (ligatures, dirty-row GPU skip, ink-bearing quads, compact instances, jump-to-prompt, Unicode width bump, notarization, DEC 2027, fuller Smulx) plus the Ghostty-switcher features that matter for neovim/tmux/shell: auto URL, scrollback search, keybind file, shell-integration inject / OSC 7 cwd, rectangular selection, drag-drop paths, OSC 9/777 notifications, OSC 9;4 progress, `font-family` / `palette-N` / `adjust-cell-*`, background opacity, and macOS secure input.
+This follow-on is **daily-driver parity** on macOS. It lands the named v1 leftovers (ligatures, dirty-row GPU skip, ink-bearing quads, compact instances, jump-to-prompt, Unicode width bump, notarization, DEC 2027, fuller Smulx) plus the Ghostty-switcher features that matter for neovim/tmux/shell: auto URL, scrollback search, keybind file, rectangular selection, drag-drop paths, OSC 9/777 notifications, OSC 9;4 progress, `font-family` / `palette-N` / `adjust-cell-*`, and background opacity. Shell-integration inject and macOS secure input wait for a later plan.
 
 It does **not** become Ghostty. Tabs, splits, Kitty graphics/keyboard, Sixel, inspector, command palette, quick terminal, settings GUI, and other OS ports stay out.
 
@@ -97,7 +97,7 @@ Ghostty is a multi-OS product with tabs, splits, Kitty graphics, an ImGui inspec
 - Keep v1 locks (cell, parser, TERM, sandbox, sprites-before-font, ExtraBold, no Ghostty wrap) unless a section **explicitly** relaxes one.
 - Finish named v1 follow-ons listed above.
 - Close DESIGN.md config holes (`font-family`, `palette-N`) and overlay holes (Smulx shapes, strike, overline).
-- Daily-driver Ghostty-switcher features: auto URL, search, keybinds, shell integration / OSC 7 cwd, rectangular selection, drag-drop, notifications, progress, transparency, cell metric adjust, secure input.
+- Daily-driver Ghostty-switcher features: auto URL, search, keybinds, rectangular selection, drag-drop, notifications, progress, transparency, cell metric adjust.
 - Produce a signable `.app` and a notarization path. xcodeproj only if that path needs it.
 - Stay inside the linux16term `MTKView` instanced-quad GPU. No IOSurface copy-forward, no Highway.
 
@@ -126,7 +126,16 @@ Ghostty is a multi-OS product with tabs, splits, Kitty graphics, an ImGui inspec
 
 ### Recommended grouping
 
-**This document is one grouping: daily-driver follow-on.** Everything in [Proposed Design](#proposed-design) is in-scope. Everything in the parity matrix marked **out of scope** is not. Do not start a second “Ghostty clone” track.
+**This document is one grouping: daily-driver follow-on.** Everything in [Proposed Design](#proposed-design) is in-scope except items marked **later plan**. Everything in the parity matrix marked **out of scope** is not. Do not start a second “Ghostty clone” track.
+
+### Later plan (not this document)
+
+Keep the spec. Do not implement in this follow-on.
+
+| Later PR | What |
+| --- | --- |
+| 26 | Shell integration inject + OSC 7 cwd inherit |
+| 33 | Secure keyboard entry |
 
 ---
 
@@ -148,7 +157,7 @@ Ghostty is a multi-OS product with tabs, splits, Kitty graphics, an ImGui inspec
 
 8. **OSC 133 UI uses the existing mark list on the primary screen only.** Ignore OSC 133 while `in_alt`. Jump skips marks outside `[lines_scrolled - sb_len, lines_scrolled + rows)`. ED 3 and RIS clear the list. Do not clamp expired marks to 0. Default keys: `Cmd+Shift+Up/Down` (Ghostty macOS `super+shift+arrow`, not Terminal.app Cmd+Up). Rationale: alt keys would pollute primary; wrap/ED 3 would jump to the oldest row.
 
-9. **Shell integration injects OSC 7/133 only.** Detect bash/zsh/fish/nu. Do not inject Ghostty `ssh-terminfo`, `sudo` wrapper, or `TERM=xterm-ghostty`. `TERM` stays `xterm-256color`. Rationale: stock terminfo; no private overlay.
+9. **Shell integration injects OSC 7/133 only (later plan).** Detect bash/zsh/fish/nu. Do not inject Ghostty `ssh-terminfo`, `sudo` wrapper, or `TERM=xterm-ghostty`. `TERM` stays `xterm-256color`. Rationale: stock terminfo; no private overlay. Not this follow-on.
 
 10. **Auto URL is hover-time scan, not a print-path matcher.** Do not put regex on `jt_scr_print_run`. Cmd-hover scans the visible row (and maybe ±1 for wrap-join). OSC 8 still wins when `extra` has a URI. Rationale: canary lock; Ghostty `link-url` is a renderer concern.
 
@@ -162,7 +171,7 @@ Ghostty is a multi-OS product with tabs, splits, Kitty graphics, an ImGui inspec
 
 15. **Ship via SPM + `scripts/build-app.sh`, then notarytool.** Add `macos/Jetty.xcodeproj` only if notarization or an asset catalog actually needs Xcode. Rationale: v1 SPM-only was right; ghosvt’s xcodeproj exists to force-load `libghostty-vt.a`.
 
-16. **Product chrome stays silent.** No subtitles, helper text, or descriptive copy. Search is an `NSTextField` with no label. Progress is a thin bar. Secure input uses the system indicator, not a banner.
+16. **Product chrome stays silent.** No subtitles, helper text, or descriptive copy. Search is an `NSTextField` with no label. Progress is a thin bar. Secure input (later plan) uses the system indicator, not a banner.
 
 ---
 
@@ -613,6 +622,8 @@ Cap 4096, drop oldest: already implemented. No click-to-jump.
 
 ### Shell integration / OSC 7 cwd
 
+**Later plan. Not this follow-on.** Spec kept for the next document.
+
 OSC 7 is a lock-held store (`TerminalSession.osc7`) on the parse thread. Follow-on spawn must pass cwd + extra env into the child **before** `login -flp`. `TERM` stays `xterm-256color` (`set_term_identity`).
 
 **Spawn API** (replace the 5-arg `jt_pty_spawn` or add `_ex` and wrap it):
@@ -761,6 +772,8 @@ No `global:` (would require an event tap). No `csi:` / `text:` PTY sends in this
 Need `layer?.isOpaque = false` on the `MTKView`. Test: opacity 0.85, default bg shows desktop; `CSI 44 m` cells stay solid.
 
 ### Password / secure input
+
+**Later plan. Not this follow-on.** Spec kept for the next document.
 
 Ghostty `Exec.zig`: slave `canonical && !echo` ⇒ password. `EnableSecureEventInput` / `DisableSecureEventInput`. Config `macos-auto-secure-input`.
 
@@ -951,8 +964,8 @@ Status: **now** = v1 HEAD `573cf05`. **follow-on** = this document. **out** = wi
 | Tabs / splits | no | **out** | |
 | Settings GUI | no | **out** | |
 | Drag-drop paths | no | follow-on | |
-| Secure input | no | follow-on | |
-| Shell integration inject | no | follow-on | OSC 7/133 only |
+| Secure input | no | **later** | not this follow-on |
+| Shell integration inject | no | **later** | OSC 7/133 only; not this follow-on |
 | `jump_to_prompt` | no UI | follow-on | |
 | Notifications | no | follow-on | |
 | Progress bar | no | follow-on | |
@@ -1291,6 +1304,7 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 ### PR 26 — Shell integration inject + OSC 7 cwd inherit
 
 - **Title:** `feat: shell integration for OSC 7 and 133`
+- **Status:** **later plan.** Not this follow-on. Spec stays for the next document. `osc7` is stored. Spawn is still `login -flp`. No snippets.
 - **Files:** `Sources/CPty/{pty_spawn.c,pty_spawn.h}`, `Sources/Jetty/Resources/Shell/{bash,zsh,fish,nu…}`, `JettyApp/main.swift`, `Config.swift`
 - **Dependencies:** PR 25 more useful; not a hard dep
 - **Changes:** `jt_pty_spawn_ex(cwd, extra_env)`. Child `chdir` then `setenv` then `login -flp`. Copy `osc7` under `session.lock`. Per-shell env table. Set `JETTY_ZSH_ZDOTDIR` / `JETTY_BASH_ENV` only when overwriting a previous value; snippets use `${…:-$HOME}`. Skip `/bin/bash` on Darwin. `TERM=xterm-256color`. No sudo/terminfo.
@@ -1326,6 +1340,7 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 ### PR 31 — Keybind file
 
 - **Title:** `feat: keybind config for host actions`
+- **Status:** **done**
 - **Files:** new `Input/Keybinds.swift`, `Config.swift`, `MetalTerminalView.keyDown`, tests
 - **Dependencies:** PRs 25–27 more useful; can land with a stub action enum and grow
 - **Changes:** Parse `keybind = mods+key=action`. Small action set only. `clear` drops user binds. NSMenu remains. No `global:` / chains / `csi:` / `text:`.
@@ -1333,6 +1348,7 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 ### PR 32 — Background opacity
 
 - **Title:** `feat: background-opacity`
+- **Status:** **done**
 - **Files:** `Config.swift`, `MetalTerminalView.swift`, `TerminalRenderer.swift`, `JettyApp/main.swift`
 - **Dependencies:** none. v1 shader `clearColor` + cell `ba`. Default-bg cells use opacity; explicit bg stays 1.
 - **Changes:** Config 0…1 default 1. Default-bg cells use opacity; explicit bg stays 1. Native fullscreen forces 1. `isOpaque` / layer.
@@ -1340,6 +1356,7 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 ### PR 33 — Secure keyboard entry
 
 - **Title:** `feat: macOS secure input`
+- **Status:** **later plan.** Not this follow-on. Spec stays for the next document. Config still parses `macos-auto-secure-input`. No menu, no `EnableSecureEventInput`.
 - **Files:** session tty-flag poll, `main.swift` menu, `Config.swift` `macos-auto-secure-input`
 - **Dependencies:** none
 - **Changes:** Menu toggle `EnableSecureEventInput`. **Probe in this PR** whether Darwin `tcgetattr` on the PTY master reflects slave echo (`forkpty` does not keep a slave fd). If no, menu only. No in-grid badge.
@@ -1374,4 +1391,4 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 
 ---
 
-**Tracks:** 18–22 done/withdrawn. **23** compact (this change). Host 24, 25–26, 27, 28, 29, 30, 31, 33 in parallel. 32 anytime. VT 34. Chore 35–37.
+**Tracks:** 18–25, 27–29, 31, 32 done/withdrawn. Host left: 30 notify post. VT 34. Chore 35–37. **26 and 33 are a later plan, not this document.**
