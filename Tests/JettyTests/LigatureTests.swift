@@ -41,7 +41,7 @@ final class LigatureTests: XCTestCase {
         let n2 = row.withUnsafeBufferPointer { buf in
             ProgrammingLigatures.spanLength(row: buf.baseAddress!, x: 1, cols: cols)
         }
-        XCTAssertEqual(n2, 2)
+        XCTAssertEqual(n2, 0)
         func span(_ s: String) -> Int {
             let row = Array(s.utf8).map { ascii($0) }
             XCTAssertEqual(row.count, cols)
@@ -56,6 +56,15 @@ final class LigatureTests: XCTestCase {
         XCTAssertEqual(span("####    "), 4)
         XCTAssertEqual(span("<==>    "), 4)
         XCTAssertEqual(span("...     "), 3)
+        XCTAssertEqual(span("====    "), 0)
+        XCTAssertEqual(span("======  "), 0)
+        XCTAssertEqual(span("----    "), 0)
+        XCTAssertEqual(span("#####   "), 0)
+        XCTAssertEqual(span("....    "), 0)
+        XCTAssertEqual(span("+++ x   "), 3)
+        XCTAssertEqual(span("++++    "), 0)
+        XCTAssertEqual(span("=== === "), 3)
+        XCTAssertEqual(span("=>      "), 2)
     }
 
     func testHelloIsNotASpan() {

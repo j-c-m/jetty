@@ -58,10 +58,48 @@ enum ProgrammingLigatures {
         var i = 0
         while i < pats.count {
             let pat = pats[i]
-            if match(row: row, x: x, cols: cols, pat: pat) { return pat.count }
+            if match(row: row, x: x, cols: cols, pat: pat)
+                && !repeatTouchesSame(row: row, x: x, cols: cols, pat: pat)
+            {
+                return pat.count
+            }
             i += 1
         }
         return 0
+    }
+
+    /// `===` / `---` / `####` only when the run is exactly `pat` (JetBrains `calt`).
+    private static func repeatTouchesSame(
+        row: UnsafePointer<Cell>,
+        x: Int,
+        cols: Int,
+        pat: [UInt8]
+    ) -> Bool {
+        let n = pat.count
+        if n == 0 { return false }
+        let b = pat[0]
+        var i = 1
+        while i < n {
+            if pat[i] != b { return false }
+            i += 1
+        }
+        if x > 0 {
+            let c = row[x - 1].content
+            if (c & (CONTENT_KIND_MASK | CONTENT_WIDE_MASK)) == 0
+                && (c & CONTENT_PAYLOAD) == UInt32(b)
+            {
+                return true
+            }
+        }
+        if x + n < cols {
+            let c = row[x + n].content
+            if (c & (CONTENT_KIND_MASK | CONTENT_WIDE_MASK)) == 0
+                && (c & CONTENT_PAYLOAD) == UInt32(b)
+            {
+                return true
+            }
+        }
+        return false
     }
 
     /// Bytes of `pat` at `x`, same bold/italic, no wide/grapheme.
