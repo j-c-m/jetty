@@ -1333,7 +1333,8 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 ### PR 30 — OSC 9 / 777 notify + OSC 9;4 progress
 
 - **Title:** `feat: desktop notifications and ConEmu progress`
-- **Files:** `jt_osc.c`, `jt_vt.h` host, `Parser.swift`, `TerminalSession.swift`, `MetalTerminalView.swift`, `Config.swift`, `Package.swift` (`UserNotifications.framework`)
+- **Status:** **done**
+- **Files:** `jt_osc.c`, `jt_vt.h` host, `Parser.swift`, `TerminalSession.swift`, `DesktopNotify.swift`, `MetalTerminalView.swift`, `Config.swift`, `Package.swift` (`UserNotifications.framework`)
 - **Dependencies:** none
 - **Changes:** Parse OSC 9 body vs `9;4;st;pct`. OSC 777 `notify;title;body`. Copy bytes, hop to main, no lock. 2 px in-grid progress bar. Ignore other ConEmu 9;*. Sanitize.
 
@@ -1394,4 +1395,4 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 
 ---
 
-**Tracks:** 18–25, 27–29, 31, 32, 34–36 done/withdrawn. Host left: 30 notify post. Chore 37 skip. **26 and 33 are a later plan, not this document.**
+**Tracks:** 18–25, 27–32, 34–36 done/withdrawn. Host left: none. Chore 37 skip. **26 and 33 are a later plan, not this document.**

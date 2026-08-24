@@ -62,6 +62,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(c.paletteOverlayMask, 0)
         XCTAssertEqual(c.backgroundOpacity, 1)
         XCTAssertTrue(c.linkURL)
+        XCTAssertTrue(c.desktopNotifications)
         XCTAssertTrue(c.progressStyle)
     }
 

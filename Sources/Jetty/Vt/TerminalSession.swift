@@ -20,6 +20,7 @@ public final class TerminalSession: @unchecked Sendable {
     public var onTitle: (@Sendable (String) -> Void)?
     public var osc52WriteAllow = true
     public var osc52ReadAsk = true
+    public var desktopNotifications = true
     public var onProgress: (@Sendable (UInt8, UInt8) -> Void)?
     public private(set) var osc7: String = ""
     private var windowTitle = "jetty"
@@ -83,6 +84,11 @@ public final class TerminalSession: @unchecked Sendable {
         parser.onProgress = { [weak self] state, percent in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { self?.onProgress?(state, percent) }
+            }
+        }
+        parser.onNotify = { [weak self] title, body in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.deliverNotify(title: title, body: body) }
             }
         }
     }
@@ -179,6 +185,12 @@ public final class TerminalSession: @unchecked Sendable {
         let hp = r * Int(cellHeightPx)
         let wp = c * Int(cellWidthPx)
         return "\u{1B}[48;\(r);\(c);\(hp);\(wp)t"
+    }
+
+    @MainActor
+    private func deliverNotify(title: String, body: String) {
+        guard desktopNotifications else { return }
+        DesktopNotify.post(title: title, body: body)
     }
 
     @MainActor

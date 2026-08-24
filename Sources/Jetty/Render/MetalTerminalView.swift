@@ -1201,6 +1201,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         }
         session.osc52WriteAllow = next.osc52Write == .allow
         session.osc52ReadAsk = next.osc52Read == .ask
+        session.desktopNotifications = next.desktopNotifications
         if !next.progressStyle {
             setProgress(state: 0, percent: 0)
         }

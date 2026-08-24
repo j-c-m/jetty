@@ -66,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.device = device
         self.config = AppConfig.load()
         EmbeddedFonts.registerIfNeeded()
+        DesktopNotify.install()
 
         let menu = NSMenu()
         let appMenu = NSMenuItem()
@@ -271,6 +272,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         session.osc52WriteAllow = config.osc52Write == .allow
         session.osc52ReadAsk = config.osc52Read == .ask
+        session.desktopNotifications = config.desktopNotifications
         session.onTitle = { [weak window] title in
             MainActor.assumeIsolated {
                 window?.title = title.isEmpty ? "jetty" : title

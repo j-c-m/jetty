@@ -479,6 +479,22 @@ final class ParserTests: XCTestCase {
         XCTAssertTrue(text.contains("\u{1B}[4;80;80t"), text)
     }
 
+    func testNotifyHopDoesNotTakeSessionLock() {
+        let session = TerminalSession(
+            cols: 10, rows: 5, cellWidthPx: 8, cellHeightPx: 16, scrollbackCapRows: 0
+        )
+        session.desktopNotifications = false
+        session.lock.lock()
+        session.parser.feed("\u{1B}]9;hello from jetty\u{07}")
+        session.parser.feed("\u{1B}]777;notify;Build;done\u{07}")
+        let exp = expectation(description: "notify hop")
+        DispatchQueue.main.async { exp.fulfill() }
+        wait(for: [exp], timeout: 1)
+        session.lock.unlock()
+        XCTAssertEqual(session.parser.notifies.last?.0, "Build")
+        XCTAssertEqual(session.parser.notifies.last?.1, "done")
+    }
+
     func testDECSCUSR() {
         let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
         let p = Parser()
