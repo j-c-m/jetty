@@ -507,7 +507,14 @@ void jt_scr_nel(jt_scr *s) {
 void jt_scr_bs(jt_scr *s) {
     jt_buf *b = s->active;
     b->pending_wrap = 0;
-    if (b->cx > 0) b->cx--;
+    if (b->cx > 0) {
+        b->cx--;
+        return;
+    }
+    if ((s->reverse_wrap || s->reverse_wrap_ext) && s->auto_wrap && b->cy > 0) {
+        b->cy--;
+        b->cx = s->cols > 0 ? s->cols - 1 : 0;
+    }
 }
 
 void jt_scr_tab(jt_scr *s) {
@@ -1186,6 +1193,7 @@ void jt_scr_init(jt_scr *s, int32_t cols, int32_t rows, int32_t sb_cap) {
     s->mouse_alt_scroll = 1;
     s->cursor_visible = 1;
     s->cursor_style = 2;
+    s->alt_esc = 1;
     s->pen.fg = COLOR_DEFAULT;
     s->pen.bg = COLOR_DEFAULT;
     jt_defaults_reset(s);
@@ -1230,6 +1238,10 @@ void jt_scr_ris(jt_scr *s) {
     s->deckpam = 0;
     s->cursor_visible = 1;
     s->cursor_blink = 0;
+    s->alt_esc = 1;
+    s->reverse_wrap = 0;
+    s->reverse_wrap_ext = 0;
+    s->linefeed_nl = 0;
     s->cursor_style = 2;
     s->mouse_event = 0;
     s->mouse_sgr = 0;

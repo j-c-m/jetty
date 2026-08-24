@@ -63,6 +63,10 @@ typedef struct jt_scr {
     uint8_t reverse_video, cursor_visible, cursor_blink;
     uint8_t cursor_style;
     uint8_t decckm, deckpam;
+    uint8_t reverse_wrap, reverse_wrap_ext, linefeed_nl;
+    uint8_t alt_esc, report_theme, report_vis, inband_size;
+    uint8_t xtsave_valid;
+    uint8_t xtsave[16];
     void *gp;
     void *rp;
     char *osc8_id;

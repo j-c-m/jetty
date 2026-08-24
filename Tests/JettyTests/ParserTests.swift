@@ -592,4 +592,29 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(s.scrollBottom, 1)
         XCTAssertEqual(s.plainString(), "EEEE\nEEEE")
     }
+
+    func testReverseWrap() {
+        let s = Screen(cols: 4, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("abcd\u{08}")
+        XCTAssertEqual(s.cursorY, 0)
+        XCTAssertEqual(s.cursorX, 2)
+        p.feed("\u{1B}[H\u{1B}[?45h\u{1B}[2;1H\u{08}")
+        XCTAssertEqual(s.cursorY, 0)
+        XCTAssertEqual(s.cursorX, 3)
+        p.writes.removeAll()
+        p.feed("\u{1B}[?45$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?45;1$y")
+    }
+
+    func testXTSAVEWrap() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?7l\u{1B}[?7s\u{1B}[?7h\u{1B}[?7r")
+        XCTAssertFalse(s.autoWrap)
+        p.feed("\u{1B}[20hxy\n")
+        XCTAssertEqual(s.cursorX, 0)
+    }
 }
