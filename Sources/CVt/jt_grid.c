@@ -115,6 +115,12 @@ static uint8_t *erased_at(jt_scr *s, int32_t y) {
     return &b->erased[phys_y(b, y)];
 }
 
+static Cell erased_blank(const jt_buf *b, int32_t py, Cell fallback) {
+    if (b->erase && py >= 0 && py < b->grid_rows)
+        return b->erase[py];
+    return fallback;
+}
+
 static void fill_cells(Cell *row, int32_t n, Cell b) {
     if (n <= 0) return;
 #if defined(__ARM_NEON)
@@ -260,10 +266,21 @@ static int row_erased(const jt_scr *s, int32_t y) {
     return b->erased && py >= 0 && py < b->grid_rows && b->erased[py];
 }
 
+static void set_erased(jt_scr *s, int32_t y, Cell proto) {
+    jt_buf *b = s->active;
+    if (s->pool_cells && !row_erased(s, y))
+        release_cells(s, row_at(s, y), s->cols);
+    int32_t py = phys_y(b, y);
+    b->erased[py] = 1;
+    if (b->erase) b->erase[py] = proto;
+}
+
 static void materialize_row(jt_scr *s, int32_t y) {
     uint8_t *e = erased_at(s, y);
     if (!*e) return;
-    fill_cells(row_at(s, y), s->cols, blank_cell(s));
+    jt_buf *b = s->active;
+    Cell proto = erased_blank(b, phys_y(b, y), blank_cell(s));
+    fill_cells(row_at(s, y), s->cols, proto);
     *e = 0;
 }
 
@@ -277,10 +294,8 @@ static void mark_all(jt_scr *s) {
 }
 
 static void fill_row(jt_scr *s, int32_t y) {
-    if (s->pool_cells && !row_erased(s, y))
-        release_cells(s, row_at(s, y), s->cols);
+    set_erased(s, y, blank_cell(s));
     *wrap_at(s, y) = 0;
-    *erased_at(s, y) = 1;
     mark_row(s, y);
 }
 
@@ -306,13 +321,15 @@ static int buf_init(jt_buf *b, int32_t cols, int32_t vis_rows, int32_t extra, Ce
     b->dirty = (uint8_t *)calloc((size_t)grid_rows, 1);
     b->wrap = (uint8_t *)calloc((size_t)grid_rows, 1);
     b->erased = (uint8_t *)calloc((size_t)grid_rows, 1);
-    if (!b->grid || !b->rowmap || !b->tabstops || !b->dirty || !b->wrap || !b->erased) {
+    b->erase = (Cell *)calloc((size_t)grid_rows, sizeof(Cell));
+    if (!b->grid || !b->rowmap || !b->tabstops || !b->dirty || !b->wrap || !b->erased || !b->erase) {
         free(b->grid);
         free(b->rowmap);
         free(b->tabstops);
         free(b->dirty);
         free(b->wrap);
         free(b->erased);
+        free(b->erase);
         memset(b, 0, sizeof *b);
         return 0;
     }
@@ -331,6 +348,7 @@ static void buf_free(jt_buf *b) {
     free(b->dirty);
     free(b->wrap);
     free(b->erased);
+    free(b->erase);
     memset(b, 0, sizeof *b);
 }
 
@@ -855,7 +873,7 @@ static void fill_rect(jt_scr *s, int x1, int y1, int x2, int y2, int clear_wrap)
         int xa = (y == y1) ? x1 : 0;
         int xb = (y == y2) ? x2 : s->cols - 1;
         if (xa == 0 && xb == s->cols - 1) {
-            *erased_at(s, y) = 1;
+            set_erased(s, y, blank);
         } else {
             materialize_row(s, y);
             release_cells(s, row_at(s, y) + xa, xb - xa + 1);
@@ -1029,7 +1047,8 @@ void jt_scr_copy_row(const jt_scr *s, int32_t y, Cell *dst, int32_t dst_cols, Ce
     }
     int32_t n = s->cols < dst_cols ? s->cols : dst_cols;
     if (row_erased(s, y)) {
-        fill_cells(dst, n, blank);
+        const jt_buf *b = s->active;
+        fill_cells(dst, n, erased_blank(b, phys_y(b, y), blank));
     } else {
         memcpy(dst, row_at_c(s, y), (size_t)n * sizeof(Cell));
     }
@@ -1070,7 +1089,7 @@ void jt_scr_copy_sb_row(const jt_scr *s, int32_t i, Cell *dst, int32_t dst_cols,
     }
     int32_t n = s->cols < dst_cols ? s->cols : dst_cols;
     if (s->primary.erased && s->primary.erased[idx]) {
-        fill_cells(dst, n, blank);
+        fill_cells(dst, n, erased_blank(&s->primary, idx, blank));
     } else {
         memcpy(dst, s->primary.grid + (size_t)idx * (size_t)s->cols, (size_t)n * sizeof(Cell));
     }
@@ -1125,13 +1144,15 @@ static int buf_resize(jt_buf *b, int32_t oc, int32_t orows, int32_t nc, int32_t 
     uint8_t *dirty = (uint8_t *)calloc((size_t)grid_rows, 1);
     uint8_t *wrap = (uint8_t *)calloc((size_t)grid_rows, 1);
     uint8_t *erased = (uint8_t *)calloc((size_t)grid_rows, 1);
-    if (!next || !rowmap || !tabs || !dirty || !wrap || !erased) {
+    Cell *erase = (Cell *)calloc((size_t)grid_rows, sizeof(Cell));
+    if (!next || !rowmap || !tabs || !dirty || !wrap || !erased || !erase) {
         free(next);
         free(rowmap);
         free(tabs);
         free(dirty);
         free(wrap);
         free(erased);
+        free(erase);
         return 0;
     }
     fill_cells(next, nc * grid_rows, blank);
@@ -1146,6 +1167,7 @@ static int buf_resize(jt_buf *b, int32_t oc, int32_t orows, int32_t nc, int32_t 
             if (py < 0 || py >= b->grid_rows) continue;
             if (b->erased && b->erased[py]) {
                 erased[y] = 1;
+                erase[y] = erased_blank(b, py, blank);
             } else {
                 memcpy(next + (size_t)y * (size_t)nc, b->grid + (size_t)py * (size_t)oc,
                        (size_t)copyC * sizeof(Cell));
@@ -1159,12 +1181,14 @@ static int buf_resize(jt_buf *b, int32_t oc, int32_t orows, int32_t nc, int32_t 
     free(b->dirty);
     free(b->wrap);
     free(b->erased);
+    free(b->erase);
     b->grid = next;
     b->rowmap = rowmap;
     b->tabstops = tabs;
     b->dirty = dirty;
     b->wrap = wrap;
     b->erased = erased;
+    b->erase = erase;
     b->grid_rows = grid_rows;
     b->scroll_top = 0;
     b->scroll_bottom = nr - 1;

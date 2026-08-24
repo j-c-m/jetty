@@ -33,6 +33,7 @@ typedef struct jt_buf {
     uint8_t *dirty;
     uint8_t *wrap;
     uint8_t *erased;
+    Cell *erase; /* BCE prototype per physical row while erased[py] */
 } jt_buf;
 
 typedef struct jt_scr {

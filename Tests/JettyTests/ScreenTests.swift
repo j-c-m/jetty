@@ -192,6 +192,97 @@ final class ScreenTests: XCTestCase {
                        Array(repeating: UInt32(0x20), count: 4))
     }
 
+    func testLazyEraseRemainderKeepsErasePen() {
+        let s = Screen(cols: 8, rows: 3, scrollbackCapRows: 0)
+        s.ed(2)
+        s.penBG = PackedColor.indexed(5)
+        s.printRun("AB")
+        let r = s.row(0)
+        XCTAssertEqual(r[0].contentPayload, UInt32(UInt8(ascii: "A")))
+        XCTAssertEqual(r[0].bg, PackedColor.indexed(5))
+        XCTAssertEqual(r[1].bg, PackedColor.indexed(5))
+        for x in 2..<8 {
+            XCTAssertEqual(r[x].contentPayload, 0x20, "x=\(x)")
+            XCTAssertEqual(r[x].bg, PackedColor.default, "x=\(x)")
+        }
+        let unread = s.row(1)
+        for x in 0..<8 {
+            XCTAssertEqual(unread[x].contentPayload, 0x20, "x=\(x)")
+            XCTAssertEqual(unread[x].bg, PackedColor.default, "x=\(x)")
+        }
+    }
+
+    func testEL2SnapshotsCurrentPen() {
+        let s = Screen(cols: 8, rows: 2, scrollbackCapRows: 0)
+        s.printRun("ABCD")
+        s.penBG = PackedColor.indexed(5)
+        s.el(2)
+        s.cup(row: 0, col: 0)
+        s.penBG = PackedColor.indexed(4)
+        s.printRun("X")
+        let r = s.row(0)
+        XCTAssertEqual(r[0].contentPayload, UInt32(UInt8(ascii: "X")))
+        XCTAssertEqual(r[0].bg, PackedColor.indexed(4))
+        for x in 1..<8 {
+            XCTAssertEqual(r[x].contentPayload, 0x20, "x=\(x)")
+            XCTAssertEqual(r[x].bg, PackedColor.indexed(5), "x=\(x)")
+        }
+    }
+
+    func testEL0BCEFillsWithCurrentPen() {
+        let s = Screen(cols: 8, rows: 2, scrollbackCapRows: 0)
+        s.printRun("AB")
+        s.penBG = PackedColor.indexed(5)
+        s.el(0)
+        let r = s.row(0)
+        XCTAssertEqual(r[0].contentPayload, UInt32(UInt8(ascii: "A")))
+        XCTAssertEqual(r[0].bg, PackedColor.default)
+        XCTAssertEqual(r[1].contentPayload, UInt32(UInt8(ascii: "B")))
+        XCTAssertEqual(r[1].bg, PackedColor.default)
+        for x in 2..<8 {
+            XCTAssertEqual(r[x].contentPayload, 0x20, "x=\(x)")
+            XCTAssertEqual(r[x].bg, PackedColor.indexed(5), "x=\(x)")
+        }
+    }
+
+    func testPrintAfterColorDefNewlineKeepsBlackRemainder() {
+        let s = Screen(cols: 12, rows: 4, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[48;5;0m\u{1B}[38;5;15m\u{1B}[2J\u{1B}[H")
+        p.feed("\u{1B}[48;5;201m123\u{1B}[48;5;0m\r\n")
+        p.feed("\u{1B}[48;5;201m456\u{1B}[48;5;0m\r\n")
+        let r = s.row(0)
+        XCTAssertEqual(r[0].indexedBG, 201)
+        XCTAssertEqual(r[1].indexedBG, 201)
+        XCTAssertEqual(r[2].indexedBG, 201)
+        XCTAssertEqual(r[0].contentPayload, UInt32(UInt8(ascii: "1")))
+        for x in 3..<12 {
+            XCTAssertEqual(r[x].indexedBG, 0, "x=\(x)")
+            XCTAssertEqual(r[x].contentPayload, 0x20, "x=\(x)")
+        }
+        let r1 = s.row(1)
+        XCTAssertEqual(r1[0].indexedBG, 201)
+        for x in 3..<12 {
+            XCTAssertEqual(r1[x].indexedBG, 0, "x=\(x)")
+        }
+    }
+
+    func testScrolledErasedRowKeepsEraseColor() {
+        let s = Screen(cols: 4, rows: 2, scrollbackCapRows: 4)
+        s.ed(2)
+        s.cup(row: 1, col: 0)
+        s.printRun("BBBB")
+        s.nel()
+        XCTAssertEqual(s.scrollbackCount, 1)
+        s.penBG = PackedColor.indexed(5)
+        let h = s.historyRow(0)
+        for x in 0..<4 {
+            XCTAssertEqual(h[x].contentPayload, 0x20, "x=\(x)")
+            XCTAssertEqual(h[x].bg, PackedColor.default, "x=\(x)")
+        }
+    }
+
     func testWrapFillsEveryCellThenStealsIntact() {
         let cols = 4, rows = 3
         let s = Screen(cols: cols, rows: rows, scrollbackCapRows: 8)
