@@ -198,7 +198,17 @@ static void osc9(const jt_vt_host *h, const uint8_t *p, int n, int i) {
         if (h->progress) h->progress(h->ctx, st, pct8);
         return;
     }
-    if (conemu_cmd(p, n, i, '1') || conemu_cmd(p, n, i, '2')) return;
+    if (i < n && is_digit(p[i])) {
+        int j = i;
+        uint32_t cmd = 0;
+        if (parse_num(p, n, &j, &cmd) && cmd >= 1 && cmd <= 12) {
+            if (cmd == 4) {
+                /* handled above */
+            } else {
+                return;
+            }
+        }
+    }
     if (!h->notify) return;
     uint8_t body[1024];
     int nb = utf8_sanitize(p + i, n - i, body, 1024);
@@ -370,9 +380,45 @@ void jt_osc_dispatch(jt_scr *s, const jt_vt_host *h, const uint8_t *p, int n) {
     case 777:
         osc777(h, p, n, i);
         break;
+    case 1:
+        break;
+    case 5:
+    case 13:
+    case 14:
+    case 15:
+    case 16:
+    case 17:
+    case 18:
+    case 19:
+    case 21:
+    case 22:
+    case 66:
+    case 72:
+    case 99:
+    case 105:
+    case 113:
+    case 114:
+    case 115:
+    case 116:
+    case 117:
+    case 118:
+    case 119:
+    case 1337:
+    case 3008:
+    case 5522:
+        break;
     case 104:
         if (s) {
-            jt_scr_palette_reset(s);
+            if (i >= n) {
+                jt_scr_palette_reset(s);
+            } else {
+                while (i < n) {
+                    uint32_t idx = 0;
+                    if (!parse_num(p, n, &i, &idx)) break;
+                    jt_scr_palette_reset_index(s, (int)idx);
+                    if (i < n && p[i] == ';') i++;
+                }
+            }
             if (h && h->palette_changed) h->palette_changed(h->ctx);
         }
         break;

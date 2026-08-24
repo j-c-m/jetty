@@ -64,6 +64,14 @@ void jt_scr_palette_reset(jt_scr *s) {
     apply_pal_overlay(s);
 }
 
+void jt_scr_palette_reset_index(jt_scr *s, int idx) {
+    if (!s || idx < 0 || idx > 255) return;
+    uint32_t tmp[256];
+    jt_palette_reset(tmp);
+    s->palette[idx] = tmp[idx];
+    if (idx < 16) apply_pal_overlay(s);
+}
+
 static Cell blank_cell(const jt_scr *s) {
     Cell c;
     c.content = content_scalar(0x20, WIDE_NARROW);

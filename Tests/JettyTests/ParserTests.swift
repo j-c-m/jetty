@@ -250,6 +250,14 @@ final class ParserTests: XCTestCase {
         p.feed("\u{1B}]112\u{07}")
         p.feed("\u{1B}]10;?\u{07}")
         XCTAssertTrue((String(bytes: p.writes, encoding: .utf8) ?? "").contains("]10;"))
+        p.feed("\u{1B}]4;1;#FF0000\u{07}")
+        p.feed("\u{1B}]104;1\u{07}")
+        XCTAssertNotEqual(s.paletteColor(1), RGB(r: 255, g: 0, b: 0))
+        let n = p.notifies.count
+        p.feed("\u{1B}]21;foo\u{07}")
+        p.feed("\u{1B}]66;bar\u{07}")
+        p.feed("\u{1B}]9;3;tab\u{07}")
+        XCTAssertEqual(p.notifies.count, n)
     }
 
     func testOSC52() {

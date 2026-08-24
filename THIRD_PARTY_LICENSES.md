@@ -13,6 +13,12 @@ Bundled later (`Sources/Jetty/Resources/Fonts/`). SIL Open Font License 1.1.
 
 The OFL-1.1 text ships with the zip and is copied next to the TTFs.
 
+## Ghostty VT sequences (MIT)
+
+CSI/OSC/DCS dispatch and terminfo query shape follow Ghostty
+(`https://github.com/ghostty-org/ghostty`, `src/terminal/`). Ported to C;
+not linked. Copyright (c) Ghostty contributors. MIT.
+
 ## Hoehrmann UTF-8 DFA (MIT)
 
 Parser (later). Copyright (c) 2008-2010 Bjoern Hoehrmann <bjoern@hoehrmann.de>

@@ -134,6 +134,7 @@ void jt_sync_clear_flush(jt_scr *s);
 void jt_sync_timeout_clear(jt_scr *s);
 void jt_scr_set_palette_overlay(jt_scr *s, const uint32_t rgb16[16], uint16_t mask);
 void jt_scr_palette_reset(jt_scr *s);
+void jt_scr_palette_reset_index(jt_scr *s, int idx);
 void jt_sgr_apply(jt_scr *s, const uint16_t *p, int n, uint32_t seps);
 
 extern const uint8_t jt_width_lut[278528];
