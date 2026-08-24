@@ -1,4 +1,5 @@
 #include "pty_spawn.h"
+#include "../CVt/jt_version.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -19,7 +20,7 @@ static void set_term_identity(void) {
     setenv("TERM", "xterm-256color", 1);
     setenv("COLORTERM", "truecolor", 1);
     setenv("TERM_PROGRAM", "jetty", 1);
-    setenv("TERM_PROGRAM_VERSION", "0.1.0", 1);
+    setenv("TERM_PROGRAM_VERSION", JT_VERSION, 1);
 }
 
 static const char *resolve_shell(const struct passwd *pw) {

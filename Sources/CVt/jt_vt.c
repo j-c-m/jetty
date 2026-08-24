@@ -141,6 +141,13 @@ static void write_str(const jt_vt_host *h, const char *s) {
     h->write_pty(h->ctx, (const uint8_t *)s, n);
 }
 
+/* DCS > | <name version> ST. Matches TERM_PROGRAM / TERM_PROGRAM_VERSION. */
+static void write_xtversion(const jt_vt_host *h) {
+    char buf[64];
+    int n = snprintf(buf, sizeof buf, "\033P>|jetty %s\033\\", JT_VERSION);
+    if (n > 0) write_str(h, buf);
+}
+
 static uint8_t priv_byte(const jt_vt *p) {
     return p->ni > 0 ? p->inter[0] : 0;
 }
@@ -209,9 +216,10 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
         return;
     }
     if (!scr) {
-        if ((final == 'c' || final == 'n') && h && h->write_pty) {
+        if ((final == 'c' || final == 'n' || final == 'q') && h && h->write_pty) {
             if (final == 'c' && priv == 0) write_str(h, "\033[?1;2c");
             if (final == 'c' && priv == '>') write_str(h, "\033[>0;0;0c");
+            if (final == 'q' && priv == '>') write_xtversion(h);
         }
         return;
     }
@@ -274,6 +282,7 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
 
     if (priv == '>') {
         if (final == 'c') write_str(h, "\033[>0;0;0c");
+        else if (final == 'q') write_xtversion(h);
         return;
     }
     if (priv == '=') return;

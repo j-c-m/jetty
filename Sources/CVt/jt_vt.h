@@ -2,6 +2,7 @@
 #define JT_VT_H
 
 #include "jt_cell.h"
+#include "jt_version.h"
 
 #include <stddef.h>
 #include <stdint.h>

@@ -83,6 +83,19 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?1;2c")
     }
 
+    func testXTVERSION() {
+        let p = Parser()
+        p.feed("\u{1B}[>0q")
+        let ver = "\u{1B}P>|jetty \(JT_VERSION)\u{1B}\\"
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), ver)
+        p.writes.removeAll()
+        p.feed("\u{1B}[>q")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), ver)
+        p.writes.removeAll()
+        p.feed("\u{1B}[ q")
+        XCTAssertEqual(p.writes, [])
+    }
+
     func testDECRQM2026() {
         let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
         let p = Parser()
