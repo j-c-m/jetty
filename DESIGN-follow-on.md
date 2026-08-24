@@ -62,7 +62,7 @@ From DESIGN.md PR plan and closed questions:
 | Jump-to-prompt | OSC 133 parse/store in `TerminalSession.osc133` keyed by `lines_scrolled + y`, cap 4096. No UI, no key. Alt-screen marks still append using primary `lines_scrolled`. |
 | Width-table Unicode bump | **done.** UCD 17.0.0 pinned in `scripts/unicode/` and `gen-width-table.py`. |
 | Cell blink (`ATTR_BLINK`) | SGR 5/6 store the bit. v1 DESIGN toggles glyph visibility every 500 ms. `GridExpand` never reads it. Cursor blink is implemented. |
-| xcodeproj / notarization | SPM-only. `scripts/build-app.sh` runs `swift build -c release` and prints the binary path. No `.app`, no `Info.plist`, no sign, no notary. |
+| xcodeproj / notarization | **done (PR 36).** `scripts/build-app.sh` assembles `dist/jetty.app`, ad-hoc sign. `scripts/notarize.sh` for Developer ID. No xcodeproj. |
 | DEC 2027 | **done.** Default off. DECRPM 1/2. UTF-8 scalar path only. |
 | Smulx curly/dotted/dashed | SGR `4:3`/`4:4`/`4:5` pack `UL_CURLY`/`UL_DOTTED`/`UL_DASHED` (`jt_sgr.c`, `jt_cell.h`). Overlay paints **one** bar for any non-zero UL except double (`MetalTerminalView.writeUnderlineOverlays`). |
 
@@ -1380,6 +1380,7 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 ### PR 36 — Assemble `.app` and notarize
 
 - **Title:** `chore: build-app bundle, codesign, notarytool`
+- **Status:** **done**
 - **Files:** `scripts/build-app.sh`, `scripts/notarize.sh`, `Resources/Info.plist`
 - **Dependencies:** none (PR 30 nicer with this plist)
 - **Changes:** Produce `jetty.app` with `CFBundleIdentifier=dev.jetty.app`, notifications usage string, sandbox off. Ad-hoc sign by default. Hardened-runtime entitlements: none beyond `app-sandbox=false` if a file is required. `notarize.sh` for Developer ID. No xcodeproj.
@@ -1393,4 +1394,4 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 
 ---
 
-**Tracks:** 18–25, 27–29, 31, 32, 34, 35 done/withdrawn. Host left: 30 notify post. Chore 36–37. **26 and 33 are a later plan, not this document.**
+**Tracks:** 18–25, 27–29, 31, 32, 34–36 done/withdrawn. Host left: 30 notify post. Chore 37 skip. **26 and 33 are a later plan, not this document.**

@@ -9,3 +9,4 @@ DerivedData/
 .netrc
 *.swp
 .font-fetch/
+/dist
