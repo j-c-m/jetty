@@ -158,7 +158,7 @@ Ghostty is a multi-OS product with tabs, splits, Kitty graphics, an ImGui inspec
 
 13. **`font-family` / `palette-N` / `adjust-cell-*` land as DESIGN.md specified.** Compiled Eighties Black 0–15 stays the reset baseline. C stores a 16-entry overlay; `jt_scr_palette_reset` applies it after the compiled cube. Rationale: OSC 104 / RIS run in C and cannot see Swift `AppConfig` otherwise.
 
-14. **Notify/progress hop like OSC 52; OSC 7/133/`size_report` stay lock-held.** `notify` / `progress` / `osc52_*` / `set_title` copy bytes, hop to main, **must not** take `session.lock` (`83a94a7`). `osc7` / `osc133` / `history_cleared` / `palette_changed` / `size_report` run on the parse thread under the lock already held. Hopping CSI 14/18 t to main then locking reintroduces the hang. `history_cleared` fires from **ED 3 only**, not RIS.
+14. **Notify/progress hop like OSC 52; OSC 7/133/`size_report` stay lock-held.** `notify` / `progress` / `osc52_*` / `set_title` copy bytes, hop to main, **must not** take `session.lock` (`83a94a7`). `osc7` / `osc133` / `history_cleared` / `palette_changed` / `size_report` run on the parse thread under the lock already held. Hopping CSI 14/18 t to main then locking reintroduces the hang. `history_cleared` fires from **ED 3 and RIS** (both drop the ring).
 
 15. **Ship via SPM + `scripts/build-app.sh`, then notarytool.** Add `macos/Jetty.xcodeproj` only if notarization or an asset catalog actually needs Xcode. Rationale: v1 SPM-only was right; ghosvt’s xcodeproj exists to force-load `libghostty-vt.a`.
 
@@ -586,7 +586,7 @@ v1 stores `[(line: UInt64, action: UInt8, opts: [UInt8])]` from `parser.onOsc133
 
 **Alt:** if `in_alt`, **do not append**. `scroll_up` only increments `lines_scrolled` on primary with `top == 0`. Alt OSC 133 today would key primary ids and misfire after `rmcup`.
 
-**Clear:** `jt_vt_host.history_cleared` fires from the **ED 3** path in `jt_vt.c` after `jt_scr_ed(s, 3)` (`jt_scr_clear_history`). Parse thread, lock already held → `osc133.removeAll()`. Do **not** fire it from RIS: v1 `jt_scr_ris` is ED 2 only and keeps scrollback; clearing marks would drop valid jump targets. Do not put the callback inside `jt_scr_clear_history` (no `jt_vt_host` there). Jump’s in-window skip still covers sb wrap.
+**Clear:** `jt_vt_host.history_cleared` fires from **ED 3** and **RIS** in `jt_vt.c` after `jt_scr_clear_history`. Parse thread, lock already held → `osc133.removeAll()`. RIS drops the ring (Ghostty `pages.reset`); marks in history are gone. Do not put the callback inside `jt_scr_clear_history` (no `jt_vt_host` there). Jump’s in-window skip still covers sb wrap.
 
 ```mermaid
 sequenceDiagram
@@ -1006,7 +1006,7 @@ Host callbacks (additive):
 void (*notify)(void *ctx, const uint8_t *title, size_t nt,
                const uint8_t *body, size_t nb);   /* hop, no lock */
 void (*progress)(void *ctx, uint8_t state, uint8_t percent); /* hop, no lock */
-void (*history_cleared)(void *ctx);              /* lock held; ED 3 only, from jt_vt.c */
+void (*history_cleared)(void *ctx);              /* lock held; ED 3 and RIS, from jt_vt.c */
 ```
 
 `osc7` / `osc133` / `size_report` already exist and stay lock-held (`replySizeReport` on the parse thread, `writePtyBlocking`, no second lock). OSC dispatcher branches `9` and `777`. Unknown ConEmu subcommands drain.
@@ -1053,7 +1053,7 @@ No new Swift parser. No `print_glyph` callback.
 
 No on-disk DB. Config file keys added; unknown keys ignored. No migration of `~/.config/ghostty/config`.
 
-OSC 133 list: already in-memory. ED 3 clears via `history_cleared`. RIS does **not**. Alt-screen OSC 133 is ignored.
+OSC 133 list: already in-memory. ED 3 and RIS clear via `history_cleared`. Alt-screen OSC 133 is ignored.
 
 Grapheme store: 2027 may intern longer clusters (ZWJ families). Cap 4096 entries **per `jt_scr`** still. Overflow remains visible-drop. If 2027 users hit the cap, raise in a later PR — not a silent densify of `Cell`.
 
@@ -1286,7 +1286,7 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 - **Title:** `feat: jump to OSC 133 prompts`
 - **Files:** `TerminalSession.swift`, `MetalTerminalView.swift`, `main.swift`, `jt_vt.c` / `jt_vt.h` (`history_cleared` after ED 3), `Config.swift` default keys
 - **Dependencies:** none for the list (already stored)
-- **Changes:** Ignore OSC 133 while `in_alt`. Jump skips marks outside `[lines_scrolled - sb_len, lines_scrolled + rows)`. ED 3 in `jt_vt.c` → `history_cleared` → `osc133.removeAll()`. RIS does not. Default `Cmd+Shift+Up/Down` (Ghostty macOS). No clamp-to-0. No click-to-jump. No copy-last-output.
+- **Changes:** Ignore OSC 133 while `in_alt`. Jump skips marks outside `[lines_scrolled - sb_len, lines_scrolled + rows)`. ED 3 and RIS in `jt_vt.c` → `history_cleared` → `osc133.removeAll()`. Default `Cmd+Shift+Up/Down` (Ghostty macOS). No clamp-to-0. No click-to-jump. No copy-last-output.
 
 ### PR 26 — Shell integration inject + OSC 7 cwd inherit
 

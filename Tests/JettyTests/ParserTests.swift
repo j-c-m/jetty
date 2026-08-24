@@ -32,6 +32,19 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(s.cursorY, 0)
     }
 
+    func testRISClearsScrollback() {
+        let s = Screen(cols: 4, rows: 2, scrollbackCapRows: 8)
+        let p = Parser()
+        p.screen = s
+        p.feed("AAAABBBBCCCC")
+        XCTAssertGreaterThan(s.scrollbackCount, 0)
+        p.feed("\u{1B}c")
+        XCTAssertEqual(s.scrollbackCount, 0)
+        XCTAssertEqual(s.plainString(), "")
+        XCTAssertEqual(s.cursorX, 0)
+        XCTAssertEqual(s.cursorY, 0)
+    }
+
     func testLinuxFnDoesNotSwallow() {
         let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
         let p = Parser()

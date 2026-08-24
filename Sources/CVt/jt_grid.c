@@ -1215,4 +1215,5 @@ void jt_scr_ris(jt_scr *s) {
     jt_defaults_reset(s);
     s->saved.valid = 0;
     jt_scr_ed(s, 2);
+    jt_scr_clear_history(s);
 }

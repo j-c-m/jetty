@@ -168,7 +168,7 @@ Recorded 2026-08-21. Do not reopen.
 | `CellInstance` | Keep linux16term 20-float / 80-byte unless shrinking is trivial |
 | Font | **JetBrainsMono Nerd Font Mono**, 20 pt default, liga/calt off, OFL-1.1 + Hoehrmann MIT in `THIRD_PARTY_LICENSES.md` |
 | Launch geometry | 105×35 cells |
-| Scrollback | 50k rows, no compressor, primary only, ED 3 clears |
+| Scrollback | 50k rows, no compressor, primary only, ED 3 and RIS clear |
 | Windows | linux16term multi-window, one PTY each; no tabs/splits/VtManager/WebKit |
 | Terminfo | Stock file; no private overlay unless a later cap is missing |
 | Truecolor | SGR 38;2 / 48;2 semicolon **and** ISO colon; `COLORTERM=truecolor` |
@@ -572,7 +572,7 @@ BEL, BS, HT, LF/VT/FF (as LF / IND), CR, SO/SI (GL = G1 / G0), CAN/SUB (abort ES
 | `ESC \` | ST (if in OSC/DCS) |
 | `ESC # 8` | DECALN optional (E) |
 
-RIS: pen default, charset G0=B G1=0 GL=G0, autowrap on, IRM off, DECOM off, DECCKM off, cursor visible steady block, mouse off, 1007 on, 2004/1004/2026 off, margins full, tabs every 8, home, ED 2, restore palette, leave alt, clear 2026 hold. Does **not** force 105×35.
+RIS: pen default, charset G0=B G1=0 GL=G0, autowrap on, IRM off, DECOM off, DECCKM off, cursor visible steady block, mouse off, 1007 on, 2004/1004/2026 off, margins full, tabs every 8, home, ED 2, **clear scrollback**, restore palette, leave alt, clear 2026 hold. Ghostty `Screen.reset` → `pages.reset`. Does **not** force 105×35.
 
 DECSTR (`is2` / `rs2` `CSI ! p`): intermediate `!`, final `p`. Soft reset — modes/pen/charset/margins as xterm DECSTR; do not clear the screen; do not reset OSC 4 palette. Then `is2` also sends `CSI ? 3;4 l` (ignore 132-col / smooth scroll), `CSI 4 l` (IRM off), `ESC >`. **Not** DECRQM (`$` / `?$` + `p`).
 
