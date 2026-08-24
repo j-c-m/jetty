@@ -141,11 +141,6 @@ public final class Screen {
     public func decrc() { jt_scr_decrc(implPtr) }
     public func clearHistory() { jt_scr_clear_history(implPtr) }
 
-    @discardableResult
-    public func compressKeep(newest: Int, maxPages: Int) -> Int {
-        Int(jt_scr_compress_keep(implPtr, Int32(newest), Int32(maxPages)))
-    }
-
     public var poolCells: Int { Int(implPtr.pointee.pool_cells) }
     public func resize(cols: Int, rows: Int) {
         jt_scr_resize(implPtr, Int32(cols), Int32(rows))

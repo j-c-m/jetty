@@ -49,12 +49,6 @@ typedef struct jt_scr {
     int32_t sb_free_n;
     uint8_t *sb_wrap;
     int32_t sb_head, sb_len, sb_stride, scrollback_cap;
-    void *sb_comp;
-    int32_t sb_comp_n, sb_comp_cap;
-    Cell *sb_cache;
-    int32_t sb_cache_i;
-    uint8_t *sb_scratch;
-    uint32_t sb_scratch_n;
     jt_pen pen;
     jt_saved saved;
     uint32_t palette[256];
@@ -116,7 +110,6 @@ void jt_scr_copy_row(const jt_scr *s, int32_t y, Cell *dst, int32_t dst_cols, Ce
 void jt_scr_copy_sb_row(const jt_scr *s, int32_t i, Cell *dst, int32_t dst_cols, Cell blank);
 int32_t jt_scr_sb_len(const jt_scr *s);
 int jt_scr_sb_wrapped(const jt_scr *s, int32_t i);
-int jt_scr_compress_keep(jt_scr *s, int32_t keep_newest, int32_t max_pages);
 
 void jt_scr_mark_dirty(jt_scr *s, int32_t y);
 /* dst[y] = dirty[rowmap[y]] for y in [0, n); n is live rows. Zero dirty[0, grid_rows). */

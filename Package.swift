@@ -22,9 +22,6 @@ let package = Package(
             name: "CVt",
             path: "Sources/CVt",
             publicHeadersPath: ".",
-            linkerSettings: [
-                .linkedLibrary("compression"),
-            ]
         ),
         .target(
             name: "Jetty",
@@ -46,7 +43,6 @@ let package = Package(
                 .linkedFramework("CoreText"),
                 .linkedFramework("CoreGraphics"),
                 .linkedFramework("QuartzCore"),
-                .linkedLibrary("compression"),
             ]
         ),
         .executableTarget(

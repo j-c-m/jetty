@@ -23,8 +23,6 @@ public final class TerminalSession: @unchecked Sendable {
     public private(set) var osc7: String = ""
     public private(set) var osc133: [(line: UInt64, action: UInt8, opts: [UInt8])] = []
 
-    private var lastFeedAt: TimeInterval = 0
-    private var compressIdleAt: TimeInterval = 0
     private let redrawLock = NSLock()
     private var redrawPending = false
     private var drawDemand: Int32 = 0
@@ -186,16 +184,6 @@ public final class TerminalSession: @unchecked Sendable {
         _ = writePtyBlocking(fd: fd, bytes)
     }
 
-    /// Compress cold history after parse has been idle. Caller holds `lock`.
-    func maybeCompressHistory() {
-        let now = ProcessInfo.processInfo.systemUptime
-        if now - lastFeedAt < 0.25 { return }
-        if compressIdleAt == lastFeedAt { return }
-        if screen.compressKeep(newest: 256, maxPages: 4) == 0 {
-            compressIdleAt = lastFeedAt
-        }
-    }
-
     public func lockDemand() {
         withUnsafeMutablePointer(to: &drawDemand) { _ = jt_atomic_i32_add($0, 1) }
         lock.lock()
@@ -219,7 +207,6 @@ public final class TerminalSession: @unchecked Sendable {
         while off < len {
             let n = min(Self.parseSliceBytes, len - off)
             parser.feed(ptr.advanced(by: off), count: n)
-            lastFeedAt = ProcessInfo.processInfo.systemUptime
             off += n
             if off >= len { break }
             let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)

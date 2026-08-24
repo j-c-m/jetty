@@ -1,19 +1,7 @@
 #include "jt_vt.h"
 
-#include <compression.h>
 #include <stdlib.h>
 #include <string.h>
-
-#define JT_SB_PAGE_ROWS 64
-#define JT_SB_COMPRESSED (-1)
-
-typedef struct jt_sb_comp {
-    uint64_t start_id;
-    int32_t nrows;
-    int32_t stride;
-    uint32_t lz4_len;
-    uint8_t *lz4;
-} jt_sb_comp;
 
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
@@ -352,10 +340,6 @@ static void buf_free(jt_buf *b) {
     memset(b, 0, sizeof *b);
 }
 
-static void sb_comp_drop_id(jt_scr *s, uint64_t id);
-static void sb_comp_free_all(jt_scr *s);
-static const Cell *sb_comp_row(jt_scr *s, int32_t pi, int32_t row);
-
 static void sb_alloc(jt_scr *s, int32_t cap, int32_t cols, int32_t extra_base) {
     free(s->sb_idx);
     free(s->sb_free);
@@ -367,7 +351,6 @@ static void sb_alloc(jt_scr *s, int32_t cap, int32_t cols, int32_t extra_base) {
     s->sb_len = 0;
     s->sb_free_n = 0;
     s->sb_stride = cols;
-    sb_comp_free_all(s);
     if (cap <= 0) {
         s->scrollback_cap = 0;
         return;
@@ -402,11 +385,6 @@ static int32_t sb_push_falling(jt_scr *s) {
         incoming = s->sb_free[--s->sb_free_n];
     } else {
         incoming = s->sb_idx[s->sb_head];
-        if (incoming == JT_SB_COMPRESSED) {
-            sb_comp_drop_id(s, s->lines_scrolled - 1 - (uint64_t)s->sb_len);
-            if (s->sb_free_n > 0) incoming = s->sb_free[--s->sb_free_n];
-            else return -1;
-        }
     }
     s->sb_idx[s->sb_head] = falling;
     if (s->sb_wrap) s->sb_wrap[s->sb_head] = wrap;
@@ -420,95 +398,6 @@ static int32_t sb_phys(const jt_scr *s, int32_t i) {
     int32_t phys = s->sb_head - s->sb_len + i;
     if (phys < 0) phys += s->scrollback_cap;
     return phys;
-}
-
-static uint64_t sb_row_id(const jt_scr *s, int32_t i) {
-    return s->lines_scrolled - (uint64_t)s->sb_len + (uint64_t)i;
-}
-
-static void sb_comp_release_page(jt_scr *s, int32_t pi) {
-    if (!s || !s->pool_cells) return;
-    jt_sb_comp *p = (jt_sb_comp *)s->sb_comp;
-    if (!p || pi < 0 || pi >= s->sb_comp_n) return;
-    const Cell *src = sb_comp_row(s, pi, 0);
-    if (!src) return;
-    release_cells(s, (Cell *)src, p[pi].nrows * p[pi].stride);
-}
-
-static void sb_comp_free_all(jt_scr *s) {
-    jt_sb_comp *p = (jt_sb_comp *)s->sb_comp;
-    for (int32_t i = 0; i < s->sb_comp_n; i++) {
-        sb_comp_release_page(s, i);
-        p = (jt_sb_comp *)s->sb_comp;
-        if (p) free(p[i].lz4);
-    }
-    free(s->sb_comp);
-    free(s->sb_cache);
-    free(s->sb_scratch);
-    s->sb_comp = NULL;
-    s->sb_comp_n = 0;
-    s->sb_comp_cap = 0;
-    s->sb_cache = NULL;
-    s->sb_cache_i = -1;
-    s->sb_scratch = NULL;
-    s->sb_scratch_n = 0;
-}
-
-static int sb_comp_find(const jt_scr *s, uint64_t id, int32_t *pi, int32_t *row) {
-    const jt_sb_comp *p = (const jt_sb_comp *)s->sb_comp;
-    for (int32_t i = 0; i < s->sb_comp_n; i++) {
-        if (id >= p[i].start_id && id < p[i].start_id + (uint64_t)p[i].nrows) {
-            *pi = i;
-            *row = (int32_t)(id - p[i].start_id);
-            return 1;
-        }
-    }
-    return 0;
-}
-
-static const Cell *sb_comp_row(jt_scr *s, int32_t pi, int32_t row) {
-    jt_sb_comp *p = (jt_sb_comp *)s->sb_comp;
-    if (!p || pi < 0 || pi >= s->sb_comp_n) return NULL;
-    jt_sb_comp *c = &p[pi];
-    if (row < 0 || row >= c->nrows) return NULL;
-    size_t raw_n = (size_t)c->nrows * (size_t)c->stride * sizeof(Cell);
-    if (s->sb_cache_i != pi || !s->sb_cache) {
-        Cell *buf = (Cell *)realloc(s->sb_cache, raw_n);
-        if (!buf) return NULL;
-        s->sb_cache = buf;
-        size_t scratch_need = compression_decode_scratch_buffer_size(COMPRESSION_LZ4);
-        if (scratch_need > s->sb_scratch_n) {
-            uint8_t *sc = (uint8_t *)realloc(s->sb_scratch, scratch_need);
-            if (!sc) return NULL;
-            s->sb_scratch = sc;
-            s->sb_scratch_n = (uint32_t)scratch_need;
-        }
-        size_t got = compression_decode_buffer(
-            (uint8_t *)s->sb_cache, raw_n, c->lz4, c->lz4_len, s->sb_scratch, COMPRESSION_LZ4);
-        if (got != raw_n) {
-            s->sb_cache_i = -1;
-            return NULL;
-        }
-        s->sb_cache_i = pi;
-    }
-    return s->sb_cache + (size_t)row * (size_t)c->stride;
-}
-
-static void sb_comp_drop_id(jt_scr *s, uint64_t id) {
-    jt_sb_comp *p = (jt_sb_comp *)s->sb_comp;
-    int32_t pi = 0, row = 0;
-    if (!sb_comp_find(s, id, &pi, &row)) return;
-    if (id + 1 < p[pi].start_id + (uint64_t)p[pi].nrows) return;
-    sb_comp_release_page(s, pi);
-    p = (jt_sb_comp *)s->sb_comp;
-    if (!p) return;
-    free(p[pi].lz4);
-    if (s->sb_cache_i == pi) s->sb_cache_i = -1;
-    s->sb_comp_n--;
-    if (pi < s->sb_comp_n) {
-        memmove(&p[pi], &p[pi + 1], (size_t)(s->sb_comp_n - pi) * sizeof(jt_sb_comp));
-        if (s->sb_cache_i > pi) s->sb_cache_i--;
-    }
 }
 
 static int ensure_alt(jt_scr *s) {
@@ -1025,7 +914,6 @@ void jt_scr_clear_history(jt_scr *s) {
                 s->sb_free[s->sb_free_n++] = idx;
         }
     }
-    sb_comp_free_all(s);
     s->sb_head = 0;
     s->sb_len = 0;
     s->lines_scrolled = 0;
@@ -1068,21 +956,6 @@ void jt_scr_copy_sb_row(const jt_scr *s, int32_t i, Cell *dst, int32_t dst_cols,
     }
     int32_t phys = sb_phys(s, i);
     int32_t idx = s->sb_idx[phys];
-    if (idx == JT_SB_COMPRESSED) {
-        int32_t pi = 0, row = 0;
-        if (!sb_comp_find(s, sb_row_id(s, i), &pi, &row)) {
-            for (int32_t x = 0; x < dst_cols; x++) dst[x] = blank;
-            return;
-        }
-        const Cell *src = sb_comp_row((jt_scr *)s, pi, row);
-        jt_sb_comp *c = (jt_sb_comp *)s->sb_comp;
-        int32_t stride = c[pi].stride > 0 ? c[pi].stride : s->cols;
-        int32_t n = stride < dst_cols ? stride : dst_cols;
-        if (!src) fill_cells(dst, n, blank);
-        else memcpy(dst, src, (size_t)n * sizeof(Cell));
-        for (int32_t x = n; x < dst_cols; x++) dst[x] = blank;
-        return;
-    }
     if (!s->primary.grid || idx < 0 || idx >= s->primary.grid_rows) {
         for (int32_t x = 0; x < dst_cols; x++) dst[x] = blank;
         return;
@@ -1242,7 +1115,6 @@ void jt_scr_resize(jt_scr *s, int32_t nc, int32_t nr) {
                 release_cells(s, s->primary.grid + (size_t)idx * (size_t)oc, oc);
         }
     }
-    sb_comp_free_all(s);
     buf_resize(&s->primary, oc, orows, nc, nr, cap, blank);
     if (s->alt.grid) buf_resize(&s->alt, oc, orows, nc, nr, 0, blank);
     s->active = s->in_alt ? &s->alt : &s->primary;
@@ -1294,7 +1166,6 @@ void jt_scr_init(jt_scr *s, int32_t cols, int32_t rows, int32_t sb_cap) {
 }
 
 void jt_scr_deinit(jt_scr *s) {
-    sb_comp_free_all(s);
     buf_free(&s->primary);
     buf_free(&s->alt);
     free(s->sb_idx);
@@ -1305,93 +1176,6 @@ void jt_scr_deinit(jt_scr *s) {
     s->sb_wrap = NULL;
     s->active = NULL;
     jt_pools_deinit(s);
-}
-
-int jt_scr_compress_keep(jt_scr *s, int32_t keep_newest, int32_t max_pages) {
-    if (!s || !s->sb_idx || max_pages <= 0 || s->sb_len <= 0) return 0;
-    if (keep_newest < 0) keep_newest = 0;
-    int32_t cold = s->sb_len - keep_newest;
-    if (cold < 1) return 0;
-    size_t scratch_need = compression_encode_scratch_buffer_size(COMPRESSION_LZ4);
-    if (scratch_need > s->sb_scratch_n) {
-        uint8_t *sc = (uint8_t *)realloc(s->sb_scratch, scratch_need);
-        if (!sc) return 0;
-        s->sb_scratch = sc;
-        s->sb_scratch_n = (uint32_t)scratch_need;
-    }
-    int32_t done = 0;
-    int32_t i = 0;
-    while (i < cold && done < max_pages) {
-        int32_t phys = sb_phys(s, i);
-        if (s->sb_idx[phys] == JT_SB_COMPRESSED) {
-            i++;
-            continue;
-        }
-        int32_t n = 0;
-        while (n < JT_SB_PAGE_ROWS && i + n < cold) {
-            int32_t p2 = sb_phys(s, i + n);
-            if (s->sb_idx[p2] == JT_SB_COMPRESSED) break;
-            n++;
-        }
-        if (n <= 0) {
-            i++;
-            continue;
-        }
-        size_t raw_n = (size_t)n * (size_t)s->cols * sizeof(Cell);
-        Cell *pack = (Cell *)malloc(raw_n);
-        uint8_t *dst = (uint8_t *)malloc(raw_n);
-        if (!pack || !dst) {
-            free(pack);
-            free(dst);
-            break;
-        }
-        Cell blank = blank_cell(s);
-        for (int32_t k = 0; k < n; k++) {
-            jt_scr_copy_sb_row(s, i + k, pack + (size_t)k * (size_t)s->cols, s->cols, blank);
-        }
-        size_t got = compression_encode_buffer(
-            dst, raw_n, (const uint8_t *)pack, raw_n, s->sb_scratch, COMPRESSION_LZ4);
-        if (got == 0 || got >= raw_n) {
-            free(pack);
-            free(dst);
-            i += n;
-            continue;
-        }
-        uint8_t *slim = (uint8_t *)realloc(dst, got);
-        if (slim) dst = slim;
-        if (s->sb_comp_n == s->sb_comp_cap) {
-            int32_t cap = s->sb_comp_cap == 0 ? 8 : s->sb_comp_cap * 2;
-            jt_sb_comp *np = (jt_sb_comp *)realloc(s->sb_comp, (size_t)cap * sizeof(jt_sb_comp));
-            if (!np) {
-                free(pack);
-                free(dst);
-                break;
-            }
-            s->sb_comp = np;
-            s->sb_comp_cap = cap;
-        }
-        jt_sb_comp *slot = (jt_sb_comp *)s->sb_comp + s->sb_comp_n;
-        slot->start_id = sb_row_id(s, i);
-        slot->nrows = n;
-        slot->stride = s->cols;
-        slot->lz4_len = (uint32_t)got;
-        slot->lz4 = dst;
-        s->sb_comp_n++;
-        if (s->pool_cells) {
-            for (int32_t k = 0; k < n * s->cols; k++) cell_retain(s, &pack[k]);
-        }
-        free(pack);
-        for (int32_t k = 0; k < n; k++) {
-            int32_t p2 = sb_phys(s, i + k);
-            int32_t idx = s->sb_idx[p2];
-            if (idx >= 0 && s->sb_free_n < s->scrollback_cap)
-                s->sb_free[s->sb_free_n++] = idx;
-            s->sb_idx[p2] = JT_SB_COMPRESSED;
-        }
-        i += n;
-        done++;
-    }
-    return done;
 }
 
 void jt_scr_ris(jt_scr *s) {

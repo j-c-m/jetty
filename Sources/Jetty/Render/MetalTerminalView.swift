@@ -183,7 +183,6 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 shiftFindHits(by: Int(trim.rounded()))
             }
             scrollPhysics.followBottomIfPinned(maxOffset: maxO)
-            session.maybeCompressHistory()
             let moving = scrollPhysics.step(dt: dt, maxOffset: maxO, viewportRows: Double(max(1, rows)))
             if moving { kickScroll() }
             start = Int(scrollPhysics.integerRow(maxOffset: maxO))
