@@ -13,7 +13,7 @@ public final class ScrollPhysics {
     private(set) var pinnedToBottom: Bool = true
 
     var friction: Double = 2
-    /// Wheel/trackpad → velocity scale.
+    /// Wheel tick → velocity scale. Trackpad uses `applyPreciseDelta` instead.
     var impulseScale: Double = 4
     /// Decay for the active coast. Trackpad uses `friction`; page uses 3×.
     private var coastFriction: Double = 2
@@ -37,6 +37,10 @@ public final class ScrollPhysics {
     var idleReset: Double = 0.25
     /// Tests replace this to simulate a paused view without sleeping.
     var now: () -> Double = { ProcessInfo.processInfo.systemUptime }
+    /// Fingers still on the pad; `step` must not integrate (position already moved 1:1).
+    private var fingerDown = false
+    /// `NSEvent.timestamp` of the last precise delta, for finger velocity.
+    private var lastPreciseAt: Double = 0
 
     /// Integer row for `GHOSTTY_SCROLL_VIEWPORT_ROW` (clamped into range).
     func integerRow(maxOffset: Double) -> UInt64 {
@@ -54,10 +58,11 @@ public final class ScrollPhysics {
         return -frac
     }
 
-    /// Apply a wheel/trackpad impulse.
+    /// Apply a wheel impulse.
     /// Positive `deltaRows` moves toward older history (position decreases toward 0).
     func applyImpulse(deltaRows: Double) {
         if abs(deltaRows) < 1e-9 { return }
+        clearFingerTracking()
         resetAccelIfIdleOrChase()
         seekTarget = nil
         seekFollowsBottom = false
@@ -68,9 +73,52 @@ public final class ScrollPhysics {
         velocity -= deltaRows * impulseScale
     }
 
+    /// Trackpad/Magic Mouse finger motion. Position follows the delta 1:1.
+    /// After `ended`, `step` coasts at the last finger speed.
+    func applyPreciseDelta(deltaRows: Double, timestamp: Double, began: Bool, ended: Bool) {
+        resetAccelIfIdleOrChase()
+        seekTarget = nil
+        seekFollowsBottom = false
+        seekFollowsTop = false
+        pinnedToBottom = false
+        coastFriction = max(friction, 0.05)
+        runTime = max(runTime, 1.5)
+        if began {
+            lastPreciseAt = 0
+            velocity = 0
+        }
+        if abs(deltaRows) >= 1e-9 {
+            position -= deltaRows
+            let dt = lastPreciseAt > 0 ? timestamp - lastPreciseAt : 0
+            if dt > 1e-4, dt < 0.08 {
+                velocity = -deltaRows / dt
+            } else {
+                velocity = -deltaRows * 120
+            }
+            lastPreciseAt = timestamp
+        }
+        if ended {
+            fingerDown = false
+            lastPreciseAt = 0
+        } else {
+            fingerDown = true
+        }
+    }
+
+    /// Kill leftover velocity. Position and pin stay.
+    func brake() {
+        velocity = 0
+        seekTarget = nil
+        seekFollowsBottom = false
+        seekFollowsTop = false
+        clearFingerTracking()
+        clearAccel()
+    }
+
     /// Page Up/Down: coast one viewport minus a row. `direction` +1 = older, −1 = toward bottom.
     func applyPageImpulse(direction: Double, viewportRows: Double) {
         if abs(direction) < 1e-9 { return }
+        clearFingerTracking()
         resetAccelIfIdleOrChase()
         seekTarget = nil
         seekFollowsBottom = false
@@ -90,6 +138,7 @@ public final class ScrollPhysics {
         maxOffset: Double
     ) {
         if abs(direction) < 1e-9 { return }
+        clearFingerTracking()
         resetAccelIfIdleOrChase()
         seekTarget = nil
         let maxO = max(0, maxOffset)
@@ -107,6 +156,7 @@ public final class ScrollPhysics {
         seekTarget = nil
         seekFollowsBottom = false
         seekFollowsTop = false
+        clearFingerTracking()
         clearAccel()
         position = 0
         velocity = 0
@@ -119,6 +169,7 @@ public final class ScrollPhysics {
         seekTarget = nil
         seekFollowsBottom = false
         seekFollowsTop = false
+        clearFingerTracking()
         clearAccel()
         position = maxO
         velocity = 0
@@ -129,6 +180,7 @@ public final class ScrollPhysics {
     func smoothTo(offset: Double, maxOffset: Double) {
         let maxO = max(0, maxOffset)
         let goal = min(max(offset, 0), maxO)
+        clearFingerTracking()
         pinnedToBottom = false
         seekFollowsBottom = false
         seekFollowsTop = false
@@ -182,7 +234,13 @@ public final class ScrollPhysics {
             seekFollowsTop = false
             position = maxO
             velocity = 0
+            clearFingerTracking()
             clearAccel()
+            return false
+        }
+
+        if fingerDown {
+            _ = clampToRange(maxO)
             return false
         }
 
@@ -267,6 +325,11 @@ public final class ScrollPhysics {
         runTime = 0
     }
 
+    private func clearFingerTracking() {
+        fingerDown = false
+        lastPreciseAt = 0
+    }
+
     /// Count a paused view as idle even if we were still chasing with leftover velocity.
     private func creditPausedIdle() {
         let t = now()
@@ -328,6 +391,7 @@ public final class ScrollPhysics {
             pinBottom(maxOffset: maxO)
             return
         }
+        clearFingerTracking()
         // Don't fight an active seek with hard snaps from scrollbar growth.
         if seekTarget != nil { return }
         position = min(max(offset, 0), maxO)

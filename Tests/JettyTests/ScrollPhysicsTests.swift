@@ -72,6 +72,51 @@ final class ScrollPhysicsTests: XCTestCase {
         }
     }
 
+    func testPreciseDeltaMovesOneToOne() {
+        let p = ScrollPhysics()
+        p.impulseScale = 4
+        p.pinBottom(maxOffset: 100)
+        p.applyPreciseDelta(deltaRows: 5, timestamp: 1.0, began: true, ended: false)
+        XCTAssertEqual(p.position, 95, accuracy: 1e-9)
+        XCTAssertFalse(p.pinnedToBottom)
+    }
+
+    func testPreciseDeltaDoesNotIntegrateWhileFingersDown() {
+        let p = ScrollPhysics()
+        p.pinBottom(maxOffset: 100)
+        p.applyPreciseDelta(deltaRows: 2, timestamp: 1.000, began: true, ended: false)
+        p.applyPreciseDelta(deltaRows: 2, timestamp: 1.016, began: false, ended: false)
+        let pos = p.position
+        XCTAssertFalse(p.step(dt: 1.0 / 60.0, maxOffset: 100, viewportRows: 20))
+        XCTAssertEqual(p.position, pos, accuracy: 1e-9)
+    }
+
+    func testBrakeStopsCoast() {
+        let p = ScrollPhysics()
+        p.maxRowsPerFrame = 1_000
+        p.pinBottom(maxOffset: 400)
+        p.applyPreciseDelta(deltaRows: 1, timestamp: 1.000, began: true, ended: false)
+        p.applyPreciseDelta(deltaRows: 1, timestamp: 1.016, began: false, ended: true)
+        XCTAssertTrue(p.step(dt: 1.0 / 60.0, maxOffset: 400, viewportRows: 20))
+        let pos = p.position
+        p.brake()
+        XCTAssertFalse(p.step(dt: 1.0 / 60.0, maxOffset: 400, viewportRows: 20))
+        XCTAssertEqual(p.position, pos, accuracy: 1e-9)
+        XCTAssertFalse(p.pinnedToBottom)
+    }
+
+    func testPreciseDeltaCoastsAfterEnded() {
+        let p = ScrollPhysics()
+        p.friction = 2
+        p.maxRowsPerFrame = 1_000
+        p.pinBottom(maxOffset: 400)
+        p.applyPreciseDelta(deltaRows: 1, timestamp: 1.000, began: true, ended: false)
+        p.applyPreciseDelta(deltaRows: 1, timestamp: 1.016, began: false, ended: false)
+        p.applyPreciseDelta(deltaRows: 0, timestamp: 1.032, began: false, ended: true)
+        XCTAssertTrue(p.step(dt: 1.0 / 60.0, maxOffset: 400, viewportRows: 20))
+        XCTAssertLessThan(p.position, 398)
+    }
+
     func testCmdHomeSeeksTop() {
         let p = ScrollPhysics()
         p.pinBottom(maxOffset: 80)
