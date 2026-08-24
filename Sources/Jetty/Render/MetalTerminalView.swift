@@ -133,8 +133,11 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
 
     public func draw(in view: MTKView) {
         guard let renderer, let device else { return }
-        if skipSyncPresent() { return }
         session.lockDemand()
+        if skipSyncPresent() {
+            session.unlockDemand()
+            return
+        }
         let cols = session.screen.cols
         let rows = session.screen.rows
         session.screen.copyPalette256(&palPacked)
@@ -684,21 +687,16 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         return super.resignFirstResponder()
     }
 
+    /// Caller holds `session.lock` via `lockDemand`.
     private func skipSyncPresent() -> Bool {
-        session.lock.lock()
         let sync = session.screen.syncOutput
-        session.lock.unlock()
         let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
         if Dec2026.skipPresent(sync: sync, holdStart: syncHoldStart, now: now) {
             if syncHoldStart == 0 { syncHoldStart = now }
             armSyncTimeout()
             return true
         }
-        if sync {
-            session.lock.lock()
-            session.screen.syncOutput = false
-            session.lock.unlock()
-        }
+        if sync { session.screen.syncOutput = false }
         syncHoldStart = 0
         syncTimeoutWork?.cancel()
         syncTimeoutWork = nil
