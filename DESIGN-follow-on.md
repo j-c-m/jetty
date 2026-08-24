@@ -60,7 +60,7 @@ From DESIGN.md PR plan and closed questions:
 | Ink-bearing quads | Cell-boxed R8. `CellInstance` origin/size can already represent a tight quad; atlas does not store bearings. Italic/Nerd clip. |
 | Compact instances | 20-float / 80-byte `CellInstance` (`Sources/Jetty/Render/CellInstance.swift`). |
 | Jump-to-prompt | OSC 133 parse/store in `TerminalSession.osc133` keyed by `lines_scrolled + y`, cap 4096. No UI, no key. Alt-screen marks still append using primary `lines_scrolled`. |
-| Width-table Unicode bump | `scripts/gen-width-table.py` fetches UCD `latest`. **v1 committed `jt_width.inc` only.** `scripts/unicode/` is an untracked local cache. No version pin in the LUT header. |
+| Width-table Unicode bump | **done.** UCD 17.0.0 pinned in `scripts/unicode/` and `gen-width-table.py`. |
 | Cell blink (`ATTR_BLINK`) | SGR 5/6 store the bit. v1 DESIGN toggles glyph visibility every 500 ms. `GridExpand` never reads it. Cursor blink is implemented. |
 | xcodeproj / notarization | SPM-only. `scripts/build-app.sh` runs `swift build -c release` and prints the binary path. No `.app`, no `Info.plist`, no sign, no notary. |
 | DEC 2027 | **done.** Default off. DECRPM 1/2. UTF-8 scalar path only. |
@@ -1372,6 +1372,7 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 ### PR 35 — Pin Unicode 17.0.0 inputs for the width LUT
 
 - **Title:** `chore: pin UCD 17.0.0 for the width LUT`
+- **Status:** **done**
 - **Files:** `scripts/gen-width-table.py`, new committed `scripts/unicode/*`, `jt_width.inc` (regen if needed), `WidthTests.swift`
 - **Dependencies:** none; **do not mix with PR 34**
 - **Changes:** v1 committed the LUT only. This PR adds pinned UCD inputs and script URL `17.0.0`. Stop fetching `latest`.
@@ -1392,4 +1393,4 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 
 ---
 
-**Tracks:** 18–25, 27–29, 31, 32, 34 done/withdrawn. Host left: 30 notify post. Chore 35–37. **26 and 33 are a later plan, not this document.**
+**Tracks:** 18–25, 27–29, 31, 32, 34, 35 done/withdrawn. Host left: 30 notify post. Chore 36–37. **26 and 33 are a later plan, not this document.**
