@@ -63,9 +63,10 @@ public final class Screen {
     }
     public var decckm: Bool { implPtr.pointee.decckm != 0 }
     public var syncOutput: Bool {
-        get { implPtr.pointee.sync_output != 0 }
-        set { implPtr.pointee.sync_output = newValue ? 1 : 0 }
+        get { jt_sync_on(implPtr) != 0 }
+        set { jt_sync_set(implPtr, newValue ? 1 : 0) }
     }
+    public var syncFlush: Bool { jt_sync_flush(implPtr) != 0 }
     public var cursorStyle: UInt8 {
         get { implPtr.pointee.cursor_style }
         set { implPtr.pointee.cursor_style = newValue }

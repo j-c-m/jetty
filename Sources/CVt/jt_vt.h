@@ -58,7 +58,7 @@ typedef struct jt_scr {
     uint16_t mouse_event;
     uint8_t mouse_sgr;
     uint8_t mouse_alt_scroll;
-    uint8_t focus_event, bracketed_paste, sync_output;
+    uint8_t focus_event, bracketed_paste, sync_output, sync_flush;
     uint8_t reverse_video, cursor_visible, cursor_blink;
     uint8_t cursor_style;
     uint8_t decckm, deckpam;
@@ -119,6 +119,11 @@ int jt_scr_is_wrapped(const jt_scr *s, int32_t y);
 
 Cell *jt_scr_row(jt_scr *s, int32_t y);
 void jt_scr_ris(jt_scr *s);
+void jt_sync_set(jt_scr *s, int on);
+int jt_sync_on(const jt_scr *s);
+int jt_sync_flush(const jt_scr *s);
+void jt_sync_clear_flush(jt_scr *s);
+void jt_sync_timeout_clear(jt_scr *s);
 void jt_scr_set_palette_overlay(jt_scr *s, const uint32_t rgb16[16], uint16_t mask);
 void jt_scr_palette_reset(jt_scr *s);
 void jt_sgr_apply(jt_scr *s, const uint16_t *p, int n, uint32_t seps);

@@ -1204,6 +1204,7 @@ void jt_scr_ris(jt_scr *s) {
     s->focus_event = 0;
     s->bracketed_paste = 0;
     s->sync_output = 0;
+    s->sync_flush = 0;
     s->reverse_video = 0;
     s->primary.scroll_top = 0;
     s->primary.scroll_bottom = s->rows - 1;

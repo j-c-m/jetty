@@ -24,6 +24,30 @@ struct jt_vt {
     uint8_t utf8_st;
 };
 
+void jt_sync_set(jt_scr *s, int on) {
+    if (!s) return;
+    __atomic_store_n(&s->sync_output, (uint8_t)(on ? 1 : 0), __ATOMIC_RELEASE);
+    if (!on) __atomic_store_n(&s->sync_flush, 1, __ATOMIC_RELEASE);
+}
+
+int jt_sync_on(const jt_scr *s) {
+    return s && __atomic_load_n(&s->sync_output, __ATOMIC_ACQUIRE);
+}
+
+int jt_sync_flush(const jt_scr *s) {
+    return s && __atomic_load_n(&s->sync_flush, __ATOMIC_ACQUIRE);
+}
+
+void jt_sync_clear_flush(jt_scr *s) {
+    if (s) __atomic_store_n(&s->sync_flush, 0, __ATOMIC_RELEASE);
+}
+
+void jt_sync_timeout_clear(jt_scr *s) {
+    if (!s) return;
+    __atomic_store_n(&s->sync_output, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&s->sync_flush, 0, __ATOMIC_RELEASE);
+}
+
 jt_vt *jt_vt_create(void) {
     jt_vt *p = (jt_vt *)calloc(1, sizeof *p);
     if (!p) return NULL;
@@ -230,7 +254,7 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
                 case 1006: scr->mouse_sgr = (uint8_t)set; break;
                 case 1007: scr->mouse_alt_scroll = (uint8_t)set; break;
                 case 2004: scr->bracketed_paste = (uint8_t)set; break;
-                case 2026: scr->sync_output = (uint8_t)set; break;
+                case 2026: jt_sync_set(scr, set); break;
                 default: break;
                 }
             }

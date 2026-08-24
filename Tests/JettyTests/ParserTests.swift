@@ -90,11 +90,28 @@ final class ParserTests: XCTestCase {
     }
 
     func testDec2026HoldTimeout() {
-        XCTAssertTrue(Dec2026.skipPresent(sync: true, holdStart: 0, now: 1))
-        XCTAssertTrue(Dec2026.skipPresent(sync: true, holdStart: 10, now: 10))
-        XCTAssertTrue(Dec2026.skipPresent(sync: true, holdStart: 10, now: 10 + Dec2026.timeoutNs - 1))
-        XCTAssertFalse(Dec2026.skipPresent(sync: true, holdStart: 10, now: 10 + Dec2026.timeoutNs))
-        XCTAssertFalse(Dec2026.skipPresent(sync: false, holdStart: 10, now: 10))
+        XCTAssertTrue(Dec2026.skipPresent(sync: true, flush: false, holdStart: 0, now: 1))
+        XCTAssertTrue(Dec2026.skipPresent(sync: true, flush: false, holdStart: 10, now: 10))
+        XCTAssertTrue(Dec2026.skipPresent(
+            sync: true, flush: false, holdStart: 10, now: 10 + Dec2026.timeoutNs - 1))
+        XCTAssertFalse(Dec2026.skipPresent(
+            sync: true, flush: false, holdStart: 10, now: 10 + Dec2026.timeoutNs))
+        XCTAssertFalse(Dec2026.skipPresent(sync: false, flush: false, holdStart: 10, now: 10))
+        XCTAssertFalse(Dec2026.skipPresent(sync: true, flush: true, holdStart: 0, now: 1))
+    }
+
+    func testDec2026LThenHStillFlushes() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?2026h")
+        XCTAssertTrue(s.syncOutput)
+        XCTAssertFalse(s.syncFlush)
+        p.feed("\u{1B}[?2026l\u{1B}[?2026h")
+        XCTAssertTrue(s.syncOutput)
+        XCTAssertTrue(s.syncFlush)
+        XCTAssertFalse(Dec2026.skipPresent(
+            sync: s.syncOutput, flush: s.syncFlush, holdStart: 0, now: 1))
     }
 
     func testDECRQMDefaultsAndPermanent() {

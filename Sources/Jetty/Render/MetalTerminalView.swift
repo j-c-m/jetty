@@ -133,8 +133,9 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
 
     public func draw(in view: MTKView) {
         guard let renderer, let device else { return }
+        if skipSyncPresent(locked: false) { return }
         session.lockDemand()
-        if skipSyncPresent() {
+        if skipSyncPresent(locked: true) {
             session.unlockDemand()
             return
         }
@@ -687,16 +688,31 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         return super.resignFirstResponder()
     }
 
-    /// Caller holds `session.lock` via `lockDemand`.
-    private func skipSyncPresent() -> Bool {
-        let sync = session.screen.syncOutput
+    /// `locked` is true under `lockDemand`. Peek without the lock so a 2026 hold
+    /// does not stall parse.
+    private func skipSyncPresent(locked: Bool) -> Bool {
+        let sync: Bool
+        let flush: Bool
+        if locked {
+            sync = session.screen.syncOutput
+            flush = session.screen.syncFlush
+        } else {
+            sync = jt_sync_on(session.screen.implPtr) != 0
+            flush = jt_sync_flush(session.screen.implPtr) != 0
+        }
         let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
-        if Dec2026.skipPresent(sync: sync, holdStart: syncHoldStart, now: now) {
+        if Dec2026.skipPresent(sync: sync, flush: flush, holdStart: syncHoldStart, now: now) {
             if syncHoldStart == 0 { syncHoldStart = now }
             armSyncTimeout()
             return true
         }
-        if sync { session.screen.syncOutput = false }
+        if locked {
+            if flush {
+                jt_sync_clear_flush(session.screen.implPtr)
+            } else if sync {
+                jt_sync_timeout_clear(session.screen.implPtr)
+            }
+        }
         syncHoldStart = 0
         syncTimeoutWork?.cancel()
         syncTimeoutWork = nil
