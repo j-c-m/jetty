@@ -691,16 +691,17 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     /// `locked` is true under `lockDemand`. Peek without the lock so a 2026 hold
     /// does not stall parse.
     private func skipSyncPresent(locked: Bool) -> Bool {
-        let sync: Bool
-        let flush: Bool
-        if locked {
-            sync = session.screen.syncOutput
-            flush = session.screen.syncFlush
-        } else {
-            sync = jt_sync_on(session.screen.implPtr) != 0
-            flush = jt_sync_flush(session.screen.implPtr) != 0
-        }
         let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        if !locked {
+            if Dec2026.peekSkip(session.screen.implPtr, holdStart: syncHoldStart, now: now) {
+                if syncHoldStart == 0 { syncHoldStart = now }
+                armSyncTimeout()
+                return true
+            }
+            return false
+        }
+        let sync = session.screen.syncOutput
+        let flush = session.screen.syncFlush
         if Dec2026.skipPresent(sync: sync, flush: flush, holdStart: syncHoldStart, now: now) {
             if syncHoldStart == 0 { syncHoldStart = now }
             armSyncTimeout()

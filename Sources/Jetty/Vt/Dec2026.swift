@@ -1,3 +1,4 @@
+import CVt
 import Foundation
 
 public enum Dec2026 {
@@ -15,5 +16,19 @@ public enum Dec2026 {
         guard sync else { return false }
         if holdStart == 0 { return true }
         return now &- holdStart < timeoutNs
+    }
+
+    /// Draw skip peek. Must not take the session lock.
+    public static func peekSkip(
+        _ scr: UnsafeMutablePointer<jt_scr>,
+        holdStart: UInt64,
+        now: UInt64
+    ) -> Bool {
+        skipPresent(
+            sync: jt_sync_on(scr) != 0,
+            flush: jt_sync_flush(scr) != 0,
+            holdStart: holdStart,
+            now: now
+        )
     }
 }

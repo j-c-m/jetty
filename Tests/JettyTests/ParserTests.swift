@@ -112,6 +112,21 @@ final class ParserTests: XCTestCase {
         XCTAssertTrue(s.syncFlush)
         XCTAssertFalse(Dec2026.skipPresent(
             sync: s.syncOutput, flush: s.syncFlush, holdStart: 0, now: 1))
+        XCTAssertFalse(Dec2026.peekSkip(s.implPtr, holdStart: 0, now: 1))
+    }
+
+    func testSyncPeekDoesNotBlockOnHeldLock() {
+        let session = TerminalSession(cols: 8, rows: 2, scrollbackCapRows: 0)
+        session.parser.feed("\u{1B}[?2026h")
+        XCTAssertTrue(session.screen.syncOutput)
+        session.lock.lock()
+        let exp = expectation(description: "peekSkip")
+        DispatchQueue.global(qos: .userInitiated).async {
+            XCTAssertTrue(Dec2026.peekSkip(session.screen.implPtr, holdStart: 0, now: 1))
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 0.25)
+        session.lock.unlock()
     }
 
     func testDECRQMDefaultsAndPermanent() {

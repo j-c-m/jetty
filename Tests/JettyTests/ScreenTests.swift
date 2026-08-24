@@ -676,6 +676,57 @@ final class ScreenTests: XCTestCase {
         XCTAssertLessThan(isolated, 500)
     }
 
+    func testSyncHoldParseCost() {
+        func minMs(_ trials: Int, _ body: () -> Void) -> Double {
+            var best = Double.greatestFiniteMagnitude
+            for _ in 0..<trials {
+                let t0 = ProcessInfo.processInfo.systemUptime
+                body()
+                best = min(best, (ProcessInfo.processInfo.systemUptime - t0) * 1000)
+            }
+            return best
+        }
+        var yn = [UInt8]()
+        yn.reserveCapacity(1_048_576)
+        while yn.count < 1_048_576 {
+            yn.append(UInt8(ascii: "y"))
+            yn.append(0x0A)
+        }
+        func ms(wrap: Bool, peek: Bool) -> Double {
+            minMs(3) {
+                let session = TerminalSession(cols: 105, rows: 35, scrollbackCapRows: 8)
+                let p = Parser()
+                p.screen = session.screen
+                let stop = OSAllocatedUnfairLock(initialState: false)
+                let group = DispatchGroup()
+                if peek {
+                    group.enter()
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        while !stop.withLock({ $0 }) {
+                            _ = Dec2026.peekSkip(session.screen.implPtr, holdStart: 0, now: 1)
+                        }
+                        group.leave()
+                    }
+                }
+                session.lock.lock()
+                if wrap { p.feed("\u{1B}[?2026h") }
+                p.feed(yn)
+                if wrap { p.feed("\u{1B}[?2026l") }
+                session.lock.unlock()
+                stop.withLock { $0 = true }
+                if peek { group.wait() }
+            }
+        }
+        let plain = ms(wrap: false, peek: false)
+        let wrap = ms(wrap: true, peek: false)
+        let peek = ms(wrap: true, peek: true)
+        fputs(String(format: "sync hold parse ms plain=%.1f wrap=%.1f peek=%.1f\n",
+                     plain, wrap, peek), stderr)
+        fflush(stderr)
+        XCTAssertLessThan(wrap / max(plain, 0.1), 2.0, "2026 wrap should stay near plain parse")
+        XCTAssertLessThan(peek / max(plain, 0.1), 2.0, "2026 skip peek must not stall parse")
+    }
+
     func testTakeDirtyPrintSetsOnlyThatLogicalRow() {
         let s = Screen(cols: 8, rows: 24, scrollbackCapRows: 8)
         _ = takeDirty(s)
