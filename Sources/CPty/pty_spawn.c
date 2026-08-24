@@ -3,6 +3,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,6 +31,23 @@ static const char *resolve_shell(const struct passwd *pw) {
     if (pw && pw->pw_shell && pw->pw_shell[0])
         return pw->pw_shell;
     return "/bin/zsh";
+}
+
+/* Finder / `open` give the .app cwd /. Darwin login -flp keeps it. */
+static void chdir_home_if_root(void) {
+    char cwd[PATH_MAX];
+    if (getcwd(cwd, sizeof cwd) && strcmp(cwd, "/") != 0)
+        return;
+    const char *home = getenv("HOME");
+    if (!home || !home[0]) {
+        struct passwd *pw = getpwuid(getuid());
+        home = (pw && pw->pw_dir && pw->pw_dir[0]) ? pw->pw_dir : NULL;
+    }
+    if (!home)
+        return;
+    if (chdir(home) != 0) {
+        dprintf(STDERR_FILENO, "jetty: chdir %s: %s\n", home, strerror(errno));
+    }
 }
 
 static void exec_login_shell(void) {
@@ -93,6 +111,7 @@ int jt_pty_spawn(uint16_t cols, uint16_t rows,
     }
 
     if (child == 0) {
+        chdir_home_if_root();
         exec_login_shell();
     }
 
