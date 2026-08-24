@@ -261,6 +261,10 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
                 case 1004: scr->focus_event = (uint8_t)set; break;
                 case 1006: scr->mouse_sgr = (uint8_t)set; break;
                 case 1007: scr->mouse_alt_scroll = (uint8_t)set; break;
+                case 1048:
+                    if (set) jt_scr_decsc(scr);
+                    else jt_scr_decrc(scr);
+                    break;
                 case 2004: scr->bracketed_paste = (uint8_t)set; break;
                 case 2026: jt_sync_set(scr, set); break;
                 default: break;
@@ -445,6 +449,12 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
             if (n >= 0 && n <= 6) scr->cursor_style = (uint8_t)n;
         }
         break;
+    case 's':
+        if (priv == 0 && p->ni == 0) jt_scr_decsc(scr);
+        break;
+    case 'u':
+        if (priv == 0 && p->ni == 0) jt_scr_decrc(scr);
+        break;
     case 't':
         if (p->np > 1) break;
         {
@@ -501,6 +511,10 @@ static void handle_esc(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
         default:
             break;
         }
+        return;
+    }
+    if (p->ni == 1 && p->inter[0] == '#' && final == '8') {
+        jt_scr_decaln(scr);
         return;
     }
     if (p->ni == 1 && (p->inter[0] == '(' || p->inter[0] == ')')) {

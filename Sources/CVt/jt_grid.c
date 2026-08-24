@@ -856,6 +856,31 @@ void jt_scr_decsc(jt_scr *s) {
     s->saved.valid = 1;
 }
 
+void jt_scr_decaln(jt_scr *s) {
+    jt_buf *b = s->active;
+    b->scroll_top = 0;
+    b->scroll_bottom = s->rows - 1;
+    s->origin_mode = 0;
+    s->pen.attrs = 0;
+    jt_pen_refresh_extra(s);
+    for (int32_t y = 0; y < s->rows; y++) {
+        materialize_row(s, y);
+        Cell *row = row_at(s, y);
+        for (int32_t x = 0; x < s->cols; x++) {
+            Cell neu;
+            neu.content = content_scalar('E', WIDE_NARROW);
+            neu.fg = s->pen.fg;
+            neu.bg = s->pen.bg;
+            neu.attrs = 0;
+            neu.extra = 0;
+            stamp_cell(s, row + x, neu);
+        }
+        *wrap_at(s, y) = 0;
+        mark_row(s, y);
+    }
+    jt_scr_cup(s, 0, 0);
+}
+
 void jt_scr_decrc(jt_scr *s) {
     if (!s->saved.valid) return;
     jt_buf *b = s->active;

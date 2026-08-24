@@ -107,6 +107,7 @@ void jt_scr_switch_screen_mode(jt_scr *s, int mode, int enabled);
 void jt_scr_cursor_copy(jt_buf *dst, const jt_buf *src);
 void jt_scr_decsc(jt_scr *s);
 void jt_scr_decrc(jt_scr *s);
+void jt_scr_decaln(jt_scr *s);
 
 void jt_scr_clear_history(jt_scr *s);
 void jt_scr_copy_row(const jt_scr *s, int32_t y, Cell *dst, int32_t dst_cols, Cell blank);

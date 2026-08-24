@@ -563,4 +563,33 @@ final class ParserTests: XCTestCase {
         p.feed("\u{1B}[3`")
         XCTAssertEqual(s.cursorX, 2)
     }
+
+    func testCSISCAndRC() {
+        let s = Screen(cols: 20, rows: 10, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[4;6H\u{1B}[s\u{1B}[1;1H\u{1B}[u")
+        XCTAssertEqual(s.cursorY, 3)
+        XCTAssertEqual(s.cursorX, 5)
+        p.feed("\u{1B}[?1048h\u{1B}[10;10H\u{1B}[?1048l")
+        XCTAssertEqual(s.cursorY, 3)
+        XCTAssertEqual(s.cursorX, 5)
+        p.feed("\u{1B}[H")
+        p.feed("B\u{1B}[?u\u{1B}[>u\u{1B}[<u\u{1B}[=u")
+        XCTAssertEqual(s.plainString().prefix(1), "B")
+        XCTAssertEqual(s.cursorX, 1)
+        XCTAssertEqual(s.cursorY, 0)
+    }
+
+    func testDECALN() {
+        let s = Screen(cols: 4, rows: 2, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[2;3r\u{1B}[2;2H\u{1B}#8")
+        XCTAssertEqual(s.cursorY, 0)
+        XCTAssertEqual(s.cursorX, 0)
+        XCTAssertEqual(s.scrollTop, 0)
+        XCTAssertEqual(s.scrollBottom, 1)
+        XCTAssertEqual(s.plainString(), "EEEE\nEEEE")
+    }
 }
