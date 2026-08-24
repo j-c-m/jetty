@@ -489,6 +489,35 @@ final class ScreenTests: XCTestCase {
         XCTAssertEqual(s.rows, 1)
     }
 
+    func testGridSlabIs16KAligned() {
+        let s = Screen(cols: 4, rows: 2, scrollbackCapRows: 8)
+        let p = UnsafeRawPointer(s.implPtr.pointee.primary.grid)
+        XCTAssertEqual(Int(bitPattern: p) % 16384, 0)
+        s.resize(cols: 6, rows: 3)
+        let q = UnsafeRawPointer(s.implPtr.pointee.primary.grid)
+        XCTAssertEqual(Int(bitPattern: q) % 16384, 0)
+    }
+
+    func testExtraHistoryRowsStartErased() {
+        let s = Screen(cols: 4, rows: 2, scrollbackCapRows: 8)
+        let erased = s.implPtr.pointee.primary.erased!
+        XCTAssertEqual(erased[0], 0)
+        XCTAssertEqual(erased[1], 0)
+        for py in 2..<10 {
+            XCTAssertEqual(erased[py], 1, "physical \(py)")
+        }
+        s.printRun("AAAA")
+        s.printRun("BBBB")
+        s.printRun("CCCC")
+        XCTAssertEqual(s.scrollbackCount, 1)
+        XCTAssertEqual(s.historyRow(0)[0].contentPayload, UInt32(UInt8(ascii: "A")))
+        XCTAssertEqual(s.glyph(0, 1), UInt32(UInt8(ascii: "C")))
+        s.resize(cols: 5, rows: 3)
+        XCTAssertEqual(s.scrollbackCount, 1)
+        XCTAssertEqual(s.historyRow(0)[0].contentPayload, UInt32(UInt8(ascii: "A")))
+        XCTAssertEqual(s.plainString().split(separator: "\n").last, "CCCC")
+    }
+
     func testICHSplitsWidePair() {
         let s = Screen(cols: 6, rows: 2, scrollbackCapRows: 0)
         s.printRun("abcdef")
