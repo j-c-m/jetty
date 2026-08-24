@@ -385,8 +385,23 @@ final class ParserTests: XCTestCase {
         p.onSizeReport = { kinds.append($0) }
         p.feed("\u{1B}[14t")
         p.feed("\u{1B}[18t")
+        p.feed("\u{1B}[16t")
+        p.feed("\u{1B}[21t")
+        p.feed("\u{1B}[22;0t")
+        p.feed("\u{1B}[23;0t")
         p.feed("\u{1B}[14;1t")
-        XCTAssertEqual(kinds, [14, 18])
+        XCTAssertEqual(kinds, [14, 18, 16, 21, 22, 23])
+    }
+
+    func testDSRThemeAndVisibility() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?996n")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?997;1n")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?998n")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?999;1n")
     }
 
     func testSizeReportUnderParseLock() {

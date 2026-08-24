@@ -22,6 +22,8 @@ public final class TerminalSession: @unchecked Sendable {
     public var osc52ReadAsk = true
     public var onProgress: (@Sendable (UInt8, UInt8) -> Void)?
     public private(set) var osc7: String = ""
+    private var windowTitle = "jetty"
+    private var titleStack: [String] = []
     public private(set) var osc133: [(line: UInt64, action: UInt8, opts: [UInt8])] = []
 
     private let redrawLock = NSLock()
@@ -44,6 +46,7 @@ public final class TerminalSession: @unchecked Sendable {
             self?.writeToPty(bytes)
         }
         parser.onTitle = { [weak self] title in
+            self?.windowTitle = title
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { self?.onTitle?(title) }
             }
@@ -126,9 +129,14 @@ public final class TerminalSession: @unchecked Sendable {
         let fd = masterFD
         let cw = cellWidthPx
         let ch = cellHeightPx
+        let inband = screen.implPtr.pointee.inband_size != 0
         lock.unlock()
         if fd >= 0 {
             _ = jt_pty_set_winsize(fd, UInt16(max(2, cols)), UInt16(max(1, rows)), cw, ch)
+        }
+        if inband {
+            let seq = "\u{1B}[48;\(max(1, rows));\(max(2, cols))t"
+            parser.ptyWriter?(Array(seq.utf8))
         }
         scheduleRedraw()
     }
@@ -141,8 +149,23 @@ public final class TerminalSession: @unchecked Sendable {
         let seq: String
         if kind == 14 {
             seq = "\u{1B}[4;\(rows * ch);\(cols * cw)t"
+        } else if kind == 16 {
+            seq = "\u{1B}[6;\(ch);\(cw)t"
         } else if kind == 18 {
             seq = "\u{1B}[8;\(rows);\(cols)t"
+        } else if kind == 21 {
+            seq = "\u{1B}]l\(windowTitle)\u{1B}\\"
+        } else if kind == 22 {
+            if titleStack.count < 8 { titleStack.append(windowTitle) }
+            return
+        } else if kind == 23 {
+            if let t = titleStack.popLast() {
+                windowTitle = t
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated { self?.onTitle?(t) }
+                }
+            }
+            return
         } else {
             return
         }

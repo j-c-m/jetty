@@ -289,12 +289,17 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
         } else if (final == 'c') {
             /* DA1 with ? is not used; ignore */
         } else if (final == 'n') {
-            if (pdef(p->params, p->np, 0, 0) == 6 && h && h->write_pty) {
+            int q = pdef(p->params, p->np, 0, 0);
+            if (q == 6 && h && h->write_pty) {
                 char buf[64];
                 int r = scr->active->cy + 1;
                 int c = scr->active->cx + 1;
                 int n = snprintf(buf, sizeof buf, "\033[%d;%dR", r, c);
                 if (n > 0) h->write_pty(h->ctx, (const uint8_t *)buf, (size_t)n);
+            } else if (q == 996) {
+                write_str(h, "\033[?997;1n");
+            } else if (q == 998) {
+                write_str(h, "\033[?999;1n");
             }
         } else if (final == 's' || final == 'r') {
             int restore = final == 'r';
@@ -503,14 +508,16 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
     case 'u':
         if (priv == 0 && p->ni == 0) jt_scr_decrc(scr);
         break;
-    case 't':
-        if (p->np > 1) break;
-        {
-            int kind = pdef(p->params, p->np, 0, 0);
-            if ((kind == 14 || kind == 18) && h && h->size_report)
-                h->size_report(h->ctx, kind);
+    case 't': {
+        int kind = pdef(p->params, p->np, 0, 0);
+        if (kind == 14 || kind == 16 || kind == 18 || kind == 21) {
+            if (p->np > 1) break;
+            if (h && h->size_report) h->size_report(h->ctx, kind);
+        } else if (kind == 22 || kind == 23) {
+            if (h && h->size_report) h->size_report(h->ctx, kind);
         }
         break;
+    }
     default:
         break;
     }
