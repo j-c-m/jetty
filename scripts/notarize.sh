@@ -14,7 +14,7 @@ fi
 
 "$ROOT/scripts/build-app.sh"
 
-APP="$ROOT/dist/jetty.app"
+APP="$ROOT/dist/Jetty.app"
 ZIP="$ROOT/dist/jetty.zip"
 ENT="$ROOT/Resources/jetty.entitlements"
 

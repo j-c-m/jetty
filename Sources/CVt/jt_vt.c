@@ -249,10 +249,10 @@ static void write_str(const jt_vt_host *h, const char *s) {
     h->write_pty(h->ctx, (const uint8_t *)s, n);
 }
 
-/* DCS > | <name version> ST. Matches TERM_PROGRAM / TERM_PROGRAM_VERSION. */
+/* DCS > | <name version> ST. Product name; TERM_PROGRAM stays jetty. */
 static void write_xtversion(const jt_vt_host *h) {
     char buf[64];
-    int n = snprintf(buf, sizeof buf, "\033P>|jetty %s\033\\", JT_VERSION);
+    int n = snprintf(buf, sizeof buf, "\033P>|" JT_APP_NAME " %s\033\\", JT_VERSION);
     if (n > 0) write_str(h, buf);
 }
 

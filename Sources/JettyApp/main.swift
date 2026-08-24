@@ -72,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenuItem()
         appMenu.submenu = NSMenu()
         appMenu.submenu?.addItem(
-            withTitle: "Hide jetty",
+            withTitle: "Hide Jetty",
             action: #selector(NSApplication.hide(_:)),
             keyEquivalent: "h"
         )
@@ -94,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.submenu?.addItem(reload)
         appMenu.submenu?.addItem(.separator())
         appMenu.submenu?.addItem(
-            withTitle: "Quit jetty",
+            withTitle: "Quit Jetty",
             action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q"
         )
@@ -246,7 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "jetty"
+        window.title = "Jetty"
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
         window.isMovableByWindowBackground = true
@@ -280,7 +280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         session.onTitle = { [weak window] title in
             MainActor.assumeIsolated {
-                window?.title = title.isEmpty ? "jetty" : title
+                window?.title = title.isEmpty ? "Jetty" : title
             }
         }
         let term = TermWindow(session: session, view: view, window: window)

@@ -207,8 +207,8 @@ static void osc9(const jt_vt_host *h, const uint8_t *p, int n, int i) {
     uint8_t body[1024];
     int nb = utf8_sanitize(p + i, n - i, body, 1024);
     if (nb <= 0) return;
-    static const uint8_t title[] = "jetty";
-    h->notify(h->ctx, title, 5, body, (size_t)nb);
+    static const uint8_t title[] = JT_APP_NAME;
+    h->notify(h->ctx, title, sizeof(JT_APP_NAME) - 1, body, (size_t)nb);
 }
 
 static void osc777(const jt_vt_host *h, const uint8_t *p, int n, int i) {
@@ -224,8 +224,8 @@ static void osc777(const jt_vt_host *h, const uint8_t *p, int n, int i) {
     int nb = utf8_sanitize(p + i, n - i, body, 1024);
     if (nt <= 0 && nb <= 0) return;
     if (nt <= 0) {
-        memcpy(title, "jetty", 5);
-        nt = 5;
+        memcpy(title, JT_APP_NAME, sizeof(JT_APP_NAME) - 1);
+        nt = (int)(sizeof(JT_APP_NAME) - 1);
     }
     h->notify(h->ctx, title, (size_t)nt, body, (size_t)nb);
 }

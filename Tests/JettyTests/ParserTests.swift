@@ -86,7 +86,7 @@ final class ParserTests: XCTestCase {
     func testXTVERSION() {
         let p = Parser()
         p.feed("\u{1B}[>0q")
-        let ver = "\u{1B}P>|jetty \(JT_VERSION)\u{1B}\\"
+        let ver = "\u{1B}P>|Jetty \(JT_VERSION)\u{1B}\\"
         XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), ver)
         p.writes.removeAll()
         p.feed("\u{1B}[>q")
@@ -292,7 +292,7 @@ final class ParserTests: XCTestCase {
     func testOSC9NotifyAndProgress() {
         let p = Parser()
         p.feed("\u{1B}]9;hello from jetty\u{07}")
-        XCTAssertEqual(p.notifies.last?.0, "jetty")
+        XCTAssertEqual(p.notifies.last?.0, "Jetty")
         XCTAssertEqual(p.notifies.last?.1, "hello from jetty")
         let n0 = p.notifies.count
         p.feed("\u{1B}]9;4;1;40\u{07}")
@@ -367,7 +367,7 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(p.notifies.last?.0, "Build")
         XCTAssertEqual(p.notifies.last?.1, "done")
         p.feed("\u{1B}]777;notify;;body only\u{07}")
-        XCTAssertEqual(p.notifies.last?.0, "jetty")
+        XCTAssertEqual(p.notifies.last?.0, "Jetty")
         XCTAssertEqual(p.notifies.last?.1, "body only")
         let n = p.notifies.count
         p.feed("\u{1B}]777;other;x\u{07}")

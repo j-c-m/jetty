@@ -24,7 +24,7 @@ public final class TerminalSession: @unchecked Sendable {
     public var isNotifyFocused: (@Sendable () -> Bool)?
     public var onProgress: (@Sendable (UInt8, UInt8) -> Void)?
     public private(set) var osc7: String = ""
-    private var windowTitle = "jetty"
+    private var windowTitle = "Jetty"
     private var titleStack: [String] = []
     public private(set) var osc133: [(line: UInt64, action: UInt8, opts: [UInt8])] = []
 

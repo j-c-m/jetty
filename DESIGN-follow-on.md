@@ -1,4 +1,4 @@
-# jetty — follow-on (post-v1 daily-driver)
+# Jetty — follow-on (post-v1 daily-driver)
 
 | Field | Value |
 | --- | --- |
@@ -62,7 +62,7 @@ From DESIGN.md PR plan and closed questions:
 | Jump-to-prompt | OSC 133 parse/store in `TerminalSession.osc133` keyed by `lines_scrolled + y`, cap 4096. No UI, no key. Alt-screen marks still append using primary `lines_scrolled`. |
 | Width-table Unicode bump | **done.** UCD 17.0.0 pinned in `scripts/unicode/` and `gen-width-table.py`. |
 | Cell blink (`ATTR_BLINK`) | SGR 5/6 store the bit. v1 DESIGN toggles glyph visibility every 500 ms. `GridExpand` never reads it. Cursor blink is implemented. |
-| xcodeproj / notarization | **done (PR 36).** `scripts/build-app.sh` assembles `dist/jetty.app`, ad-hoc sign. `scripts/notarize.sh` for Developer ID. No xcodeproj. |
+| xcodeproj / notarization | **done (PR 36).** `scripts/build-app.sh` assembles `dist/Jetty.app`, ad-hoc sign. `scripts/notarize.sh` for Developer ID. No xcodeproj. |
 | DEC 2027 | **done.** Default off. DECRPM 1/2. UTF-8 scalar path only. |
 | Smulx curly/dotted/dashed | SGR `4:3`/`4:4`/`4:5` pack `UL_CURLY`/`UL_DOTTED`/`UL_DASHED` (`jt_sgr.c`, `jt_cell.h`). Overlay paints **one** bar for any non-zero UL except double (`MetalTerminalView.writeUnderlineOverlays`). |
 
@@ -723,7 +723,7 @@ jetty:
 
 | Sequence | Behavior |
 | --- | --- |
-| `OSC 9 ; <body>` (not `9;4`) | notify title `jetty`, body sanitized |
+| `OSC 9 ; <body>` (not `9;4`) | notify title `Jetty`, body sanitized |
 | `OSC 777 ; notify ; <title> ; <body>` | notify |
 | `OSC 9 ; 4 ; <st> ; <pct>` | progress |
 | other ConEmu 9;1 sleep / 9;2 msgbox | **ignore** |
@@ -883,14 +883,14 @@ v1 272 KiB 2-bit LUT stays. No sparse table in this follow-on.
 v1 `build-app.sh` only compiles. Follow-on assemble:
 
 ```
-jetty.app/Contents/MacOS/jetty
-jetty.app/Contents/Info.plist
-jetty.app/Contents/Resources/  # fonts already in the SPM bundle; copy as needed
+Jetty.app/Contents/MacOS/jetty
+Jetty.app/Contents/Info.plist
+Jetty.app/Contents/Resources/  # fonts already in the SPM bundle; copy as needed
 ```
 
-`Info.plist`: `CFBundleIdentifier=dev.jetty.app`, `CFBundleName=jetty`, `CFBundlePackageType=APPL`, `LSMinimumSystemVersion=14.0`, `NSHighResolutionCapable=true`, `NSPrincipalClass=NSApplication`, plus the user-notifications usage string required by PR 30 (`NSUserNotificationsUsageDescription` or the current AppKit key). **Sandbox off.** If an entitlements file is required for `--options runtime`: **none beyond `com.apple.security.app-sandbox=false`**. No `allow-jit`, no network client entitlement. `LSUIElement` no.
+`Info.plist`: `CFBundleIdentifier=dev.jetty.app`, `CFBundleName=Jetty`, `CFBundlePackageType=APPL`, `LSMinimumSystemVersion=14.0`, `NSHighResolutionCapable=true`, `NSPrincipalClass=NSApplication`, plus the user-notifications usage string required by PR 30 (`NSUserNotificationsUsageDescription` or the current AppKit key). **Sandbox off.** If an entitlements file is required for `--options runtime`: **none beyond `com.apple.security.app-sandbox=false`**. No `allow-jit`, no network client entitlement. `LSUIElement` no.
 
-Sign: `codesign --force --sign "Developer ID Application: …" --options runtime --timestamp jetty.app`. Ad-hoc remains the default for local `build-app.sh`.
+Sign: `codesign --force --sign "Developer ID Application: …" --options runtime --timestamp Jetty.app`. Ad-hoc remains the default for local `build-app.sh`.
 
 `scripts/notarize.sh`: `xcrun notarytool submit --wait` + `stapler staple`. Not a gate for development.
 
@@ -1128,7 +1128,7 @@ Skip method (review): (a) memcpy skipped rows from the previous ring slot; (b) o
 
 | Threat | Mitigation |
 | --- | --- |
-| OSC 9 / 777 notification spoof | Sanitize C0/C1/bidi; cap lengths; title prefix is the app name `jetty` only if OSC 9 has no title. Do not open URLs from notification clicks. Config deny. |
+| OSC 9 / 777 notification spoof | Sanitize C0/C1/bidi; cap lengths; title prefix is the app name `Jetty` only if OSC 9 has no title. Do not open URLs from notification clicks. Config deny. |
 | OSC 9;4 | In-grid bar only. No network. |
 | Auto URL `file:` | Deny, same as OSC 8. Detector hits are filtered through `LinkURL.openable`. |
 | Drag-drop | Paths are pasted as quoted text into the PTY, not executed. Bracketed paste when 2004. |
@@ -1384,7 +1384,7 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 - **Status:** **done**
 - **Files:** `scripts/build-app.sh`, `scripts/notarize.sh`, `Resources/Info.plist`
 - **Dependencies:** none (PR 30 nicer with this plist)
-- **Changes:** Produce `jetty.app` with `CFBundleIdentifier=dev.jetty.app`, notifications usage string, sandbox off. Ad-hoc sign by default. Hardened-runtime entitlements: none beyond `app-sandbox=false` if a file is required. `notarize.sh` for Developer ID. No xcodeproj.
+- **Changes:** Produce `Jetty.app` with `CFBundleIdentifier=dev.jetty.app`, notifications usage string, sandbox off. Ad-hoc sign by default. Hardened-runtime entitlements: none beyond `app-sandbox=false` if a file is required. `notarize.sh` for Developer ID. No xcodeproj.
 
 ### PR 37 — Optional xcodeproj wrapper
 

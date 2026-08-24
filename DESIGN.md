@@ -1,4 +1,4 @@
-# jetty — truthful xterm-256color macOS terminal
+# Jetty — truthful xterm-256color macOS terminal
 
 | Field | Value |
 | --- | --- |
@@ -152,9 +152,9 @@ Recorded 2026-08-21. Do not reopen.
 
 | Decision | Resolution |
 | --- | --- |
-| Display name | **jetty** |
+| Display name | **Jetty** |
 | Repo | `/Users/jmiller/dev/jetty` |
-| Bundle ID / `CFBundleName` | `dev.jetty.app` / `jetty` |
+| Bundle ID / `CFBundleName` | `dev.jetty.app` / `Jetty` |
 | `TERM` / `COLORTERM` / `TERM_PROGRAM` / version | `xterm-256color` / `truecolor` / `jetty` / `0.1.0` |
 | Config path | `~/.config/jetty/config` (`XDG_CONFIG_HOME`) |
 | Platform / language | Apple Silicon, macOS 14+, Swift 6 + MSL + C (PTY **and** VT hot path) |
@@ -991,7 +991,7 @@ jetty/
 
 - linux16term shipped SPM-only; shaders are a Swift string; fonts are module resources.
 - ghosvt’s xcodeproj exists to force-load `libghostty-vt.a` and sign a sandbox-off app. jetty has neither a static Zig archive nor a v1 notarization requirement.
-- `scripts/build-app.sh` can `swift build -c release --disable-sandbox`, assemble `jetty.app` with `Info.plist` (`CFBundleIdentifier=dev.jetty.app`, `CFBundleName=jetty`, sandbox off / no entitlements file), ad-hoc `codesign`. Tests stay `swift test --disable-sandbox`.
+- `scripts/build-app.sh` can `swift build -c release --disable-sandbox`, assemble `Jetty.app` with `Info.plist` (`CFBundleIdentifier=dev.jetty.app`, `CFBundleName=Jetty`, sandbox off / no entitlements file), ad-hoc `codesign`. Tests stay `swift test --disable-sandbox`.
 
 Follow-on: xcodeproj if notarization or an asset catalog becomes real.
 

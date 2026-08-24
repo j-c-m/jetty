@@ -43,7 +43,7 @@ private final class Poster: NSObject, UNUserNotificationCenterDelegate, @uncheck
     static func deliver(title: String, body: String, subtitle: String) {
         guard let center = center() else { return }
         let content = UNMutableNotificationContent()
-        content.title = title.isEmpty ? "jetty" : title
+        content.title = title.isEmpty ? "Jetty" : title
         if !subtitle.isEmpty, subtitle != content.title {
             content.subtitle = subtitle
         }

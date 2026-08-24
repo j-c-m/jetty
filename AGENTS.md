@@ -1,4 +1,4 @@
-# Agent guide — jetty
+# Agent guide — Jetty
 
 Swift 6 + C macOS terminal (`dev.jetty.app`). Locked 16-byte `Cell`. `TERM=xterm-256color`. Do not wrap Ghostty. Do not grow linux16term. Do not densify the cell for benches.
 
