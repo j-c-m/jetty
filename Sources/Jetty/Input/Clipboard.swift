@@ -1,3 +1,5 @@
+import AppKit
+
 public enum Clipboard {
     public static let pasteStart: [UInt8] = [0x1B, 0x5B, 0x32, 0x30, 0x30, 0x7E]
     public static let pasteEnd: [UInt8] = [0x1B, 0x5B, 0x32, 0x30, 0x31, 0x7E]
@@ -34,5 +36,51 @@ public enum Clipboard {
     /// Quote paths and join with spaces for a drop onto the PTY.
     public static func droppedPaths(_ paths: [String]) -> String {
         paths.map(posixQuote).joined(separator: " ")
+    }
+
+    /// File URLs, then a clipboard image as a temp PNG, then plain string.
+    public static func pasteboardPayload(_ pb: NSPasteboard = .general) -> String? {
+        let files = pb.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL]
+        if let files, !files.isEmpty {
+            return droppedPaths(files.map(\.path))
+        }
+        if let path = writeImage(from: pb) {
+            return posixQuote(path)
+        }
+        if let str = pb.string(forType: .string), !str.isEmpty {
+            return str
+        }
+        return nil
+    }
+
+    static func pngFromTIFF(_ tiff: Data) -> Data? {
+        guard let img = NSImage(data: tiff),
+              let tiffRep = img.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiffRep)
+        else { return nil }
+        return rep.representation(using: .png, properties: [:])
+    }
+
+    private static func writeImage(from pb: NSPasteboard) -> String? {
+        let png: Data?
+        if let d = pb.data(forType: .png) {
+            png = d
+        } else if let tiff = pb.data(forType: .tiff) {
+            png = pngFromTIFF(tiff)
+        } else {
+            return nil
+        }
+        guard let png else { return nil }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jetty-paste-\(UUID().uuidString).png")
+        do {
+            try png.write(to: url, options: .atomic)
+        } catch {
+            return nil
+        }
+        return url.path
     }
 }

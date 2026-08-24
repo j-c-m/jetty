@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import Jetty
 
@@ -40,5 +41,32 @@ final class ClipboardTests: XCTestCase {
             Clipboard.droppedPaths(["/a b", "/c"]),
             "'/a b' '/c'"
         )
+    }
+
+    func testPasteboardPayloadPrefersFileURL() {
+        let pb = NSPasteboard(name: .init("jetty.test.pasteboard.files"))
+        pb.clearContents()
+        pb.writeObjects([URL(fileURLWithPath: "/tmp/foo bar") as NSURL])
+        XCTAssertEqual(Clipboard.pasteboardPayload(pb), "'/tmp/foo bar'")
+    }
+
+    func testPasteboardPayloadStringWhenNoFile() {
+        let pb = NSPasteboard(name: .init("jetty.test.pasteboard.string"))
+        pb.clearContents()
+        pb.setString("hello", forType: .string)
+        XCTAssertEqual(Clipboard.pasteboardPayload(pb), "hello")
+    }
+
+    func testPngFromTIFF() {
+        let img = NSImage(size: NSSize(width: 2, height: 2))
+        img.lockFocus()
+        NSColor.red.setFill()
+        NSRect(x: 0, y: 0, width: 2, height: 2).fill()
+        img.unlockFocus()
+        guard let tiff = img.tiffRepresentation else {
+            XCTFail("tiff")
+            return
+        }
+        XCTAssertNotNil(Clipboard.pngFromTIFF(tiff))
     }
 }

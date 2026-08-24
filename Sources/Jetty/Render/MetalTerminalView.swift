@@ -1439,7 +1439,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     @objc public func paste(_ sender: Any?) {
-        guard let str = NSPasteboard.general.string(forType: .string) else { return }
+        guard let str = Clipboard.pasteboardPayload() else { return }
         pasteText(str)
     }
 
