@@ -138,6 +138,94 @@ static void osc_title(const jt_vt_host *h, const uint8_t *p, int n) {
     h->set_title(h->ctx, out, (size_t)o);
 }
 
+static int utf8_sanitize(const uint8_t *p, int n, uint8_t *out, int cap) {
+    int o = 0;
+    uint8_t st = 0;
+    uint32_t acc = 0;
+    for (int i = 0; i < n && o < cap; i++) {
+        uint32_t cp = 0;
+        int r = jt_utf8_next(&st, &acc, p[i], &cp);
+        if (r != 1 && r != 2) continue;
+        if (!title_ok(cp)) continue;
+        if (cp < 0x80) {
+            out[o++] = (uint8_t)cp;
+        } else if (cp < 0x800) {
+            if (o + 2 > cap) break;
+            out[o++] = (uint8_t)(0xC0 | (cp >> 6));
+            out[o++] = (uint8_t)(0x80 | (cp & 0x3F));
+        } else if (cp < 0x10000) {
+            if (o + 3 > cap) break;
+            out[o++] = (uint8_t)(0xE0 | (cp >> 12));
+            out[o++] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F));
+            out[o++] = (uint8_t)(0x80 | (cp & 0x3F));
+        } else {
+            if (o + 4 > cap) break;
+            out[o++] = (uint8_t)(0xF0 | (cp >> 18));
+            out[o++] = (uint8_t)(0x80 | ((cp >> 12) & 0x3F));
+            out[o++] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F));
+            out[o++] = (uint8_t)(0x80 | (cp & 0x3F));
+        }
+    }
+    return o;
+}
+
+static int conemu_cmd(const uint8_t *p, int n, int i, uint8_t digit) {
+    if (i >= n || p[i] != digit) return 0;
+    if (i + 1 >= n) return 1;
+    return p[i + 1] == ';';
+}
+
+static void osc9(const jt_vt_host *h, const uint8_t *p, int n, int i) {
+    if (!h) return;
+    /* OSC 9;4;<0-4> optionally ;pct. Else iTerm2 notify. */
+    if (i + 2 < n && p[i] == '4' && p[i + 1] == ';' && p[i + 2] >= '0' && p[i + 2] <= '4') {
+        uint8_t st = (uint8_t)(p[i + 2] - '0');
+        /* Omitted percent: set is 0, else 255. Remove/indeterminate ignore ;pct. */
+        uint8_t pct8 = st == 1 ? 0 : 255;
+        int j = i + 3;
+        if ((st == 1 || st == 2 || st == 4) && j < n && p[j] == ';') {
+            j++;
+            uint32_t pct = 0;
+            int k = j;
+            if (!parse_num(p, n, &k, &pct) || k != n) {
+                pct8 = 255;
+            } else if (pct > 100) {
+                pct8 = 100;
+            } else {
+                pct8 = (uint8_t)pct;
+            }
+        }
+        if (h->progress) h->progress(h->ctx, st, pct8);
+        return;
+    }
+    if (conemu_cmd(p, n, i, '1') || conemu_cmd(p, n, i, '2')) return;
+    if (!h->notify) return;
+    uint8_t body[1024];
+    int nb = utf8_sanitize(p + i, n - i, body, 1024);
+    if (nb <= 0) return;
+    static const uint8_t title[] = "jetty";
+    h->notify(h->ctx, title, 5, body, (size_t)nb);
+}
+
+static void osc777(const jt_vt_host *h, const uint8_t *p, int n, int i) {
+    if (!h || !h->notify) return;
+    if (i + 7 > n || memcmp(p + i, "notify;", 7) != 0) return;
+    i += 7;
+    int t0 = i;
+    while (i < n && p[i] != ';') i++;
+    uint8_t title[256];
+    int nt = utf8_sanitize(p + t0, i - t0, title, 256);
+    if (i < n && p[i] == ';') i++;
+    uint8_t body[1024];
+    int nb = utf8_sanitize(p + i, n - i, body, 1024);
+    if (nt <= 0 && nb <= 0) return;
+    if (nt <= 0) {
+        memcpy(title, "jetty", 5);
+        nt = 5;
+    }
+    h->notify(h->ctx, title, (size_t)nt, body, (size_t)nb);
+}
+
 static void osc4(jt_scr *s, const jt_vt_host *h, const uint8_t *p, int n, int i) {
     if (!s) return;
     while (i < n) {
@@ -269,12 +357,18 @@ void jt_osc_dispatch(jt_scr *s, const jt_vt_host *h, const uint8_t *p, int n) {
         else jt_scr_set_osc8(s, idbuf[0] ? idbuf : NULL, uri);
         break;
     }
+    case 9:
+        osc9(h, p, n, i);
+        break;
     case 52:
         osc52(h, p, n, i);
         break;
     case 133:
         if (h && h->osc133 && i < n)
             h->osc133(h->ctx, p[i], p + i, (size_t)(n - i));
+        break;
+    case 777:
+        osc777(h, p, n, i);
         break;
     case 104:
         if (s) {

@@ -18,6 +18,10 @@ public final class Parser {
     public var onOsc133: ((UInt8, [UInt8]) -> Void)?
     public var onSizeReport: ((Int32) -> Void)?
     public var onHistoryCleared: (() -> Void)?
+    public var onNotify: ((String, String) -> Void)?
+    public var onProgress: ((UInt8, UInt8) -> Void)?
+    public var notifies: [(String, String)] = []
+    public var progress: [(UInt8, UInt8)] = []
     public var onTitle: ((String) -> Void)?
     public var onOsc52Write: ((UInt8, [UInt8]) -> Void)?
     public var onOsc52Read: ((UInt8) -> Void)?
@@ -44,6 +48,8 @@ public final class Parser {
         host.osc133 = jtHostOsc133
         host.size_report = jtHostSizeReport
         host.history_cleared = jtHostHistoryCleared
+        host.notify = jtHostNotify
+        host.progress = jtHostProgress
     }
 
     deinit {
@@ -59,6 +65,8 @@ public final class Parser {
         osc52Reads.removeAll()
         osc7.removeAll()
         osc133.removeAll()
+        notifies.removeAll()
+        progress.removeAll()
     }
 
     public func feed(_ bytes: UnsafePointer<UInt8>, count: Int) {
@@ -129,5 +137,17 @@ public final class Parser {
 
     func handleHistoryCleared() {
         onHistoryCleared?()
+    }
+
+    func handleNotify(_ title: [UInt8], _ body: [UInt8]) {
+        let t = String(bytes: title, encoding: .utf8) ?? ""
+        let b = String(bytes: body, encoding: .utf8) ?? ""
+        notifies.append((t, b))
+        onNotify?(t, b)
+    }
+
+    func handleProgress(_ state: UInt8, _ percent: UInt8) {
+        progress.append((state, percent))
+        onProgress?(state, percent)
     }
 }

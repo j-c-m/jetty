@@ -20,6 +20,7 @@ public final class TerminalSession: @unchecked Sendable {
     public var onTitle: (@Sendable (String) -> Void)?
     public var osc52WriteAllow = true
     public var osc52ReadAsk = true
+    public var onProgress: (@Sendable (UInt8, UInt8) -> Void)?
     public private(set) var osc7: String = ""
     public private(set) var osc133: [(line: UInt64, action: UInt8, opts: [UInt8])] = []
 
@@ -75,6 +76,11 @@ public final class TerminalSession: @unchecked Sendable {
         }
         parser.onSizeReport = { [weak self] kind in
             self?.replySizeReport(kind)
+        }
+        parser.onProgress = { [weak self] state, percent in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.onProgress?(state, percent) }
+            }
         }
     }
 

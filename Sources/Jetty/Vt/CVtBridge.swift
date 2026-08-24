@@ -71,3 +71,25 @@ func jtHostHistoryCleared(_ ctx: UnsafeMutableRawPointer?) {
     guard let ctx else { return }
     Unmanaged<ParserGlue>.fromOpaque(ctx).takeUnretainedValue().parser.handleHistoryCleared()
 }
+
+func jtHostNotify(
+    _ ctx: UnsafeMutableRawPointer?,
+    _ title: UnsafePointer<UInt8>?,
+    _ nt: Int,
+    _ body: UnsafePointer<UInt8>?,
+    _ nb: Int
+) {
+    guard let ctx else { return }
+    let t: [UInt8]
+    if let title, nt > 0 { t = Array(UnsafeBufferPointer(start: title, count: nt)) }
+    else { t = [] }
+    let b: [UInt8]
+    if let body, nb > 0 { b = Array(UnsafeBufferPointer(start: body, count: nb)) }
+    else { b = [] }
+    Unmanaged<ParserGlue>.fromOpaque(ctx).takeUnretainedValue().parser.handleNotify(t, b)
+}
+
+func jtHostProgress(_ ctx: UnsafeMutableRawPointer?, _ state: UInt8, _ percent: UInt8) {
+    guard let ctx else { return }
+    Unmanaged<ParserGlue>.fromOpaque(ctx).takeUnretainedValue().parser.handleProgress(state, percent)
+}

@@ -58,6 +58,12 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var findSig: UInt64 = 0
     private var findIndex = 0
     private var autoURLHit: AutoURL.Hit?
+    private var progressState: UInt8 = 0
+    private var progressPercent: UInt8 = 0
+    private var progressAnimWidth: CGFloat = 0
+    private let progressChrome = ProgressHairline()
+    private let progressTrackLayer = CALayer()
+    private let progressFillLayer = CALayer()
 
     public init(session: TerminalSession, config: AppConfig, device: MTLDevice, backingScale: CGFloat) {
         self.session = session
@@ -88,6 +94,22 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             }
         }
         registerForDraggedTypes([.fileURL, .string])
+        progressChrome.wantsLayer = true
+        progressChrome.layer?.masksToBounds = true
+        progressTrackLayer.anchorPoint = .zero
+        progressFillLayer.anchorPoint = .zero
+        progressChrome.layer?.addSublayer(progressTrackLayer)
+        progressChrome.layer?.addSublayer(progressFillLayer)
+        progressChrome.isHidden = true
+        progressChrome.autoresizingMask = [.width, .minYMargin]
+        progressChrome.onLayout = { [weak self] in
+            self?.applyProgressAppearance()
+        }
+        session.onProgress = { @Sendable [weak self] state, percent in
+            MainActor.assumeIsolated {
+                self?.setProgress(state: state, percent: percent)
+            }
+        }
     }
 
     required init(coder: NSCoder) { fatalError() }
@@ -110,6 +132,9 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         super.viewDidMoveToWindow()
         applyChrome(session.screen.defaultBgRGB, reverse: false)
         refreshInsets()
+        if let bar = progressTitlebar() {
+            attachProgressChrome(to: bar)
+        }
         if !syncBackingScale() {
             relayout()
         }
@@ -499,7 +524,9 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let dfg = SIMD3(Float(defFG.r) / 255, Float(defFG.g) / 255, Float(defFG.b) / 255)
         let dbg = SIMD3(Float(defBG.r) / 255, Float(defBG.g) / 255, Float(defBG.b) / 255)
         if ulNeed + curNeed + preNeed + linkNeed > 0,
-           let ov = renderer.prepareOverlays(count: ulNeed + curNeed + preNeed + linkNeed)
+           let ov = renderer.prepareOverlays(
+            count: ulNeed + curNeed + preNeed + linkNeed
+           )
         {
             if curNeed > 0 {
                 overlayN += writeCursorOverlay(
@@ -627,6 +654,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 sub.isHidden = true
             }
         }
+        attachProgressChrome(to: container)
     }
 
     /// Pad plus `safeAreaInsets` so the titlebar / traffic lights do not cover row 0.
@@ -891,6 +919,111 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         return w
     }
 
+    private func setProgress(state: UInt8, percent: UInt8) {
+        if !config.progressStyle || state == 0 {
+            if progressState == 0 { return }
+            progressState = 0
+            progressPercent = 0
+            progressFillLayer.removeAnimation(forKey: "bounce")
+            progressAnimWidth = 0
+            progressChrome.isHidden = true
+            return
+        }
+        progressState = state
+        progressPercent = percent == 255 ? 255 : min(100, percent)
+        if let bar = progressTitlebar() {
+            attachProgressChrome(to: bar)
+        }
+        progressChrome.isHidden = false
+        applyProgressAppearance()
+    }
+
+    private func progressIsBounce() -> Bool {
+        if progressState == 0 || progressState > 4 { return false }
+        if progressState == 3 { return true }
+        if progressState == 4 { return false }
+        return progressPercent == 255
+    }
+
+    private func progressTitlebar() -> NSView? {
+        guard let host = window?.standardWindowButton(.closeButton)?.superview else { return nil }
+        return host.superview ?? host
+    }
+
+    private func attachProgressChrome(to titlebar: NSView) {
+        if progressChrome.superview !== titlebar {
+            progressChrome.removeFromSuperview()
+            titlebar.addSubview(progressChrome)
+        }
+        let h: CGFloat = 2
+        let w = titlebar.bounds.width
+        let y = titlebar.isFlipped ? titlebar.bounds.height - h : 0
+        progressChrome.frame = CGRect(x: 0, y: y, width: w, height: h)
+        applyProgressAppearance()
+    }
+
+    private func applyProgressAppearance() {
+        let w = progressChrome.bounds.width
+        let h: CGFloat = 2
+        guard w > 0 else { return }
+        session.lock.lock()
+        let ink: RGB
+        if progressState == 2 {
+            ink = session.screen.paletteColor(1)
+        } else if progressState == 4 {
+            ink = session.screen.paletteColor(3)
+        } else if progressPercent == 100 {
+            ink = session.screen.paletteColor(2)
+        } else {
+            ink = session.screen.defaultFgRGB
+        }
+        session.lock.unlock()
+        let r = CGFloat(ink.r) / 255
+        let g = CGFloat(ink.g) / 255
+        let b = CGFloat(ink.b) / 255
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if progressIsBounce() {
+            // 25% chunk, 1.2s ease-in-out bounce, track 0.3.
+            progressTrackLayer.backgroundColor = NSColor(srgbRed: r, green: g, blue: b, alpha: 0.3).cgColor
+            progressFillLayer.backgroundColor = NSColor(srgbRed: r, green: g, blue: b, alpha: 1).cgColor
+            let barW = w * 0.25
+            progressTrackLayer.frame = CGRect(x: 0, y: 0, width: w, height: h)
+            progressFillLayer.bounds = CGRect(x: 0, y: 0, width: barW, height: h)
+            progressFillLayer.position = .zero
+            CATransaction.commit()
+            if abs(progressAnimWidth - w) > 0.5 {
+                progressFillLayer.removeAnimation(forKey: "bounce")
+                progressAnimWidth = w
+            }
+            if progressFillLayer.animation(forKey: "bounce") == nil, w > barW {
+                let anim = CABasicAnimation(keyPath: "position.x")
+                anim.fromValue = 0
+                anim.toValue = w - barW
+                anim.duration = 1.2
+                anim.autoreverses = true
+                anim.repeatCount = .infinity
+                anim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                progressFillLayer.add(anim, forKey: "bounce")
+            }
+        } else {
+            progressFillLayer.removeAnimation(forKey: "bounce")
+            progressAnimWidth = 0
+            progressTrackLayer.backgroundColor = NSColor.clear.cgColor
+            progressFillLayer.backgroundColor = NSColor(srgbRed: r, green: g, blue: b, alpha: 1).cgColor
+            let pct: CGFloat
+            if progressPercent == 255 {
+                pct = progressState == 4 ? 100 : 0
+            } else {
+                pct = CGFloat(progressPercent)
+            }
+            let sx = w * pct / 100
+            progressTrackLayer.frame = .zero
+            progressFillLayer.frame = CGRect(x: 0, y: 0, width: sx, height: h)
+            CATransaction.commit()
+        }
+    }
+
     private func armSyncTimeout() {
         if syncTimeoutWork != nil { return }
         let work = DispatchWorkItem { [weak self] in
@@ -981,6 +1114,9 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         }
         session.osc52WriteAllow = next.osc52Write == .allow
         session.osc52ReadAsk = next.osc52Read == .ask
+        if !next.progressStyle {
+            setProgress(state: 0, percent: 0)
+        }
         session.lock.lock()
         session.screen.setPaletteOverlay(next.paletteOverlay, mask: next.paletteOverlayMask)
         session.lock.unlock()
@@ -1892,6 +2028,17 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         pinLiveBottom()
         session.writeToPty(bytes)
     }
+}
+
+private final class ProgressHairline: NSView {
+    var onLayout: (() -> Void)?
+
+    override func layout() {
+        super.layout()
+        onLayout?()
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 extension MetalTerminalView: @preconcurrency NSTextInputClient {

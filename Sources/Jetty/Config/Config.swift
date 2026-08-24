@@ -12,6 +12,7 @@ public struct AppConfig: Sendable {
     public var paletteOverlayMask: UInt16 = 0
     public var linkURL: Bool = true
     public var desktopNotifications: Bool = true
+    public var progressStyle: Bool = true
     public var macosAutoSecureInput: Bool = true
     public var scrollbackLines: Int = 50_000
     public var copyOnSelect: Bool = true
@@ -75,6 +76,8 @@ public struct AppConfig: Sendable {
                 c.linkURL = parseBool(val)
             case "desktop-notifications":
                 c.desktopNotifications = parseBool(val)
+            case "progress-style":
+                c.progressStyle = parseBool(val)
             case "macos-auto-secure-input":
                 c.macosAutoSecureInput = parseBool(val)
             case "scrollback-lines":

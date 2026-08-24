@@ -174,6 +174,10 @@ typedef struct jt_vt_host {
     void (*palette_changed)(void *ctx);
     void (*size_report)(void *ctx, int kind);
     void (*history_cleared)(void *ctx);
+    void (*notify)(void *ctx, const uint8_t *title, size_t nt,
+                   const uint8_t *body, size_t nb);
+    /* percent 255 = omitted. */
+    void (*progress)(void *ctx, uint8_t state, uint8_t percent);
 } jt_vt_host;
 
 void jt_osc_dispatch(jt_scr *s, const jt_vt_host *h, const uint8_t *p, int n);

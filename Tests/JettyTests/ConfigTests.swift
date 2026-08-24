@@ -17,6 +17,7 @@ final class ConfigTests: XCTestCase {
             palette-15 = f2f0ec
             link-url = false
             desktop-notifications = 0
+            progress-style = false
             macos-auto-secure-input = yes
             scrollback-lines = 100
             copy-on-select = no
@@ -37,6 +38,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(c.paletteOverlay[15], 0xF2F0EC)
         XCTAssertFalse(c.linkURL)
         XCTAssertFalse(c.desktopNotifications)
+        XCTAssertFalse(c.progressStyle)
         XCTAssertTrue(c.macosAutoSecureInput)
         XCTAssertEqual(c.scrollbackLines, 100)
         XCTAssertFalse(c.copyOnSelect)
@@ -60,6 +62,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(c.paletteOverlayMask, 0)
         XCTAssertEqual(c.backgroundOpacity, 1)
         XCTAssertTrue(c.linkURL)
+        XCTAssertTrue(c.progressStyle)
     }
 
     func testLigaturesAliases() {
