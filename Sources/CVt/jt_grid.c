@@ -635,6 +635,8 @@ static void print_wide(jt_scr *s, uint32_t scalar) {
 }
 
 void jt_scr_print_scalar(jt_scr *s, uint32_t scalar) {
+    s->last_print = scalar;
+    s->has_last_print = 1;
     if (scalar >= 0x20 && scalar < 0x7F) {
         consume_wrap(s);
         if (s->insert_mode) jt_scr_ich(s, 1);
@@ -685,6 +687,10 @@ void jt_scr_print_run(jt_scr *s, const uint8_t *p, size_t n) {
         } else {
             b->cx += (int32_t)take;
         }
+    }
+    if (n > 0) {
+        s->last_print = p[n - 1];
+        s->has_last_print = 1;
     }
 }
 
@@ -1190,6 +1196,8 @@ void jt_scr_ris(jt_scr *s) {
     s->g0 = 0;
     s->g1 = 1;
     s->gl = 0;
+    s->has_last_print = 0;
+    s->last_print = 0;
     s->auto_wrap = 1;
     s->insert_mode = 0;
     s->origin_mode = 0;

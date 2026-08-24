@@ -288,26 +288,48 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
     if (priv == '=') return;
 
     switch (final) {
+    case 'k':
     case 'A':
         scr->active->pending_wrap = 0;
         scr->active->cy -= pdef(p->params, p->np, 0, 1);
         if (scr->active->cy < 0) scr->active->cy = 0;
         break;
+    case 'e':
     case 'B':
         scr->active->pending_wrap = 0;
         scr->active->cy += pdef(p->params, p->np, 0, 1);
         if (scr->active->cy > scr->rows - 1) scr->active->cy = scr->rows - 1;
         break;
+    case 'a':
     case 'C':
         scr->active->pending_wrap = 0;
         scr->active->cx += pdef(p->params, p->np, 0, 1);
         if (scr->active->cx > scr->cols - 1) scr->active->cx = scr->cols - 1;
         break;
+    case 'j':
     case 'D':
         scr->active->pending_wrap = 0;
         scr->active->cx -= pdef(p->params, p->np, 0, 1);
         if (scr->active->cx < 0) scr->active->cx = 0;
         break;
+    case 'E':
+        scr->active->pending_wrap = 0;
+        scr->active->cy += pdef(p->params, p->np, 0, 1);
+        if (scr->active->cy > scr->rows - 1) scr->active->cy = scr->rows - 1;
+        jt_scr_cr(scr);
+        break;
+    case 'F':
+        scr->active->pending_wrap = 0;
+        scr->active->cy -= pdef(p->params, p->np, 0, 1);
+        if (scr->active->cy < 0) scr->active->cy = 0;
+        jt_scr_cr(scr);
+        break;
+    case 'I': {
+        int n = pdef(p->params, p->np, 0, 1);
+        for (int i = 0; i < n; i++) jt_scr_tab(scr);
+        break;
+    }
+    case '`':
     case 'G':
         scr->active->pending_wrap = 0;
         scr->active->cx = pdef(p->params, p->np, 0, 1) - 1;
@@ -356,11 +378,22 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
         break;
     }
     case 'Z': {
+        int n = pdef(p->params, p->np, 0, 1);
         jt_buf *b = scr->active;
         b->pending_wrap = 0;
-        int x = b->cx - 1;
-        while (x > 0 && !b->tabstops[x]) x--;
-        b->cx = x < 0 ? 0 : x;
+        for (int k = 0; k < n; k++) {
+            int x = b->cx - 1;
+            while (x > 0 && !b->tabstops[x]) x--;
+            b->cx = x < 0 ? 0 : x;
+            if (b->cx == 0) break;
+        }
+        break;
+    }
+    case 'b': {
+        if (!scr->has_last_print) break;
+        int n = pdef(p->params, p->np, 0, 1);
+        uint32_t cp = scr->last_print;
+        for (int i = 0; i < n; i++) jt_scr_print_scalar(scr, cp);
         break;
     }
     case 'c':

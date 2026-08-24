@@ -509,4 +509,58 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(s.cursorY, 4)
         XCTAssertEqual(s.cursorX, 7)
     }
+
+    func testCSICNLAndCPL() {
+        let s = Screen(cols: 20, rows: 10, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[5;5H\u{1B}[E")
+        XCTAssertEqual(s.cursorY, 5)
+        XCTAssertEqual(s.cursorX, 0)
+        p.feed("\u{1B}[2F")
+        XCTAssertEqual(s.cursorY, 3)
+        XCTAssertEqual(s.cursorX, 0)
+    }
+
+    func testCSICHTAndCBTCount() {
+        let s = Screen(cols: 40, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[I")
+        XCTAssertEqual(s.cursorX, 8)
+        p.feed("\u{1B}[2I")
+        XCTAssertEqual(s.cursorX, 24)
+        p.feed("\u{1B}[2Z")
+        XCTAssertEqual(s.cursorX, 8)
+    }
+
+    func testCSIREP() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("A\u{1B}[b")
+        XCTAssertEqual(s.plainString(), "AA")
+        p.feed("\u{1B}[3b")
+        XCTAssertEqual(s.plainString(), "AAAAA")
+        p.feed("\u{1B}c")
+        p.feed("\u{1B}[5b")
+        XCTAssertEqual(s.plainString(), "")
+    }
+
+    func testCSICursorAliases() {
+        let s = Screen(cols: 20, rows: 10, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[5;5H\u{1B}[k")
+        XCTAssertEqual(s.cursorY, 3)
+        XCTAssertEqual(s.cursorX, 4)
+        p.feed("\u{1B}[a")
+        XCTAssertEqual(s.cursorX, 5)
+        p.feed("\u{1B}[j")
+        XCTAssertEqual(s.cursorX, 4)
+        p.feed("\u{1B}[e")
+        XCTAssertEqual(s.cursorY, 4)
+        p.feed("\u{1B}[3`")
+        XCTAssertEqual(s.cursorX, 2)
+    }
 }

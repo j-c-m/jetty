@@ -69,6 +69,8 @@ typedef struct jt_scr {
     char *osc8_uri;
     int32_t pool_cells;
     uint32_t damage_gen;
+    uint32_t last_print;
+    uint8_t has_last_print;
 } jt_scr;
 
 typedef struct jt_rare {
