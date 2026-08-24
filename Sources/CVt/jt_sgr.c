@@ -1,5 +1,8 @@
 #include "jt_vt.h"
 
+#include <stdio.h>
+#include <string.h>
+
 static int colon_after(uint32_t seps, int i) {
     return (seps >> i) & 1;
 }
@@ -34,6 +37,66 @@ static void reset_pen(jt_scr *s) {
     s->pen.ul_color = COLOR_DEFAULT;
     s->pen.attrs = 0;
     jt_pen_refresh_extra(s);
+}
+
+static int sgr_lit(char *buf, int cap, int o, const char *s) {
+    int n = (int)strlen(s);
+    if (o < 0 || o + n >= cap) return -1;
+    memcpy(buf + o, s, (size_t)n);
+    buf[o + n] = 0;
+    return o + n;
+}
+
+static int sgr_fmt(char *buf, int cap, int o, const char *fmt, uint32_t a, uint32_t b, uint32_t c, int nargs) {
+    int w;
+    if (nargs == 3) w = snprintf(buf + o, (size_t)(cap - o), fmt, a, b, c);
+    else if (nargs == 1) w = snprintf(buf + o, (size_t)(cap - o), fmt, a);
+    else w = snprintf(buf + o, (size_t)(cap - o), "%s", fmt);
+    if (w < 0 || o + w >= cap) return -1;
+    return o + w;
+}
+
+static int sgr_color(char *buf, int cap, int o, int fg, uint32_t c) {
+    uint32_t t = color_type(c);
+    if (t == 0) return o;
+    if (t == 1) {
+        uint32_t idx = color_payload(c);
+        if (idx >= 16)
+            return sgr_fmt(buf, cap, o, fg ? ";38:5:%u" : ";48:5:%u", idx, 0, 0, 1);
+        if (idx >= 8)
+            return sgr_fmt(buf, cap, o, fg ? ";9%u" : ";10%u", idx - 8, 0, 0, 1);
+        return sgr_fmt(buf, cap, o, fg ? ";3%u" : ";4%u", idx, 0, 0, 1);
+    }
+    if (t == 2) {
+        uint32_t p = color_payload(c);
+        return sgr_fmt(buf, cap, o, fg ? ";38:2::%u:%u:%u" : ";48:2::%u:%u:%u",
+                       p >> 16, (p >> 8) & 255u, p & 255u, 3);
+    }
+    return o;
+}
+
+int jt_sgr_encode(const jt_scr *s, char *buf, int cap) {
+    if (!s || !buf || cap < 2) return -1;
+    int o = sgr_lit(buf, cap, 0, "0");
+    if (o < 0) return -1;
+    uint16_t a = s->pen.attrs;
+    if (a & ATTR_BOLD) { o = sgr_lit(buf, cap, o, ";1"); if (o < 0) return -1; }
+    if (a & ATTR_DIM) { o = sgr_lit(buf, cap, o, ";2"); if (o < 0) return -1; }
+    if (a & ATTR_ITALIC) { o = sgr_lit(buf, cap, o, ";3"); if (o < 0) return -1; }
+    uint16_t ul = (uint16_t)(a & ATTR_UL_MASK);
+    if (ul == UL_SINGLE) { o = sgr_lit(buf, cap, o, ";4"); if (o < 0) return -1; }
+    else if (ul == UL_DOUBLE) { o = sgr_lit(buf, cap, o, ";4:2"); if (o < 0) return -1; }
+    else if (ul == UL_CURLY) { o = sgr_lit(buf, cap, o, ";4:3"); if (o < 0) return -1; }
+    else if (ul == UL_DOTTED) { o = sgr_lit(buf, cap, o, ";4:4"); if (o < 0) return -1; }
+    else if (ul == UL_DASHED) { o = sgr_lit(buf, cap, o, ";4:5"); if (o < 0) return -1; }
+    if (a & ATTR_OVERLINE) { o = sgr_lit(buf, cap, o, ";53"); if (o < 0) return -1; }
+    if (a & ATTR_BLINK) { o = sgr_lit(buf, cap, o, ";5"); if (o < 0) return -1; }
+    if (a & ATTR_REVERSE) { o = sgr_lit(buf, cap, o, ";7"); if (o < 0) return -1; }
+    if (a & ATTR_HIDDEN) { o = sgr_lit(buf, cap, o, ";8"); if (o < 0) return -1; }
+    if (a & ATTR_STRIKETHROUGH) { o = sgr_lit(buf, cap, o, ";9"); if (o < 0) return -1; }
+    o = sgr_color(buf, cap, o, 1, s->pen.fg);
+    if (o < 0) return -1;
+    return sgr_color(buf, cap, o, 0, s->pen.bg);
 }
 
 void jt_sgr_apply(jt_scr *s, const uint16_t *p, int n, uint32_t seps) {

@@ -315,9 +315,8 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(p.progress.last?.0, 0)
         XCTAssertEqual(p.notifies.count, n0)
         p.feed("\u{1B}]9;4\u{07}")
-        XCTAssertEqual(p.notifies.last?.1, "4")
         p.feed("\u{1B}]9;4;5\u{07}")
-        XCTAssertEqual(p.notifies.last?.1, "4;5")
+        XCTAssertEqual(p.notifies.count, n0)
         let n = p.notifies.count
         p.feed("\u{1B}]9;1;sleep\u{07}")
         p.feed("\u{1B}]9;2;box\u{07}")
@@ -395,10 +394,13 @@ final class ParserTests: XCTestCase {
         p.feed("\u{1B}[18t")
         p.feed("\u{1B}[16t")
         p.feed("\u{1B}[21t")
+        p.feed("\u{1B}[22t")
+        p.feed("\u{1B}[22;1t")
         p.feed("\u{1B}[22;0t")
-        p.feed("\u{1B}[23;0t")
+        p.feed("\u{1B}[23;2t")
+        p.feed("\u{1B}[22;0;0t")
         p.feed("\u{1B}[14;1t")
-        XCTAssertEqual(kinds, [14, 18, 16, 21, 22, 23])
+        XCTAssertEqual(kinds, [14, 18, 16, 22, 23, 22])
     }
 
     func testXTGETTCAPAndDECRQSS() {
@@ -406,11 +408,48 @@ final class ParserTests: XCTestCase {
         let p = Parser()
         p.screen = s
         p.feed("\u{1B}P+q636F6C6F7273\u{1B}\\")
-        let t = String(bytes: p.writes, encoding: .utf8) ?? ""
-        XCTAssertTrue(t.contains("1+r"), t)
-        XCTAssertTrue(t.contains("636F6C6F7273=323536"), t)
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}P1+r636F6C6F7273=323536\u{1B}\\")
+        p.writes.removeAll()
+        p.feed("\u{1B}P+q636F6C6F7273;6B6273\u{1B}\\")
+        XCTAssertEqual(
+            String(bytes: p.writes, encoding: .utf8),
+            "\u{1B}P1+r636F6C6F7273=323536\u{1B}\\\u{1B}P1+r6B6273=7F\u{1B}\\"
+        )
+        p.writes.removeAll()
+        p.feed("\u{1B}P+q00;636F6C6F7273\u{1B}\\")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}P1+r636F6C6F7273=323536\u{1B}\\")
+        p.writes.removeAll()
+        let setulc = "536574756C63"
+        p.feed("\u{1B}P+q" + Array(repeating: setulc, count: 40).joined(separator: ";") + "\u{1B}\\")
+        let many = String(bytes: p.writes, encoding: .utf8) ?? ""
+        XCTAssertFalse(many.contains("P0+r"), many)
+        XCTAssertEqual(many.components(separatedBy: "\u{1B}P1+r\(setulc)=").count - 1, 40)
         p.writes.removeAll()
         p.feed("\u{1B}P$qm\u{1B}\\")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}P1$r0m\u{1B}\\")
+        p.writes.removeAll()
+        p.feed("\u{1B}P+q5463\u{1B}\\")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}P1+r5463\u{1B}\\")
+        p.writes.removeAll()
+        p.feed("\u{1B}P+q524742\u{1B}\\")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}P1+r524742=38\u{1B}\\")
+        p.writes.removeAll()
+        p.feed("\u{1B}P+q544E\u{1B}\\")
+        XCTAssertEqual(
+            String(bytes: p.writes, encoding: .utf8),
+            "\u{1B}P1+r544E=787465726D2D323536636F6C6F72\u{1B}\\"
+        )
+        p.writes.removeAll()
+        p.feed("\u{1B}[1;31m\u{1B}P$qm\u{1B}\\")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}P1$r0;1;31m\u{1B}\\")
+        p.writes.removeAll()
+        p.feed("\u{1B}[0;4:3m\u{1B}P$qm\u{1B}\\")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}P1$r0;4:3m\u{1B}\\")
+        p.writes.removeAll()
+        p.feed("\u{1B}[0;38:2::1:2:3m\u{1B}P$qm\u{1B}\\")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}P1$r0;38:2::1:2:3m\u{1B}\\")
+        p.writes.removeAll()
+        p.feed("\u{1B}[0m\u{1B}P$qm\u{1B}\\")
         XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}P1$r0m\u{1B}\\")
         p.writes.removeAll()
         p.feed("\u{1B}P+q00\u{1B}\\")
@@ -584,6 +623,16 @@ final class ParserTests: XCTestCase {
         p.feed("\u{1B}c")
         p.feed("\u{1B}[5b")
         XCTAssertEqual(s.plainString(), "")
+        p.feed("e\u{0301}\u{1B}[b")
+        XCTAssertEqual(s.cursorX, 2)
+        XCTAssertEqual(s.glyph(1, 0), UInt32(UInt8(ascii: "e")))
+        let c0 = s.row(0)[0]
+        XCTAssertEqual(c0.contentKind, CONTENT_GRAPHEME)
+        var n: UInt16 = 0
+        let cps = jt_grapheme_get(s.implPtr, c0.contentPayload, &n)
+        XCTAssertEqual(n, 2)
+        XCTAssertEqual(cps?[0], UInt32(UInt8(ascii: "e")))
+        XCTAssertEqual(cps?[1], 0x0301)
     }
 
     func testCSICursorAliases() {
@@ -633,18 +682,42 @@ final class ParserTests: XCTestCase {
     }
 
     func testReverseWrap() {
-        let s = Screen(cols: 4, rows: 3, scrollbackCapRows: 0)
+        let s = Screen(cols: 5, rows: 5, scrollbackCapRows: 0)
         let p = Parser()
         p.screen = s
-        p.feed("abcd\u{08}")
-        XCTAssertEqual(s.cursorY, 0)
-        XCTAssertEqual(s.cursorX, 2)
-        p.feed("\u{1B}[H\u{1B}[?45h\u{1B}[2;1H\u{08}")
+        p.feed("ABCDE\u{08}")
         XCTAssertEqual(s.cursorY, 0)
         XCTAssertEqual(s.cursorX, 3)
+        XCTAssertFalse(s.pendingWrap)
+        p.feed("\u{1B}c\u{1B}[?45hABCDE\u{08}X")
+        XCTAssertEqual(s.plainString(), "ABCDX")
+        p.feed("\u{1B}c\u{1B}[?45hABCDE\r\n1\u{1B}[2DX")
+        XCTAssertEqual(s.plainString(), "ABCDE\nX")
+        p.feed("\u{1B}c\u{1B}[?45hABCDE1\u{1B}[2DX")
+        XCTAssertEqual(s.plainString(), "ABCDX\n1")
+        p.feed("\u{1B}c\u{1B}[?45h\u{1B}[2;1H\u{08}")
+        XCTAssertEqual(s.cursorY, 1)
+        XCTAssertEqual(s.cursorX, 0)
+        p.feed("\u{1B}c\u{1B}[3;r\u{1B}[?45h\u{08}X")
+        XCTAssertEqual(s.plainString(), "\n\nX")
         p.writes.removeAll()
         p.feed("\u{1B}[?45$p")
         XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?45;1$y")
+    }
+
+    func testReverseWrapExtended() {
+        let s = Screen(cols: 5, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?1045hABCDE\r\n1\u{1B}[2DX")
+        XCTAssertEqual(s.plainString(), "ABCDX\n1")
+        p.feed("\u{1B}c\u{1B}[?1045hABCDE\r\n1\u{1B}[7DX")
+        XCTAssertEqual(s.plainString(), "ABCDE\n1\n    X")
+        p.feed("\u{1B}c\u{1B}[?45h\u{1B}[?1045hABCDE\r\n1\u{1B}[7DX")
+        XCTAssertEqual(s.plainString(), "ABCDE\n1\n    X")
+        p.feed("\u{1B}c\u{1B}[?1045h\u{1B}[2;1H\u{08}")
+        XCTAssertEqual(s.cursorY, 0)
+        XCTAssertEqual(s.cursorX, 4)
     }
 
     func testXTSAVEWrap() {
@@ -655,5 +728,88 @@ final class ParserTests: XCTestCase {
         XCTAssertFalse(s.autoWrap)
         p.feed("\u{1B}[20hxy\n")
         XCTAssertEqual(s.cursorX, 0)
+        p.feed("\u{1B}c")
+        XCTAssertTrue(s.cursorVisible)
+        XCTAssertTrue(s.autoWrap)
+        p.feed("\u{1B}[?25r\u{1B}[?7r")
+        XCTAssertTrue(s.cursorVisible)
+        XCTAssertTrue(s.autoWrap)
+        p.feed("\u{1B}[?25l\u{1B}[?25r")
+        XCTAssertFalse(s.cursorVisible)
+        p.feed("\u{1B}[?25h\u{1B}[?25s\u{1B}[?25l\u{1B}[?25r")
+        XCTAssertTrue(s.cursorVisible)
+    }
+
+    func testRISClearsInbandAndXtsave() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        var kinds: [Int32] = []
+        p.onSizeReport = { kinds.append($0) }
+        p.feed("\u{1B}[?7l\u{1B}[?7s\u{1B}[?2048h\u{1B}[?2031h\u{1B}[?2033h")
+        XCTAssertEqual(kinds, [48])
+        XCTAssertFalse(s.autoWrap)
+        p.feed("\u{1B}c")
+        kinds.removeAll()
+        p.writes.removeAll()
+        XCTAssertTrue(s.autoWrap)
+        p.feed("\u{1B}[?7r")
+        XCTAssertTrue(s.autoWrap)
+        p.feed("\u{1B}[?2048$p\u{1B}[?2031$p\u{1B}[?2033$p")
+        XCTAssertEqual(
+            String(bytes: p.writes, encoding: .utf8),
+            "\u{1B}[?2048;2$y\u{1B}[?2031;2$y\u{1B}[?2033;2$y"
+        )
+        p.feed("\u{1B}[?2048h")
+        XCTAssertEqual(kinds, [48])
+    }
+
+    func testInbandSizeReport() {
+        let session = TerminalSession(cols: 10, rows: 5, cellWidthPx: 8, cellHeightPx: 16, scrollbackCapRows: 0)
+        var replies: [UInt8] = []
+        session.parser.ptyWriter = { replies.append(contentsOf: $0) }
+        session.lock.lock()
+        session.parser.feed("\u{1B}[?2048h")
+        session.lock.unlock()
+        let enable = String(bytes: replies, encoding: .utf8) ?? ""
+        XCTAssertEqual(enable, "\u{1B}[48;5;10;80;80t")
+        replies.removeAll()
+        session.lock.lock()
+        session.parser.feed("\u{1B}[?2048h")
+        session.lock.unlock()
+        XCTAssertEqual(String(bytes: replies, encoding: .utf8), "\u{1B}[48;5;10;80;80t")
+        replies.removeAll()
+        session.setWinsize(cols: 12, rows: 6)
+        XCTAssertEqual(String(bytes: replies, encoding: .utf8), "\u{1B}[48;6;12;96;96t")
+        replies.removeAll()
+        session.lock.lock()
+        session.parser.feed("\u{1B}c")
+        session.lock.unlock()
+        session.setWinsize(cols: 14, rows: 7)
+        XCTAssertEqual(String(bytes: replies, encoding: .utf8), "")
+    }
+
+    func testTitleStackNoReport() {
+        final class Titles: @unchecked Sendable {
+            var items: [String] = []
+        }
+        let session = TerminalSession(cols: 10, rows: 5, cellWidthPx: 8, cellHeightPx: 16, scrollbackCapRows: 0)
+        var replies: [UInt8] = []
+        let titles = Titles()
+        session.parser.ptyWriter = { replies.append(contentsOf: $0) }
+        session.onTitle = { titles.items.append($0) }
+        session.lock.lock()
+        session.parser.feed("\u{1B}]0;hello\u{07}")
+        session.parser.feed("\u{1B}[22;0t")
+        session.parser.feed("\u{1B}]0;world\u{07}")
+        session.parser.feed("\u{1B}[23;0t")
+        session.parser.feed("\u{1B}[21t")
+        session.parser.feed("\u{1B}[22t")
+        session.lock.unlock()
+        let exp = expectation(description: "title")
+        DispatchQueue.main.async { exp.fulfill() }
+        wait(for: [exp], timeout: 1)
+        XCTAssertEqual(String(bytes: replies, encoding: .utf8) ?? "", "")
+        XCTAssertEqual(titles.items, ["hello", "world", "hello"])
     }
 }

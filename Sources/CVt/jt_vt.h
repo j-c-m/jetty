@@ -65,7 +65,7 @@ typedef struct jt_scr {
     uint8_t decckm, deckpam;
     uint8_t reverse_wrap, reverse_wrap_ext, linefeed_nl;
     uint8_t alt_esc, report_theme, report_vis, inband_size;
-    uint8_t xtsave_valid;
+    uint16_t xtsave_valid;
     uint8_t xtsave[16];
     void *gp;
     void *rp;
@@ -95,6 +95,7 @@ void jt_scr_ri(jt_scr *s);
 void jt_scr_cr(jt_scr *s);
 void jt_scr_nel(jt_scr *s);
 void jt_scr_bs(jt_scr *s);
+void jt_scr_cub(jt_scr *s, int n);
 void jt_scr_tab(jt_scr *s);
 
 void jt_scr_cup(jt_scr *s, int row, int col);
@@ -136,6 +137,7 @@ void jt_scr_set_palette_overlay(jt_scr *s, const uint32_t rgb16[16], uint16_t ma
 void jt_scr_palette_reset(jt_scr *s);
 void jt_scr_palette_reset_index(jt_scr *s, int idx);
 void jt_sgr_apply(jt_scr *s, const uint16_t *p, int n, uint32_t seps);
+int jt_sgr_encode(const jt_scr *s, char *buf, int cap);
 
 extern const uint8_t jt_width_lut[278528];
 

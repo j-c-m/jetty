@@ -201,13 +201,7 @@ static void osc9(const jt_vt_host *h, const uint8_t *p, int n, int i) {
     if (i < n && is_digit(p[i])) {
         int j = i;
         uint32_t cmd = 0;
-        if (parse_num(p, n, &j, &cmd) && cmd >= 1 && cmd <= 12) {
-            if (cmd == 4) {
-                /* handled above */
-            } else {
-                return;
-            }
-        }
+        if (parse_num(p, n, &j, &cmd) && cmd >= 1 && cmd <= 12) return;
     }
     if (!h->notify) return;
     uint8_t body[1024];

@@ -512,17 +512,54 @@ void jt_scr_nel(jt_scr *s) {
     jt_scr_index(s);
 }
 
-void jt_scr_bs(jt_scr *s) {
+void jt_scr_cub(jt_scr *s, int n) {
     jt_buf *b = s->active;
-    b->pending_wrap = 0;
-    if (b->cx > 0) {
-        b->cx--;
+    if (n < 1) n = 1;
+    int wrap_ext = s->reverse_wrap_ext && s->auto_wrap;
+    int wrap_rev = !wrap_ext && s->reverse_wrap && s->auto_wrap;
+    if (!wrap_ext && !wrap_rev) {
+        b->pending_wrap = 0;
+        b->cx -= n;
+        if (b->cx < 0) b->cx = 0;
         return;
     }
-    if ((s->reverse_wrap || s->reverse_wrap_ext) && s->auto_wrap && b->cy > 0) {
-        b->cy--;
-        b->cx = s->cols > 0 ? s->cols - 1 : 0;
+    if (b->pending_wrap) {
+        n -= 1;
+        b->pending_wrap = 0;
+        if (n == 0) return;
     }
+    int32_t top = b->scroll_top;
+    int32_t bot = b->scroll_bottom;
+    int32_t right = s->cols > 0 ? s->cols - 1 : 0;
+    int32_t left = 0;
+    if (b->cx == left && wrap_rev && b->cy <= top) {
+        b->cx = left;
+        b->cy = top;
+        return;
+    }
+    while (n > 0) {
+        int32_t max = b->cx - left;
+        int32_t amount = max < n ? max : n;
+        n -= (int)amount;
+        b->cx -= amount;
+        if (n == 0) break;
+        if (b->cy == top) {
+            if (!wrap_ext) break;
+            b->cx = right;
+            b->cy = bot;
+            n -= 1;
+            continue;
+        }
+        if (b->cy == 0) break;
+        if (!wrap_ext && !*wrap_at(s, b->cy - 1)) break;
+        b->cx = right;
+        b->cy -= 1;
+        n -= 1;
+    }
+}
+
+void jt_scr_bs(jt_scr *s) {
+    jt_scr_cub(s, 1);
 }
 
 void jt_scr_tab(jt_scr *s) {
@@ -650,9 +687,9 @@ static void print_wide(jt_scr *s, uint32_t scalar) {
 }
 
 void jt_scr_print_scalar(jt_scr *s, uint32_t scalar) {
-    s->last_print = scalar;
-    s->has_last_print = 1;
     if (scalar >= 0x20 && scalar < 0x7F) {
+        s->last_print = scalar;
+        s->has_last_print = 1;
         consume_wrap(s);
         if (s->insert_mode) jt_scr_ich(s, 1);
         place_graphic(s, content_scalar(scalar, WIDE_NARROW));
@@ -663,6 +700,8 @@ void jt_scr_print_scalar(jt_scr *s, uint32_t scalar) {
         attach_mark(s, scalar);
         return;
     }
+    s->last_print = scalar;
+    s->has_last_print = 1;
     if (w >= 2) {
         print_wide(s, scalar);
         return;
@@ -1249,6 +1288,11 @@ void jt_scr_ris(jt_scr *s) {
     s->alt_esc = 1;
     s->reverse_wrap = 0;
     s->reverse_wrap_ext = 0;
+    s->report_theme = 0;
+    s->report_vis = 0;
+    s->inband_size = 0;
+    s->xtsave_valid = 0;
+    memset(s->xtsave, 0, sizeof s->xtsave);
     s->linefeed_nl = 0;
     s->cursor_style = 2;
     s->mouse_event = 0;

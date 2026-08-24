@@ -116,7 +116,9 @@ static int dcs_hex_encode(const char *s, char *out, int cap) {
 static const char *xtgettcap_val(const char *key) {
     if (!strcmp(key, "colors")) return "256";
     if (!strcmp(key, "pairs")) return "32767";
-    if (!strcmp(key, "Tc") || !strcmp(key, "RGB")) return "";
+    if (!strcmp(key, "TN") || !strcmp(key, "name")) return "xterm-256color";
+    if (!strcmp(key, "Tc")) return "";
+    if (!strcmp(key, "RGB")) return "8";
     if (!strcmp(key, "kbs")) return "\x7f";
     if (!strcmp(key, "smxx")) return "\033[9m";
     if (!strcmp(key, "rmxx")) return "\033[29m";
@@ -128,7 +130,6 @@ static const char *xtgettcap_val(const char *key) {
     if (!strcmp(key, "Setulc")) return "\033[58:2::%p1%{65536}%/%d:%p1%{256}%/%{255}%&%d:%p1%{255}%&%d%;m";
     if (!strcmp(key, "Sync")) return "\033[?2026%?%p1%{1}%-%tl%eh%;";
     if (!strcmp(key, "Ms")) return "\033]52;%p1%s;%p2%s\007";
-    if (!strcmp(key, "name")) return "xterm-256color";
     return NULL;
 }
 
@@ -140,8 +141,6 @@ static void finish_dcs(jt_vt *p, jt_scr *scr, const jt_vt_host *h) {
     if (d[0] == '+' && d[1] == 'q') {
         int i = 2;
         int any = 0;
-        char out[1024];
-        int o = 0;
         while (i < n) {
             int start = i;
             while (i < n && d[i] != ';') i++;
@@ -149,33 +148,33 @@ static void finish_dcs(jt_vt *p, jt_scr *scr, const jt_vt_host *h) {
             if (dcs_hex_decode(d + start, i - start, key, (int)sizeof key) > 0) {
                 const char *val = xtgettcap_val(key);
                 if (val) {
-                    char kh[128], vh[256];
+                    char kh[128], vh[256], out[512];
                     dcs_hex_encode(key, kh, (int)sizeof kh);
                     dcs_hex_encode(val, vh, (int)sizeof vh);
-                    int w = snprintf(out + o, sizeof out - (size_t)o, "%s%s=%s",
-                                     o == 0 ? "\033P1+r" : ";", kh, vh);
-                    if (w > 0) o += w;
-                    any = 1;
+                    int w = val[0]
+                        ? snprintf(out, sizeof out, "\033P1+r%s=%s\033\\", kh, vh)
+                        : snprintf(out, sizeof out, "\033P1+r%s\033\\", kh);
+                    if (w > 0 && (size_t)w < sizeof out) {
+                        write_str(h, out);
+                        any = 1;
+                    }
                 }
             }
             if (i < n && d[i] == ';') i++;
         }
-        if (any && o + 3 < (int)sizeof out) {
-            memcpy(out + o, "\033\\", 3);
-            o += 2;
-            h->write_pty(h->ctx, (const uint8_t *)out, (size_t)o);
-        } else {
-            write_str(h, "\033P0+r\033\\");
-        }
+        if (!any) write_str(h, "\033P0+r\033\\");
         return;
     }
     if (d[0] == '$' && d[1] == 'q' && scr) {
         const uint8_t *q = d + 2;
         int qn = n - 2;
-        char buf[96];
+        char buf[128];
         int w = 0;
         if (qn == 1 && q[0] == 'm') {
-            w = snprintf(buf, sizeof buf, "\033P1$r0m\033\\");
+            char body[96];
+            int bl = jt_sgr_encode(scr, body, (int)sizeof body);
+            if (bl < 0) w = snprintf(buf, sizeof buf, "\033P0$r\033\\");
+            else w = snprintf(buf, sizeof buf, "\033P1$r%sm\033\\", body);
         } else if (qn == 1 && q[0] == 'r') {
             int top = scr->active->scroll_top + 1;
             int bot = scr->active->scroll_bottom + 1;
@@ -391,7 +390,10 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
                 case 2026: jt_sync_set(scr, set); break;
                 case 2031: scr->report_theme = (uint8_t)set; break;
                 case 2033: scr->report_vis = (uint8_t)set; break;
-                case 2048: scr->inband_size = (uint8_t)set; break;
+                case 2048:
+                    scr->inband_size = (uint8_t)set;
+                    if (set && h && h->size_report) h->size_report(h->ctx, 48);
+                    break;
                 default: break;
                 }
             }
@@ -415,23 +417,42 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
             int count = p->np > 0 ? p->np : 0;
             for (int i = 0; i < count; i++) {
                 uint16_t n = p->params[i];
-                uint8_t *slot = NULL;
+                int bit = -1;
                 uint8_t cur = 0;
                 switch (n) {
-                case 1: slot = &scr->xtsave[0]; cur = scr->decckm; if (restore) scr->decckm = *slot; break;
-                case 5: slot = &scr->xtsave[1]; cur = scr->reverse_video; if (restore) scr->reverse_video = *slot; break;
-                case 6: slot = &scr->xtsave[2]; cur = (uint8_t)scr->origin_mode; if (restore) scr->origin_mode = *slot; break;
-                case 7: slot = &scr->xtsave[3]; cur = (uint8_t)scr->auto_wrap; if (restore) scr->auto_wrap = *slot; break;
-                case 12: slot = &scr->xtsave[4]; cur = scr->cursor_blink; if (restore) scr->cursor_blink = *slot; break;
-                case 25: slot = &scr->xtsave[5]; cur = scr->cursor_visible; if (restore) scr->cursor_visible = *slot; break;
-                case 45: slot = &scr->xtsave[6]; cur = scr->reverse_wrap; if (restore) scr->reverse_wrap = *slot; break;
-                case 66: slot = &scr->xtsave[7]; cur = scr->deckpam; if (restore) scr->deckpam = *slot; break;
-                case 1045: slot = &scr->xtsave[8]; cur = scr->reverse_wrap_ext; if (restore) scr->reverse_wrap_ext = *slot; break;
+                case 1: bit = 0; cur = scr->decckm; break;
+                case 5: bit = 1; cur = scr->reverse_video; break;
+                case 6: bit = 2; cur = (uint8_t)scr->origin_mode; break;
+                case 7: bit = 3; cur = (uint8_t)scr->auto_wrap; break;
+                case 12: bit = 4; cur = scr->cursor_blink; break;
+                case 25: bit = 5; cur = scr->cursor_visible; break;
+                case 45: bit = 6; cur = scr->reverse_wrap; break;
+                case 66: bit = 7; cur = scr->deckpam; break;
+                case 1045: bit = 8; cur = scr->reverse_wrap_ext; break;
                 default: break;
                 }
-                if (slot && !restore) *slot = cur;
+                if (bit < 0) continue;
+                uint16_t mask = (uint16_t)(1u << bit);
+                if (restore) {
+                    if (!(scr->xtsave_valid & mask)) continue;
+                    cur = scr->xtsave[bit];
+                    switch (n) {
+                    case 1: scr->decckm = cur; break;
+                    case 5: scr->reverse_video = cur; break;
+                    case 6: scr->origin_mode = cur; break;
+                    case 7: scr->auto_wrap = cur; break;
+                    case 12: scr->cursor_blink = cur; break;
+                    case 25: scr->cursor_visible = cur; break;
+                    case 45: scr->reverse_wrap = cur; break;
+                    case 66: scr->deckpam = cur; break;
+                    case 1045: scr->reverse_wrap_ext = cur; break;
+                    default: break;
+                    }
+                } else {
+                    scr->xtsave[bit] = cur;
+                    scr->xtsave_valid |= mask;
+                }
             }
-            if (!restore) scr->xtsave_valid = 1;
         }
         return;
     }
@@ -463,17 +484,9 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
         if (scr->active->cx > scr->cols - 1) scr->active->cx = scr->cols - 1;
         break;
     case 'j':
-    case 'D': {
-        int n = pdef(p->params, p->np, 0, 1);
-        if (scr->reverse_wrap || scr->reverse_wrap_ext) {
-            for (int i = 0; i < n; i++) jt_scr_bs(scr);
-        } else {
-            scr->active->pending_wrap = 0;
-            scr->active->cx -= n;
-            if (scr->active->cx < 0) scr->active->cx = 0;
-        }
+    case 'D':
+        jt_scr_cub(scr, pdef(p->params, p->np, 0, 1));
         break;
-    }
     case 'E':
         scr->active->pending_wrap = 0;
         scr->active->cy += pdef(p->params, p->np, 0, 1);
@@ -619,10 +632,13 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
         break;
     case 't': {
         int kind = pdef(p->params, p->np, 0, 0);
-        if (kind == 14 || kind == 16 || kind == 18 || kind == 21) {
+        if (kind == 14 || kind == 16 || kind == 18) {
             if (p->np > 1) break;
             if (h && h->size_report) h->size_report(h->ctx, kind);
         } else if (kind == 22 || kind == 23) {
+            if (p->np < 2) break;
+            int which = (int)p->params[1];
+            if (which != 0 && which != 2) break;
             if (h && h->size_report) h->size_report(h->ctx, kind);
         }
         break;

@@ -129,14 +129,15 @@ public final class TerminalSession: @unchecked Sendable {
         let fd = masterFD
         let cw = cellWidthPx
         let ch = cellHeightPx
+        let reportCols = screen.cols
+        let reportRows = screen.rows
         let inband = screen.implPtr.pointee.inband_size != 0
         lock.unlock()
         if fd >= 0 {
             _ = jt_pty_set_winsize(fd, UInt16(max(2, cols)), UInt16(max(1, rows)), cw, ch)
         }
         if inband {
-            let seq = "\u{1B}[48;\(max(1, rows));\(max(2, cols))t"
-            parser.ptyWriter?(Array(seq.utf8))
+            parser.ptyWriter?(Array(inbandSizeSequence(cols: reportCols, rows: reportRows).utf8))
         }
         scheduleRedraw()
     }
@@ -153,8 +154,8 @@ public final class TerminalSession: @unchecked Sendable {
             seq = "\u{1B}[6;\(ch);\(cw)t"
         } else if kind == 18 {
             seq = "\u{1B}[8;\(rows);\(cols)t"
-        } else if kind == 21 {
-            seq = "\u{1B}]l\(windowTitle)\u{1B}\\"
+        } else if kind == 48 {
+            seq = inbandSizeSequence(cols: cols, rows: rows)
         } else if kind == 22 {
             if titleStack.count < 8 { titleStack.append(windowTitle) }
             return
@@ -170,6 +171,14 @@ public final class TerminalSession: @unchecked Sendable {
             return
         }
         parser.ptyWriter?(Array(seq.utf8))
+    }
+
+    private func inbandSizeSequence(cols: Int, rows: Int) -> String {
+        let r = max(1, rows)
+        let c = max(2, cols)
+        let hp = r * Int(cellHeightPx)
+        let wp = c * Int(cellWidthPx)
+        return "\u{1B}[48;\(r);\(c);\(hp);\(wp)t"
     }
 
     @MainActor
