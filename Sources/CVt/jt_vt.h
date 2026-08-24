@@ -64,7 +64,7 @@ typedef struct jt_scr {
     uint8_t cursor_style;
     uint8_t decckm, deckpam;
     uint8_t reverse_wrap, reverse_wrap_ext, linefeed_nl;
-    uint8_t alt_esc, report_theme, report_vis, inband_size;
+    uint8_t alt_esc, report_theme, report_vis, inband_size, mode_2027;
     uint16_t xtsave_valid;
     uint8_t xtsave[16];
     void *gp;
@@ -89,6 +89,19 @@ void jt_scr_resize(jt_scr *s, int32_t cols, int32_t rows);
 
 void jt_scr_print_scalar(jt_scr *s, uint32_t scalar);
 void jt_scr_print_run(jt_scr *s, const uint8_t *p, size_t n);
+void jt_scr_set_mode_2027(jt_scr *s, int on);
+int jt_scr_mode_2027(const jt_scr *s);
+
+enum {
+    JT_GB_IGNORE = 0,
+    JT_GB_NO_CHANGE = 1,
+    JT_GB_WIDE = 2,
+    JT_GB_NARROW = 3
+};
+int jt_grapheme_break(uint32_t cp1, uint32_t cp2, uint8_t *state);
+int jt_grapheme_width_effect(uint32_t prev, uint32_t cp);
+int jt_gb_emoji_vs_base(uint32_t cp);
+int jt_gb_width_zero(uint32_t cp);
 
 void jt_scr_index(jt_scr *s);
 void jt_scr_ri(jt_scr *s);

@@ -62,6 +62,10 @@ public final class Screen {
         set { implPtr.pointee.cursor_visible = newValue ? 1 : 0 }
     }
     public var decckm: Bool { implPtr.pointee.decckm != 0 }
+    public var mode2027: Bool {
+        get { jt_scr_mode_2027(implPtr) != 0 }
+        set { jt_scr_set_mode_2027(implPtr, newValue ? 1 : 0) }
+    }
     public var syncOutput: Bool {
         get { jt_sync_on(implPtr) != 0 }
         set { jt_sync_set(implPtr, newValue ? 1 : 0) }

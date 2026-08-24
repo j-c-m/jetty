@@ -667,6 +667,133 @@ static void attach_mark(jt_scr *s, uint32_t mark) {
     mark_row(s, y);
 }
 
+void jt_scr_set_mode_2027(jt_scr *s, int on) {
+    if (s) s->mode_2027 = on ? 1 : 0;
+}
+
+int jt_scr_mode_2027(const jt_scr *s) {
+    return s && s->mode_2027;
+}
+
+static int attach_col(jt_scr *s, int32_t *x_out) {
+    jt_buf *b = s->active;
+    int32_t x;
+    if (b->pending_wrap) x = s->cols - 1;
+    else if (b->cx > 0) x = b->cx - 1;
+    else return 0;
+    materialize_row(s, b->cy);
+    Cell *row = row_at(s, b->cy);
+    if ((row[x].content & CONTENT_WIDE_MASK) == WIDE_TAIL && x > 0) x--;
+    if ((row[x].content & CONTENT_WIDE_MASK) == WIDE_HEAD) return 0;
+    *x_out = x;
+    return 1;
+}
+
+static int load_cluster(jt_scr *s, Cell *cell, uint32_t *cps, uint16_t *n_out) {
+    if ((cell->content & CONTENT_KIND_MASK) == CONTENT_GRAPHEME) {
+        uint16_t gn = 0;
+        const uint32_t *old = jt_grapheme_get(s, cell->content & CONTENT_PAYLOAD, &gn);
+        if (!old || gn == 0) return 0;
+        if (gn > 16) gn = 16;
+        memcpy(cps, old, (size_t)gn * sizeof(uint32_t));
+        *n_out = gn;
+        return 1;
+    }
+    uint32_t p = cell->content & CONTENT_PAYLOAD;
+    if (!p) return 0;
+    cps[0] = p;
+    *n_out = 1;
+    return 1;
+}
+
+static void shrink_full_to_narrow(jt_scr *s, int32_t x, int32_t y) {
+    materialize_row(s, y);
+    Cell *row = row_at(s, y);
+    if ((row[x].content & CONTENT_WIDE_MASK) != WIDE_FULL) return;
+    Cell neu = row[x];
+    neu.content = (neu.content & ~CONTENT_WIDE_MASK) | WIDE_NARROW;
+    stamp_cell(s, &row[x], neu);
+    if (x + 1 < s->cols && (row[x + 1].content & CONTENT_WIDE_MASK) == WIDE_TAIL)
+        stamp_cell(s, &row[x + 1], blank_cell(s));
+    mark_row(s, y);
+}
+
+static void print_wide(jt_scr *s, uint32_t scalar);
+
+static void upgrade_narrow_to_full(jt_scr *s, int32_t x, int32_t y) {
+    jt_buf *b = s->active;
+    materialize_row(s, y);
+    Cell *row = row_at(s, y);
+    if ((row[x].content & CONTENT_WIDE_MASK) != WIDE_NARROW) return;
+
+    if (x == s->cols - 1) {
+        uint32_t cps[16];
+        uint16_t n = 0;
+        if (!s->auto_wrap || !load_cluster(s, &row[x], cps, &n) || n == 0) return;
+        stamp_cell(s, &row[x], blank_cell(s));
+        mark_row(s, y);
+        print_wide(s, cps[0]);
+        for (uint16_t i = 1; i < n; i++) attach_mark(s, cps[i]);
+        return;
+    }
+
+    if (s->insert_mode) jt_scr_ich(s, 1);
+    materialize_row(s, y);
+    row = row_at(s, y);
+    if (x + 1 >= s->cols) return;
+    Cell full = row[x];
+    full.content = (full.content & ~CONTENT_WIDE_MASK) | WIDE_FULL;
+    Cell tail = blank_cell(s);
+    tail.fg = full.fg;
+    tail.bg = full.bg;
+    tail.attrs = full.attrs;
+    tail.content = content_scalar(0, WIDE_TAIL);
+    stamp_cell(s, &row[x], full);
+    stamp_cell(s, &row[x + 1], tail);
+    mark_row(s, y);
+    if (x + 2 >= s->cols) {
+        b->cx = s->cols - 1;
+        b->pending_wrap = s->auto_wrap;
+    } else {
+        b->cx = x + 2;
+        b->pending_wrap = 0;
+    }
+}
+
+/* 1 = consumed. 0 = new graphic cluster, use v1 place. */
+static int print_2027(jt_scr *s, uint32_t scalar) {
+    int32_t x;
+    if (!attach_col(s, &x)) return 0;
+    Cell *row = row_at(s, s->active->cy);
+    uint32_t cps[16];
+    uint16_t n = 0;
+    if (!load_cluster(s, &row[x], cps, &n) || n == 0) return 0;
+
+    uint32_t prev = cps[0];
+    uint8_t state = 0;
+    for (uint16_t i = 1; i < n; i++) {
+        jt_grapheme_break(prev, cps[i], &state);
+        prev = cps[i];
+    }
+    uint8_t state_before = state;
+    if (jt_grapheme_break(prev, scalar, &state)) {
+        if (jt_codepoint_width(scalar) == 0) {
+            attach_mark(s, scalar);
+            return 1;
+        }
+        return 0;
+    }
+    int effect = jt_grapheme_width_effect(prev, scalar);
+    if (effect == JT_GB_IGNORE) {
+        (void)state_before;
+        return 1;
+    }
+    attach_mark(s, scalar);
+    if (effect == JT_GB_WIDE) upgrade_narrow_to_full(s, x, s->active->cy);
+    else if (effect == JT_GB_NARROW) shrink_full_to_narrow(s, x, s->active->cy);
+    return 1;
+}
+
 static void print_wide(jt_scr *s, uint32_t scalar) {
     jt_buf *b = s->active;
     consume_wrap(s);
@@ -712,6 +839,7 @@ void jt_scr_print_scalar(jt_scr *s, uint32_t scalar) {
         place_graphic(s, content_scalar(scalar, WIDE_NARROW));
         return;
     }
+    if (s->mode_2027 && print_2027(s, scalar)) return;
     int w = jt_codepoint_width(scalar);
     if (w == 0) {
         attach_mark(s, scalar);
@@ -1321,6 +1449,7 @@ void jt_scr_ris(jt_scr *s) {
     s->report_theme = 0;
     s->report_vis = 0;
     s->inband_size = 0;
+    s->mode_2027 = 0;
     s->xtsave_valid = 0;
     memset(s->xtsave, 0, sizeof s->xtsave);
     s->linefeed_nl = 0;

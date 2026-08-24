@@ -63,7 +63,7 @@ From DESIGN.md PR plan and closed questions:
 | Width-table Unicode bump | `scripts/gen-width-table.py` fetches UCD `latest`. **v1 committed `jt_width.inc` only.** `scripts/unicode/` is an untracked local cache. No version pin in the LUT header. |
 | Cell blink (`ATTR_BLINK`) | SGR 5/6 store the bit. v1 DESIGN toggles glyph visibility every 500 ms. `GridExpand` never reads it. Cursor blink is implemented. |
 | xcodeproj / notarization | SPM-only. `scripts/build-app.sh` runs `swift build -c release` and prints the binary path. No `.app`, no `Info.plist`, no sign, no notary. |
-| DEC 2027 | Ignored. DECRPM `CSI ? 2027 $ p` → state **4** permanently reset (`jt_vt.c` `dec_mode_state`). |
+| DEC 2027 | **done.** Default off. DECRPM 1/2. UTF-8 scalar path only. |
 | Smulx curly/dotted/dashed | SGR `4:3`/`4:4`/`4:5` pack `UL_CURLY`/`UL_DOTTED`/`UL_DASHED` (`jt_sgr.c`, `jt_cell.h`). Overlay paints **one** bar for any non-zero UL except double (`MetalTerminalView.writeUnderlineOverlays`). |
 
 Also incomplete versus v1 DESIGN.md itself (not a new idea — a hole):
@@ -909,7 +909,7 @@ Status: **now** = v1 HEAD `573cf05`. **follow-on** = this document. **out** = wi
 | `TERM=xterm-ghostty` + private terminfo | `xterm-256color` stock | now | Do not change |
 | Truecolor, 256, SGR mouse 1006, 2004, 1004, 2026 | now | now | |
 | 16-byte inline cell vs 8-byte style table | 16-byte locked | now | out to densify |
-| DEC 2027 grapheme width | ignore, DECRPM 4 | follow-on | default off |
+| DEC 2027 grapheme width | ignore, DECRPM 4 | **now** | default off |
 | Kitty keyboard / `fullkbd` | no | **out** | would require `TERM` lie |
 | 8-bit C1 CSI | no | **out** | |
 | SGR 1 bold face | ExtraBold | now | |
@@ -1364,6 +1364,7 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 ### PR 34 — DEC 2027
 
 - **Title:** `feat: mode 2027 grapheme cluster width`
+- **Status:** **done**
 - **Files:** `jt_vt.c`, `jt_grid.c`, new `jt_grapheme_break.c`, generated `jt_gb_props.inc` / `jt_gb_precompute.inc`, `scripts/gen-grapheme-tables.py`, tests
 - **Dependencies:** none; **do not mix with PR 35**
 - **Changes:** Port Ghostty `grapheme.zig` + 8 KiB precompute + props LUT, UCD 17.0.0 pin in the generator, commit `.inc`. SM/RM `?2027`. DECRPM 1/2. UTF-8 path only. ASCII NEON untouched. Replay GB state from the attach-target cluster (no sticky field). `state_before` restore on IGNORE. `upgrade_narrow_to_full` + `JT_GP_MAX` 16. Golden: `U+0031`+VS16+`a` is two clusters. Default off.
@@ -1391,4 +1392,4 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 
 ---
 
-**Tracks:** 18–25, 27–29, 31, 32 done/withdrawn. Host left: 30 notify post. VT 34. Chore 35–37. **26 and 33 are a later plan, not this document.**
+**Tracks:** 18–25, 27–29, 31, 32, 34 done/withdrawn. Host left: 30 notify post. Chore 35–37. **26 and 33 are a later plan, not this document.**

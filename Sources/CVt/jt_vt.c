@@ -301,7 +301,7 @@ static int dec_mode_state(const jt_scr *s, uint16_t mode) {
     case 2033: on = s && s->report_vis; break;
     case 2048: on = s && s->inband_size; break;
     case 2026: on = s && s->sync_output; break;
-    case 2027: perm_reset = 1; break;
+    case 2027: on = s && s->mode_2027; break;
     default: known = 0; break;
     }
     if (perm_reset) return 4;
@@ -388,6 +388,7 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
                     break;
                 case 2004: scr->bracketed_paste = (uint8_t)set; break;
                 case 2026: jt_sync_set(scr, set); break;
+                case 2027: jt_scr_set_mode_2027(scr, set); break;
                 case 2031: scr->report_theme = (uint8_t)set; break;
                 case 2033: scr->report_vis = (uint8_t)set; break;
                 case 2048:
