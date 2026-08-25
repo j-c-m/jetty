@@ -125,6 +125,12 @@ final class DirtySkipTests: XCTestCase {
         var rect = stream
         rect.selection = DirtySkip.Sel(x0: 0, y0: 0, x1: 2, y1: 2, rect: true)
         XCTAssertTrue(DirtySkip.fullRebuild(now: rect, last: stream))
+        var under = base
+        under.imagesUnderText = true
+        XCTAssertTrue(DirtySkip.fullRebuild(now: under, last: under))
+        XCTAssertTrue(DirtySkip.fullRebuild(now: under, last: base))
+        XCTAssertTrue(DirtySkip.fullRebuild(now: base, last: under))
+        XCTAssertFalse(DirtySkip.fullRebuild(now: base, last: base))
     }
 
     private func expand(

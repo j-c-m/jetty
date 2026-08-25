@@ -353,7 +353,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 DirtySkip.Sel(x0: $0.x0, y0: $0.y0, x1: $0.x1, y1: $0.y1, rect: selRect)
             },
             searchSig: findSig,
-            preedit: !preedit.isEmpty
+            preedit: !preedit.isEmpty,
+            imagesUnderText: (0..<Int(snapN)).contains { snaps[$0].z < 0 }
         )
         var skipExpand: [Bool]?
         if !forceFullRebuild,
@@ -403,7 +404,9 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             }
         }
         let wantInk = config.ligatures != .off && (!ligaSpans.isEmpty || lastInk)
-        let instCount = n + (wantInk ? n : 0)
+        let underText = skipKey.imagesUnderText
+        if underText { skipExpand = nil }
+        let instCount = n + (underText ? n : 0) + (wantInk ? n : 0)
         if n > 0, let inst = renderer.prepareInstances(count: instCount) {
             rgb.withUnsafeMutableBufferPointer { pal in
                 palPacked.withUnsafeBufferPointer { packed in
@@ -423,6 +426,96 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                     }
                     for _ in 0..<3 {
                         let gen = renderer.atlas.packGeneration
+                        if underText {
+                            var uy = 0
+                            while uy < paintRows {
+                                let spans = searchSpans(docRow: start + uy, cols: cols)
+                                GridExpand.expandRow(
+                                    rowCells: cp + uy * cols,
+                                    cols: cols,
+                                    rowY: uy,
+                                    cellW: cw,
+                                    cellH: ch,
+                                    originX: insetLeftPx,
+                                    originY: insetTopPx,
+                                    palette: palBase,
+                                    defFG: dfg,
+                                    defBG: dbg,
+                                    atlas: renderer.atlas,
+                                    cursorX: cx,
+                                    cursorY: curY,
+                                    cursorVisible: cursorOn && preedit.isEmpty,
+                                    blinkOff: !phaseOn,
+                                    selection: sel,
+                                    selectionRect: selRect,
+                                    searchSpans: spans,
+                                    graphemes: graphemes,
+                                    hideGlyphs: hidePtr,
+                                    bgAlpha: bgA,
+                                    pass: .bgOnly,
+                                    dest: inst + uy * cols
+                                )
+                                GridExpand.expandRow(
+                                    rowCells: cp + uy * cols,
+                                    cols: cols,
+                                    rowY: uy,
+                                    cellW: cw,
+                                    cellH: ch,
+                                    originX: insetLeftPx,
+                                    originY: insetTopPx,
+                                    palette: palBase,
+                                    defFG: dfg,
+                                    defBG: dbg,
+                                    atlas: renderer.atlas,
+                                    cursorX: cx,
+                                    cursorY: curY,
+                                    cursorVisible: cursorOn && preedit.isEmpty,
+                                    blinkOff: !phaseOn,
+                                    selection: sel,
+                                    selectionRect: selRect,
+                                    searchSpans: spans,
+                                    graphemes: graphemes,
+                                    hideGlyphs: hidePtr,
+                                    bgAlpha: bgA,
+                                    pass: .glyphsOnly,
+                                    dest: inst + n + uy * cols
+                                )
+                                uy += 1
+                            }
+                            if wantInk {
+                                let ink = inst + 2 * n
+                                ink.update(repeating: .empty, count: n)
+                                writeLigaInk(
+                                    spans: ligaSpans,
+                                    dest: ink,
+                                    cells: cp,
+                                    cols: cols,
+                                    cellW: cw,
+                                    cellH: ch,
+                                    palette: palBase,
+                                    defFG: dfg,
+                                    defBG: dbg,
+                                    blinkOff: !phaseOn
+                                )
+                            }
+                            if !preedit.isEmpty {
+                                stampPreedit(
+                                    preedit,
+                                    dest: inst + n,
+                                    cols: cols,
+                                    paintRows: paintRows,
+                                    cursorX: cx,
+                                    cursorY: curY,
+                                    cellW: cw,
+                                    cellH: ch,
+                                    fg: dfg,
+                                    bg: dbg,
+                                    atlas: renderer.atlas
+                                )
+                            }
+                            if renderer.atlas.packGeneration == gen { break }
+                            continue
+                        }
                         if let mask = useSkip {
                             var y = 0
                             while y < paintRows {
@@ -631,6 +724,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 }
             }
         }
+        var imageBelowBgCount = 0
+        var imageBelowTextCount = 0
         var imageOverCount = 0
         if imagesOn {
             var keep = Set<UInt32>()
@@ -655,7 +750,11 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 }
             }
             if let inst = renderer.prepareImages(count: Int(snapN)) {
-                var draws: [(tex: MTLTexture, start: Int, count: Int, w: Int, h: Int)] = []
+                func band(_ z: Int32) -> Int {
+                    if z < -1_073_741_824 { return 0 }
+                    if z < 0 { return 1 }
+                    return 2
+                }
                 var di = 0
                 while di < Int(snapN) {
                     let s = snaps[di]
@@ -671,16 +770,28 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                     )
                     di += 1
                 }
+                var draws: [(tex: MTLTexture, start: Int, count: Int, w: Int, h: Int)] = []
+                var belowBg = 0
+                var belowText = 0
+                var over = 0
                 var runStart = 0
                 while runStart < Int(snapN) {
                     let id = snaps[runStart].image_id
+                    let b = band(snaps[runStart].z)
                     var runEnd = runStart + 1
-                    while runEnd < Int(snapN), snaps[runEnd].image_id == id { runEnd += 1 }
+                    while runEnd < Int(snapN),
+                          snaps[runEnd].image_id == id,
+                          band(snaps[runEnd].z) == b
+                    { runEnd += 1 }
+                    let count = runEnd - runStart
+                    if b == 0 { belowBg += count }
+                    else if b == 1 { belowText += count }
+                    else { over += count }
                     if let tex = renderer.texture(id: id) {
                         draws.append((
                             tex,
                             runStart,
-                            runEnd - runStart,
+                            count,
                             Int(snaps[runStart].width),
                             Int(snaps[runStart].height)
                         ))
@@ -688,7 +799,9 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                     runStart = runEnd
                 }
                 renderer.setImageDraws(draws)
-                imageOverCount = Int(snapN)
+                imageBelowBgCount = belowBg
+                imageBelowTextCount = belowText
+                imageOverCount = over
             }
         } else {
             renderer.setImageDraws([])
@@ -697,9 +810,12 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let presented = renderer.draw(
             view: self,
             instanceCount: n,
+            glyphCount: underText ? n : 0,
             inkCount: wantInk ? n : 0,
             overlayCount: overlayN,
             overlayCursorAt: overlayCursorAt,
+            imageBelowBgCount: imageBelowBgCount,
+            imageBelowTextCount: imageBelowTextCount,
             imageOverCount: imageOverCount,
             viewport: SIMD2(Float(dw), Float(dh)),
             contentOffsetY: Float(visRows) * ch

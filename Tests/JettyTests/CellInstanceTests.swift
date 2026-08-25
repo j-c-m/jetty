@@ -1,3 +1,4 @@
+import CVt
 import Metal
 import simd
 import XCTest
@@ -56,5 +57,78 @@ final class CellInstanceTests: XCTestCase {
             return
         }
         XCTAssertNotNil(TerminalRenderer(device: device, atlas: atlas))
+    }
+
+    func testBgOnlyDefaultHasZeroSizeGlyphsKeepCoverage() {
+        guard let device = MTLCreateSystemDefaultDevice() else { return }
+        let metrics = CellMetrics.measure(fontSize: 20, backingScale: 2)
+        guard let atlas = GlyphAtlas(device: device, metrics: metrics) else {
+            XCTFail("atlas")
+            return
+        }
+        let pal = [SIMD3<Float>](repeating: SIMD3(0, 0, 0), count: 256)
+        let cells = [
+            Cell(content: content_scalar(0x41, WIDE_NARROW), fg: COLOR_DEFAULT, bg: COLOR_DEFAULT, attrs: 0, extra: 0),
+            Cell(content: content_scalar(0x42, WIDE_NARROW), fg: COLOR_DEFAULT, bg: COLOR_INDEXED | 4, attrs: 0, extra: 0),
+        ]
+        var bg = [CellInstance.empty, CellInstance.empty]
+        var glyphs = [CellInstance.empty, CellInstance.empty]
+        let hide: [UInt8] = [0, 1]
+        pal.withUnsafeBufferPointer { palBuf in
+            cells.withUnsafeBufferPointer { cellBuf in
+                bg.withUnsafeMutableBufferPointer { dest in
+                    GridExpand.expandRow(
+                        rowCells: cellBuf.baseAddress!,
+                        cols: 2,
+                        rowY: 0,
+                        cellW: 12,
+                        cellH: 24,
+                        originX: 0,
+                        originY: 0,
+                        palette: palBuf.baseAddress!,
+                        defFG: SIMD3(1, 1, 1),
+                        defBG: SIMD3(0, 0, 0),
+                        atlas: atlas,
+                        cursorX: -1,
+                        cursorY: -1,
+                        cursorVisible: false,
+                        selection: nil,
+                        pass: .bgOnly,
+                        dest: dest.baseAddress!
+                    )
+                }
+                hide.withUnsafeBufferPointer { hideBuf in
+                    glyphs.withUnsafeMutableBufferPointer { dest in
+                        GridExpand.expandRow(
+                            rowCells: cellBuf.baseAddress!,
+                            cols: 2,
+                            rowY: 0,
+                            cellW: 12,
+                            cellH: 24,
+                            originX: 0,
+                            originY: 0,
+                            palette: palBuf.baseAddress!,
+                            defFG: SIMD3(1, 1, 1),
+                            defBG: SIMD3(0, 0, 0),
+                            atlas: atlas,
+                            cursorX: -1,
+                            cursorY: -1,
+                            cursorVisible: false,
+                            selection: nil,
+                            hideGlyphs: hideBuf.baseAddress,
+                            pass: .glyphsOnly,
+                            dest: dest.baseAddress!
+                        )
+                    }
+                }
+            }
+        }
+        XCTAssertEqual(bg[0].sx, 0)
+        XCTAssertEqual(bg[1].sx, 12)
+        XCTAssertEqual(bg[0].flags, 0)
+        XCTAssertEqual(glyphs[0].flags, CellInstance.hasGlyphFlag)
+        XCTAssertEqual(glyphs[1].flags, 0)
+        XCTAssertEqual(glyphs[1].sx, 12)
+        XCTAssertEqual(glyphs[0].bg >> 24, 0)
     }
 }

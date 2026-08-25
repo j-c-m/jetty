@@ -2,6 +2,12 @@ import CVt
 import simd
 
 public enum GridExpand {
+    public enum Pass {
+        case mix
+        case bgOnly
+        case glyphsOnly
+    }
+
     public static func fillPalette(
         _ packed: UnsafePointer<UInt32>,
         reverseVideo: Bool,
@@ -70,6 +76,7 @@ public enum GridExpand {
         graphemes: [UInt32: [UInt32]] = [:],
         hideGlyphs: UnsafePointer<UInt8>? = nil,
         bgAlpha: Float = 1,
+        pass: Pass = .mix,
         dest: UnsafeMutablePointer<CellInstance>
     ) {
         let selCols = selection.flatMap {
@@ -103,6 +110,23 @@ public enum GridExpand {
             { fg = bg }
             if (cell.attrs & UInt16(ATTR_DIM)) != 0 {
                 fg = fg * (2.0 / 3.0)
+            }
+            if pass == .bgOnly {
+                let a = Self.backgroundAlpha(
+                    cellBg: cell.bg, reverse: reverse, highlighted: highlighted, defaultAlpha: bgAlpha
+                )
+                let show = reverse || highlighted || (cell.bg >> 24) != 0
+                dest[x] = CellInstance(
+                    originX: ox, originY: oy,
+                    width: show ? cellW : 0, height: show ? cellH : 0,
+                    uv: GlyphAtlas.UV.empty,
+                    fgRGB: fg, bgRGB: bg,
+                    colorAtlas: false,
+                    bgAlpha: a
+                )
+                x += 1
+                ox += cellW
+                continue
             }
             let wide = cell.content & CONTENT_WIDE_MASK
             var g = GlyphAtlas.Glyph.empty
@@ -139,7 +163,7 @@ public enum GridExpand {
                 uv: g.uv,
                 fgRGB: fg, bgRGB: bg,
                 colorAtlas: g.color,
-                bgAlpha: Self.backgroundAlpha(
+                bgAlpha: pass == .glyphsOnly ? 0 : Self.backgroundAlpha(
                     cellBg: cell.bg, reverse: reverse, highlighted: highlighted, defaultAlpha: bgAlpha
                 )
             )
@@ -170,6 +194,7 @@ public enum GridExpand {
         graphemes: [UInt32: [UInt32]] = [:],
         hideGlyphs: UnsafePointer<UInt8>? = nil,
         bgAlpha: Float = 1,
+        pass: Pass = .mix,
         dest: UnsafeMutablePointer<CellInstance>
     ) {
         var y = 0
@@ -196,6 +221,7 @@ public enum GridExpand {
                 graphemes: graphemes,
                 hideGlyphs: hideGlyphs,
                 bgAlpha: bgAlpha,
+                pass: pass,
                 dest: dest + y * cols
             )
             y += 1

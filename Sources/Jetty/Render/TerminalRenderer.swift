@@ -247,9 +247,12 @@ public final class TerminalRenderer {
     public func draw(
         view: MTKView,
         instanceCount: Int,
+        glyphCount: Int = 0,
         inkCount: Int = 0,
         overlayCount: Int = 0,
         overlayCursorAt: Int = -1,
+        imageBelowBgCount: Int = 0,
+        imageBelowTextCount: Int = 0,
         imageOverCount: Int = 0,
         viewport: SIMD2<Float>,
         contentOffsetY: Float = 0
@@ -283,29 +286,16 @@ public final class TerminalRenderer {
         if instanceCount > 0 {
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: instanceCount)
         }
-        if inkCount > 0 {
-            enc.setRenderPipelineState(inkPipeline)
-            enc.setVertexBuffer(instanceBuffers[instanceSlot], offset: instanceCount * CellInstance.stride, index: 0)
-            enc.setVertexBuffer(uniformBuffers[uniformSlot], offset: 0, index: 1)
-            enc.setFragmentTexture(atlas.texture, index: 0)
-            enc.setFragmentTexture(atlas.colorTexture, index: 1)
-            enc.setFragmentSamplerState(sampler, index: 0)
-            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: inkCount)
-        }
-        let split = imageOverCount > 0 && overlayCursorAt >= 0 && overlayCursorAt <= overlayCount
-        if overlayCount > 0, let obuf = overlayBuffers[overlaySlot] {
-            let decoN = split ? overlayCursorAt : overlayCount
-            if decoN > 0 {
-                enc.setRenderPipelineState(overlayPipeline)
-                enc.setVertexBuffer(obuf, offset: 0, index: 0)
-                enc.setVertexBuffer(uniformBuffers[uniformSlot], offset: 0, index: 1)
-                enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: decoN)
-            }
-        }
-        if imageOverCount > 0 {
+        let imageTotal = imageBelowBgCount + imageBelowTextCount + imageOverCount
+        let split = imageTotal > 0 && overlayCursorAt >= 0 && overlayCursorAt <= overlayCount
+        func drawImageBand(start: Int, count: Int) {
+            guard count > 0 else { return }
+            let lo = start
+            let hi = start + count
             enc.setRenderPipelineState(imagePipeline)
             enc.setFragmentSamplerState(linearSampler, index: 0)
             for d in imageDraws {
+                if d.start + d.count <= lo || d.start >= hi { continue }
                 imageUniformSlot = (imageUniformSlot + 1) % Self.ringCount
                 if let uni = imageUniformBuffers[imageUniformSlot] {
                     var u = ImageUniforms(
@@ -325,6 +315,40 @@ public final class TerminalRenderer {
                 }
             }
         }
+        drawImageBand(start: 0, count: imageBelowBgCount)
+        drawImageBand(start: imageBelowBgCount, count: imageBelowTextCount)
+        if glyphCount > 0 {
+            enc.setRenderPipelineState(inkPipeline)
+            enc.setVertexBuffer(instanceBuffers[instanceSlot], offset: instanceCount * CellInstance.stride, index: 0)
+            enc.setVertexBuffer(uniformBuffers[uniformSlot], offset: 0, index: 1)
+            enc.setFragmentTexture(atlas.texture, index: 0)
+            enc.setFragmentTexture(atlas.colorTexture, index: 1)
+            enc.setFragmentSamplerState(sampler, index: 0)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: glyphCount)
+        }
+        if inkCount > 0 {
+            enc.setRenderPipelineState(inkPipeline)
+            enc.setVertexBuffer(
+                instanceBuffers[instanceSlot],
+                offset: (instanceCount + glyphCount) * CellInstance.stride,
+                index: 0
+            )
+            enc.setVertexBuffer(uniformBuffers[uniformSlot], offset: 0, index: 1)
+            enc.setFragmentTexture(atlas.texture, index: 0)
+            enc.setFragmentTexture(atlas.colorTexture, index: 1)
+            enc.setFragmentSamplerState(sampler, index: 0)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: inkCount)
+        }
+        if overlayCount > 0, let obuf = overlayBuffers[overlaySlot] {
+            let decoN = split ? overlayCursorAt : overlayCount
+            if decoN > 0 {
+                enc.setRenderPipelineState(overlayPipeline)
+                enc.setVertexBuffer(obuf, offset: 0, index: 0)
+                enc.setVertexBuffer(uniformBuffers[uniformSlot], offset: 0, index: 1)
+                enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: decoN)
+            }
+        }
+        drawImageBand(start: imageBelowBgCount + imageBelowTextCount, count: imageOverCount)
         if split, overlayCount > overlayCursorAt, let obuf = overlayBuffers[overlaySlot] {
             let curN = overlayCount - overlayCursorAt
             enc.setRenderPipelineState(overlayPipeline)
