@@ -1,6 +1,7 @@
 #include "jt_img.h"
 #include "jt_vt.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,15 +13,158 @@ static int32_t pl_count(const jt_img_store *st) {
     return st->live_n + st->hist_n + st->virtual_n + st->relative_n;
 }
 
+static size_t img_storage_size(const jt_img *im) {
+    size_t n = im->nbytes;
+    size_t one = (size_t)im->width * (size_t)im->height * 4;
+    if (im->frame_n > 0 && one) n += (size_t)im->frame_n * one;
+    return n;
+}
+
 static void img_free(jt_img *im) {
     free(im->rgba);
-    im->rgba = NULL;
-    im->nbytes = 0;
-    im->width = 0;
-    im->height = 0;
-    im->id = 0;
-    im->number = 0;
-    im->placement_n = 0;
+    if (im->frames) {
+        for (int32_t i = 0; i < im->frame_n; i++) free(im->frames[i].rgba);
+        free(im->frames);
+    }
+    memset(im, 0, sizeof *im);
+}
+
+static const uint8_t *img_display_rgba(const jt_img *im) {
+    if (!im) return NULL;
+    if (im->has_anim && im->current_index > 0
+        && im->current_index <= (uint32_t)im->frame_n) {
+        uint8_t *p = im->frames[im->current_index - 1].rgba;
+        if (p) return p;
+    }
+    return im->rgba;
+}
+
+static uint8_t *img_frame_ptr(jt_img *im, uint32_t number) {
+    if (!im || number == 0) return NULL;
+    if (number == 1) return im->rgba;
+    if (number - 2 >= (uint32_t)im->frame_n) return NULL;
+    return im->frames[number - 2].rgba;
+}
+
+static uint32_t img_frame_count(const jt_img *im) {
+    return im ? (uint32_t)im->frame_n + 1 : 0;
+}
+
+static uint32_t gap_at(const jt_img *im, uint32_t index) {
+    if (!im) return 0;
+    if (index == 0) return im->root_gap_ms;
+    if (index > (uint32_t)im->frame_n) return 0;
+    return im->frames[index - 1].gap_ms;
+}
+
+static void set_gap_at(jt_img *im, uint32_t index, uint32_t gap_ms) {
+    if (!im) return;
+    if (index == 0) im->root_gap_ms = gap_ms;
+    else if (index <= (uint32_t)im->frame_n)
+        im->frames[index - 1].gap_ms = gap_ms;
+}
+
+static uint64_t anim_duration_ms(const jt_img *im) {
+    uint64_t total = im->root_gap_ms;
+    for (int32_t i = 0; i < im->frame_n; i++) total += im->frames[i].gap_ms;
+    return total;
+}
+
+static uint64_t add_sat_u64(uint64_t a, uint64_t b) {
+    if (a > UINT64_MAX - b) return UINT64_MAX;
+    return a + b;
+}
+
+static void mark_img_content(jt_img_store *st, jt_img *im) {
+    st->generation++;
+    im->generation = st->generation;
+    st->dirty = 1;
+}
+
+static void compose_row(
+    uint8_t *dst,
+    const uint8_t *src,
+    uint32_t n,
+    int overwrite
+) {
+    if (overwrite) {
+        memcpy(dst, src, (size_t)n * 4);
+        return;
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        const uint8_t *s = src + (size_t)i * 4;
+        uint8_t *d = dst + (size_t)i * 4;
+        uint8_t sa = s[3];
+        if (sa == 0) continue;
+        if (sa == 255 || d[3] == 0) {
+            memcpy(d, s, 4);
+            continue;
+        }
+        uint8_t inv = (uint8_t)(255 - sa);
+        for (int c = 0; c < 3; c++) {
+            uint32_t v = ((uint32_t)s[c] * sa + (uint32_t)d[c] * inv + 127u) / 255u;
+            d[c] = (uint8_t)(v > 255u ? 255u : v);
+        }
+        uint32_t oa = (uint32_t)sa + ((uint32_t)d[3] * inv + 127u) / 255u;
+        d[3] = (uint8_t)(oa > 255u ? 255u : oa);
+    }
+}
+
+static void compose_rect(
+    uint8_t *dst,
+    uint32_t dw,
+    uint32_t dh,
+    const uint8_t *src,
+    uint32_t sw,
+    uint32_t sh,
+    uint32_t x,
+    uint32_t y,
+    int overwrite
+) {
+    if (x >= dw || y >= dh || sw == 0 || sh == 0) return;
+    uint32_t width = sw < dw - x ? sw : dw - x;
+    uint32_t height = sh < dh - y ? sh : dh - y;
+    for (uint32_t row = 0; row < height; row++) {
+        uint8_t *dp = dst + ((size_t)(y + row) * dw + x) * 4;
+        const uint8_t *sp = src + (size_t)row * sw * 4;
+        compose_row(dp, sp, width, overwrite);
+    }
+}
+
+static void compose_canvas_rect(
+    uint8_t *dst,
+    const uint8_t *src,
+    uint32_t cw,
+    uint32_t width,
+    uint32_t height,
+    uint32_t sx,
+    uint32_t sy,
+    uint32_t dx,
+    uint32_t dy,
+    int overwrite
+) {
+    for (uint32_t row = 0; row < height; row++) {
+        uint8_t *dp = dst + ((size_t)(dy + row) * cw + dx) * 4;
+        const uint8_t *sp = src + ((size_t)(sy + row) * cw + sx) * 4;
+        compose_row(dp, sp, width, overwrite);
+    }
+}
+
+static void fill_bg(uint8_t *data, size_t n, uint32_t y) {
+    if (y == 0) {
+        memset(data, 0, n);
+        return;
+    }
+    uint8_t r = (uint8_t)(y >> 24);
+    uint8_t g = (uint8_t)(y >> 16);
+    uint8_t b = (uint8_t)(y >> 8);
+    uint8_t a = (uint8_t)y;
+    for (size_t i = 0; i + 4 <= n; i += 4) {
+        data[i + 0] = r;
+        data[i + 1] = g;
+        data[i + 2] = b;
+        data[i + 3] = a;
+    }
 }
 
 void jt_img_store_init(jt_img_store *st) {
@@ -153,8 +297,9 @@ static void unref_image(jt_img_store *st, uint32_t id) {
 
 static void remove_image_at(jt_img_store *st, int32_t idx) {
     if (!st || idx < 0 || idx >= st->image_n) return;
-    if (st->images[idx].nbytes <= st->total_bytes)
-        st->total_bytes -= st->images[idx].nbytes;
+    size_t sz = img_storage_size(&st->images[idx]);
+    if (sz <= st->total_bytes)
+        st->total_bytes -= sz;
     else
         st->total_bytes = 0;
     img_free(&st->images[idx]);
@@ -347,13 +492,14 @@ static uint8_t evict_pri(const jt_img *im) {
     return p;
 }
 
-static int32_t pick_evict(const jt_img_store *st) {
+static int32_t pick_evict(const jt_img_store *st, uint32_t keep_id) {
     int32_t best = -1;
     uint8_t pri = 255;
     uint64_t gen = UINT64_MAX;
     uint32_t id = UINT32_MAX;
     for (int32_t i = 0; i < st->image_n; i++) {
         const jt_img *im = &st->images[i];
+        if (keep_id && im->id == keep_id) continue;
         uint8_t p = evict_pri(im);
         if (p > pri) continue;
         if (p < pri || im->generation < gen || (im->generation == gen && im->id < id)) {
@@ -366,13 +512,13 @@ static int32_t pick_evict(const jt_img_store *st) {
     return best;
 }
 
-static int evict_for(jt_img_store *st, size_t need) {
+static int evict_for_except(jt_img_store *st, size_t need, uint32_t keep_id) {
     if (!st) return 0;
     if (need > JT_IMG_QUOTA) return 0;
     int guard = JT_IMG_MAX_IMAGES + 2;
     while (guard-- > 0) {
         if (st->total_bytes + need <= JT_IMG_QUOTA && st->image_n < JT_IMG_MAX_IMAGES) return 1;
-        int32_t idx = pick_evict(st);
+        int32_t idx = pick_evict(st, keep_id);
         if (idx < 0) return 0;
         uint32_t id = st->images[idx].id;
         int32_t n = pl_count(st);
@@ -384,6 +530,30 @@ static int evict_for(jt_img_store *st, size_t need) {
         remove_orphans(st);
     }
     return st->total_bytes + need <= JT_IMG_QUOTA && st->image_n < JT_IMG_MAX_IMAGES;
+}
+
+static int evict_for(jt_img_store *st, size_t need) {
+    return evict_for_except(st, need, 0);
+}
+
+static int evict_bytes(jt_img_store *st, size_t need, uint32_t keep_id) {
+    if (!st) return 0;
+    if (need > JT_IMG_QUOTA) return 0;
+    int guard = JT_IMG_MAX_IMAGES + 2;
+    while (guard-- > 0) {
+        if (st->total_bytes + need <= JT_IMG_QUOTA) return 1;
+        int32_t idx = pick_evict(st, keep_id);
+        if (idx < 0) return 0;
+        uint32_t id = st->images[idx].id;
+        int32_t n = pl_count(st);
+        for (int32_t i = n - 1; i >= 0; i--) {
+            if (st->pl[i].image_id == id) remove_placement_at(st, i);
+        }
+        jt_img *im = jt_img_find(st, id);
+        if (im) remove_image_at(st, (int32_t)(im - st->images));
+        remove_orphans(st);
+    }
+    return st->total_bytes + need <= JT_IMG_QUOTA;
 }
 
 void jt_img_drop_id(jt_scr *s, uint32_t id) {
@@ -670,6 +840,404 @@ int jt_img_put(jt_scr *s, const jt_img_loading *ld) {
     return 0;
 }
 
+int jt_img_anim_add_frame(
+    jt_scr *s,
+    const jt_img_loading *ld,
+    uint8_t *rgba,
+    uint32_t w,
+    uint32_t h,
+    uint32_t *out_frame
+) {
+    if (out_frame) *out_frame = ld ? ld->anim_edit_frame : 0;
+    if (!s || !ld || !rgba) {
+        free(rgba);
+        return JT_IMG_EINVAL;
+    }
+    jt_img_store *st = jt_img_active(s);
+    if (!st) {
+        free(rgba);
+        return JT_IMG_ENOENT;
+    }
+    uint32_t id = ld->image_id;
+    if (id == 0 && ld->number) {
+        jt_img *by = jt_img_find_number(st, ld->number);
+        if (by) id = by->id;
+    }
+    jt_img *im = jt_img_find(st, id);
+    if (!im) {
+        free(rgba);
+        return JT_IMG_ENOENT;
+    }
+    if (ld->anim_image_gen && im->generation != ld->anim_image_gen) {
+        free(rgba);
+        return JT_IMG_ENOENT;
+    }
+    if (!im->rgba) {
+        free(rgba);
+        return JT_IMG_EINVAL_INCOMPLETE;
+    }
+    if (w > im->width || h > im->height) {
+        free(rgba);
+        return JT_IMG_EINVAL_DIM;
+    }
+    uint32_t count = img_frame_count(im);
+    uint32_t r = ld->anim_edit_frame;
+    uint32_t number = (r == 0 || r > count + 1) ? count + 1 : r;
+    if (out_frame) *out_frame = number;
+    im->has_anim = 1;
+
+    if (number == count + 1) {
+        if (im->frame_n >= JT_IMG_MAX_FRAMES) {
+            free(rgba);
+            return JT_IMG_ENOSPC;
+        }
+        uint32_t gap;
+        if (ld->anim_gap_ms > 0) gap = (uint32_t)ld->anim_gap_ms;
+        else if (ld->anim_gap_ms < 0) gap = 0;
+        else gap = JT_IMG_DEFAULT_GAP_MS;
+        if (ld->anim_create_frame > 0
+            && !img_frame_ptr(im, ld->anim_create_frame)) {
+            free(rgba);
+            return JT_IMG_EINVAL_BASE;
+        }
+        size_t frame_len = (size_t)im->width * (size_t)im->height * 4;
+        if (!evict_bytes(st, frame_len, id)) {
+            free(rgba);
+            return JT_IMG_ENOSPC;
+        }
+        im = jt_img_find(st, id);
+        if (!im || !im->rgba) {
+            free(rgba);
+            return JT_IMG_ENOENT;
+        }
+        uint8_t *canvas = (uint8_t *)malloc(frame_len);
+        if (!canvas) {
+            free(rgba);
+            return JT_IMG_ENOSPC;
+        }
+        if (ld->anim_create_frame > 0) {
+            uint8_t *base = img_frame_ptr(im, ld->anim_create_frame);
+            if (!base) {
+                free(canvas);
+                free(rgba);
+                return JT_IMG_EINVAL_BASE;
+            }
+            memcpy(canvas, base, frame_len);
+        } else {
+            fill_bg(canvas, frame_len, ld->anim_bg);
+        }
+        compose_rect(
+            canvas, im->width, im->height,
+            rgba, w, h,
+            ld->anim_x, ld->anim_y,
+            ld->anim_overwrite
+        );
+        jt_img_frame *nf = (jt_img_frame *)realloc(
+            im->frames, (size_t)(im->frame_n + 1) * sizeof(jt_img_frame)
+        );
+        if (!nf) {
+            free(canvas);
+            free(rgba);
+            return JT_IMG_ENOSPC;
+        }
+        im->frames = nf;
+        im->frames[im->frame_n].rgba = canvas;
+        im->frames[im->frame_n].gap_ms = gap;
+        im->frame_n++;
+        st->total_bytes += frame_len;
+        st->generation++;
+        st->dirty = 1;
+        free(rgba);
+        return 0;
+    }
+
+    uint8_t *dst = img_frame_ptr(im, number);
+    if (!dst) {
+        free(rgba);
+        return JT_IMG_ENOENT;
+    }
+    if (ld->anim_gap_ms != 0) {
+        set_gap_at(
+            im, number - 1,
+            ld->anim_gap_ms > 0 ? (uint32_t)ld->anim_gap_ms : 0
+        );
+    }
+    compose_rect(
+        dst, im->width, im->height,
+        rgba, w, h,
+        ld->anim_x, ld->anim_y,
+        ld->anim_overwrite
+    );
+    if (number - 1 == im->current_index) {
+        im->frame_shown_at_ms = 0;
+        mark_img_content(st, im);
+    } else {
+        st->generation++;
+        st->dirty = 1;
+    }
+    free(rgba);
+    return 0;
+}
+
+int jt_img_anim_control(jt_scr *s, const jt_img_loading *ld) {
+    if (!s || !ld) return JT_IMG_EINVAL;
+    if (ld->image_id == 0 && ld->number == 0) return JT_IMG_EINVAL;
+    jt_img_store *st = jt_img_active(s);
+    if (!st) return JT_IMG_ENOENT;
+    jt_img *im = ld->image_id
+        ? jt_img_find(st, ld->image_id)
+        : jt_img_find_number(st, ld->number);
+    if (!im) return JT_IMG_ENOENT;
+    im->has_anim = 1;
+    uint32_t count = img_frame_count(im);
+    if (ld->anim_edit_frame != 0 && ld->anim_edit_frame <= count
+        && ld->anim_gap_ms != 0) {
+        set_gap_at(
+            im, ld->anim_edit_frame - 1,
+            ld->anim_gap_ms > 0 ? (uint32_t)ld->anim_gap_ms : 0
+        );
+        st->generation++;
+        st->dirty = 1;
+    }
+    if (ld->anim_current != 0 && ld->anim_current <= count
+        && ld->anim_current - 1 != im->current_index) {
+        im->current_index = ld->anim_current - 1;
+        im->frame_shown_at_ms = 0;
+        mark_img_content(st, im);
+    }
+    if (ld->anim_action == 1 || ld->anim_action == 2 || ld->anim_action == 3) {
+        uint8_t old = im->anim_state;
+        im->anim_state = ld->anim_action == 1
+            ? JT_IMG_ANIM_STOPPED
+            : (ld->anim_action == 2 ? JT_IMG_ANIM_LOADING : JT_IMG_ANIM_RUNNING);
+        if (old == JT_IMG_ANIM_STOPPED && im->anim_state != JT_IMG_ANIM_STOPPED)
+            im->frame_shown_at_ms = 0;
+        im->current_loop = 0;
+        st->generation++;
+        st->dirty = 1;
+    }
+    if (ld->anim_loops != 0) {
+        im->max_loops = ld->anim_loops - 1;
+        st->generation++;
+        st->dirty = 1;
+    }
+    return 0;
+}
+
+int jt_img_anim_compose(jt_scr *s, const jt_img_loading *ld) {
+    if (!s || !ld) return JT_IMG_EINVAL;
+    if (ld->image_id == 0 && ld->number == 0) return JT_IMG_EINVAL;
+    jt_img_store *st = jt_img_active(s);
+    if (!st) return JT_IMG_ENOENT;
+    jt_img *im = ld->image_id
+        ? jt_img_find(st, ld->image_id)
+        : jt_img_find_number(st, ld->number);
+    if (!im) return JT_IMG_ENOENT;
+    if (!im->rgba) return JT_IMG_EINVAL_INCOMPLETE;
+    uint8_t *src = img_frame_ptr(im, ld->anim_src_frame);
+    if (!src) return JT_IMG_ENOENT_SRC;
+    uint8_t *dst = img_frame_ptr(im, ld->anim_dst_frame);
+    if (!dst) return JT_IMG_ENOENT_DST;
+    uint64_t width = ld->anim_w ? ld->anim_w : im->width;
+    uint64_t height = ld->anim_h ? ld->anim_h : im->height;
+    if ((uint64_t)ld->anim_x + width > im->width
+        || (uint64_t)ld->anim_y + height > im->height)
+        return JT_IMG_EINVAL_BOUNDS;
+    if ((uint64_t)ld->anim_src_x + width > im->width
+        || (uint64_t)ld->anim_src_y + height > im->height)
+        return JT_IMG_EINVAL_BOUNDS;
+    if (ld->anim_src_frame == ld->anim_dst_frame) {
+        uint32_t x0 = ld->anim_src_x > ld->anim_x ? ld->anim_src_x : ld->anim_x;
+        uint32_t x1min = ld->anim_src_x < ld->anim_x ? ld->anim_src_x : ld->anim_x;
+        uint32_t y0 = ld->anim_src_y > ld->anim_y ? ld->anim_src_y : ld->anim_y;
+        uint32_t y1min = ld->anim_src_y < ld->anim_y ? ld->anim_src_y : ld->anim_y;
+        int x_over = x0 < x1min + (uint32_t)width;
+        int y_over = y0 < y1min + (uint32_t)height;
+        if (x_over && y_over) return JT_IMG_EINVAL_OVERLAP;
+    }
+    compose_canvas_rect(
+        dst, src, im->width,
+        (uint32_t)width, (uint32_t)height,
+        ld->anim_src_x, ld->anim_src_y,
+        ld->anim_x, ld->anim_y,
+        ld->anim_overwrite
+    );
+    uint32_t current = im->has_anim ? im->current_index : 0;
+    if (ld->anim_dst_frame > 0 && ld->anim_dst_frame - 1 == current)
+        mark_img_content(st, im);
+    else {
+        st->generation++;
+        st->dirty = 1;
+    }
+    return 0;
+}
+
+int jt_img_anim_delete_frame(
+    jt_scr *s,
+    uint32_t i,
+    uint32_t I,
+    uint32_t frame,
+    int upper
+) {
+    if (!s) return JT_IMG_EINVAL;
+    if (i == 0 && I == 0) return JT_IMG_EINVAL;
+    jt_img_store *st = jt_img_active(s);
+    if (!st) return JT_IMG_ENOENT;
+    jt_img *im = i ? jt_img_find(st, i) : jt_img_find_number(st, I);
+    if (!im) return JT_IMG_ENOENT;
+    if (!im->has_anim || im->frame_n == 0) {
+        if (!upper) return 0;
+        uint32_t id = im->id;
+        int32_t n = pl_count(st);
+        for (int32_t k = n - 1; k >= 0; k--) {
+            if (st->pl[k].image_id == id) remove_placement_at(st, k);
+        }
+        im = jt_img_find(st, id);
+        if (im) remove_image_at(st, (int32_t)(im - st->images));
+        remove_orphans(st);
+        jt_img_sync_live(s);
+        return 0;
+    }
+    uint32_t count = img_frame_count(im);
+    uint32_t number = frame < count ? frame : count;
+    if (number == 0) number = 1;
+    size_t one = (size_t)im->width * (size_t)im->height * 4;
+    if (number == 1) {
+        if (one <= st->total_bytes) st->total_bytes -= one;
+        else st->total_bytes = 0;
+        free(im->rgba);
+        jt_img_frame promoted = im->frames[0];
+        if (im->frame_n > 1)
+            memmove(&im->frames[0], &im->frames[1],
+                    (size_t)(im->frame_n - 1) * sizeof(jt_img_frame));
+        im->frame_n--;
+        if (im->frame_n == 0) {
+            free(im->frames);
+            im->frames = NULL;
+        } else {
+            jt_img_frame *nf = (jt_img_frame *)realloc(
+                im->frames, (size_t)im->frame_n * sizeof(jt_img_frame)
+            );
+            if (nf) im->frames = nf;
+        }
+        im->rgba = promoted.rgba;
+        im->nbytes = one;
+        im->root_gap_ms = promoted.gap_ms;
+    } else {
+        int32_t idx = (int32_t)number - 2;
+        if (one <= st->total_bytes) st->total_bytes -= one;
+        else st->total_bytes = 0;
+        free(im->frames[idx].rgba);
+        if (idx < im->frame_n - 1)
+            memmove(&im->frames[idx], &im->frames[idx + 1],
+                    (size_t)(im->frame_n - 1 - idx) * sizeof(jt_img_frame));
+        im->frame_n--;
+        if (im->frame_n == 0) {
+            free(im->frames);
+            im->frames = NULL;
+        } else {
+            jt_img_frame *nf = (jt_img_frame *)realloc(
+                im->frames, (size_t)im->frame_n * sizeof(jt_img_frame)
+            );
+            if (nf) im->frames = nf;
+        }
+    }
+    uint32_t removed_idx = number == 1 ? 0 : number - 2;
+    uint32_t remaining = (uint32_t)im->frame_n;
+    if (im->current_index > remaining) {
+        im->current_index = remaining;
+        im->frame_shown_at_ms = 0;
+        mark_img_content(st, im);
+    } else if (removed_idx == im->current_index) {
+        im->frame_shown_at_ms = 0;
+        mark_img_content(st, im);
+    } else {
+        if (removed_idx < im->current_index) im->current_index--;
+        st->generation++;
+        st->dirty = 1;
+    }
+    return 0;
+}
+
+int64_t jt_img_anim_tick(jt_scr *s, uint64_t now_ms) {
+    if (!s) return -1;
+    jt_img_store *st = jt_img_active(s);
+    if (!st || st->image_n == 0) return -1;
+    int64_t min_delay = -1;
+    for (int32_t i = 0; i < st->image_n; i++) {
+        jt_img *im = &st->images[i];
+        if (!im->has_anim) continue;
+        if (im->anim_state == JT_IMG_ANIM_STOPPED) continue;
+        if (im->frame_n == 0) continue;
+        if (im->placement_n == 0) continue;
+        if (!im->rgba) continue;
+        if (anim_duration_ms(im) == 0) continue;
+        if (im->max_loops > 0 && im->current_loop >= im->max_loops) continue;
+
+        uint64_t shown_at;
+        if (im->frame_shown_at_ms == 0 || im->frame_shown_at_ms > now_ms)
+            shown_at = now_ms;
+        else
+            shown_at = im->frame_shown_at_ms;
+        im->frame_shown_at_ms = shown_at;
+
+        uint64_t next_at = add_sat_u64(shown_at, gap_at(im, im->current_index));
+        if (now_ms >= next_at) {
+            uint32_t count = img_frame_count(im);
+            uint32_t idx = im->current_index;
+            int parked = 0;
+            for (;;) {
+                uint32_t next = (idx + 1) % count;
+                if (next == 0) {
+                    if (im->anim_state == JT_IMG_ANIM_LOADING) {
+                        parked = 1;
+                        break;
+                    }
+                    im->current_loop++;
+                    if (im->max_loops > 0 && im->current_loop >= im->max_loops) {
+                        parked = 1;
+                        break;
+                    }
+                }
+                idx = next;
+                if (gap_at(im, idx) != 0) break;
+            }
+            if (!parked) {
+                im->current_index = idx;
+                im->frame_shown_at_ms = now_ms;
+                mark_img_content(st, im);
+                next_at = add_sat_u64(now_ms, gap_at(im, idx));
+            }
+        }
+        if (next_at > now_ms) {
+            uint64_t delay = next_at - now_ms;
+            if (min_delay < 0 || delay < (uint64_t)min_delay)
+                min_delay = (int64_t)delay;
+        }
+    }
+    return min_delay;
+}
+
+uint32_t jt_img_anim_frame_count(const jt_scr *s, uint32_t id) {
+    if (!s || id == 0) return 0;
+    const jt_img_store *st = s->in_alt ? s->img_alt : s->img_primary;
+    if (!st) return 0;
+    for (int32_t i = 0; i < st->image_n; i++) {
+        if (st->images[i].id == id) return img_frame_count(&st->images[i]);
+    }
+    return 0;
+}
+
+uint32_t jt_img_anim_current(const jt_scr *s, uint32_t id) {
+    if (!s || id == 0) return 0;
+    const jt_img_store *st = s->in_alt ? s->img_alt : s->img_primary;
+    if (!st) return 0;
+    for (int32_t i = 0; i < st->image_n; i++) {
+        if (st->images[i].id == id) return st->images[i].current_index + 1;
+    }
+    return 0;
+}
+
 static int match_delete(
     const jt_img_placement *p,
     const jt_scr *s,
@@ -952,7 +1520,7 @@ static int placement_to_snap(
     o->v1 = (uint16_t)(v1 < 0 ? 0 : v1 > 65535 ? 65535 : v1);
     o->width = im->width;
     o->height = im->height;
-    o->rgba = im->rgba;
+    o->rgba = img_display_rgba(im);
     return 1;
 }
 
@@ -1269,7 +1837,7 @@ static int virt_run_snap(
     o->v1 = (uint16_t)(v1 < 0 ? 0 : v1 > 65535 ? 65535 : v1);
     o->width = im->width;
     o->height = im->height;
-    o->rgba = im->rgba;
+    o->rgba = img_display_rgba(im);
     return 1;
 }
 

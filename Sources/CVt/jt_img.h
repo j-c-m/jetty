@@ -20,6 +20,8 @@ enum { JT_IMG_MAX_IMAGES = 256 };
 enum { JT_IMG_MAX_PLACEMENTS = 1024 };
 enum { JT_IMG_MAX_APC = 65536 };
 enum { JT_IMG_PARENT_CHAIN = 8 };
+enum { JT_IMG_DEFAULT_GAP_MS = 40 };
+enum { JT_IMG_MAX_FRAMES = 256 };
 
 enum {
     JT_IMG_OK = 0,
@@ -31,8 +33,26 @@ enum {
     JT_IMG_ESELF = -6,
     JT_IMG_ECYCLE = -7,
     JT_IMG_ETOODEEP = -8,
-    JT_IMG_EVIRTUAL_REL = -9
+    JT_IMG_EVIRTUAL_REL = -9,
+    JT_IMG_ENOENT_SRC = -10,
+    JT_IMG_ENOENT_DST = -11,
+    JT_IMG_EINVAL_BOUNDS = -12,
+    JT_IMG_EINVAL_OVERLAP = -13,
+    JT_IMG_EINVAL_INCOMPLETE = -14,
+    JT_IMG_EINVAL_BASE = -15,
+    JT_IMG_EINVAL_DIM = -16
 };
+
+enum {
+    JT_IMG_ANIM_STOPPED = 0,
+    JT_IMG_ANIM_LOADING = 1,
+    JT_IMG_ANIM_RUNNING = 2
+};
+
+typedef struct jt_img_frame {
+    uint8_t *rgba;
+    uint32_t gap_ms;
+} jt_img_frame;
 
 typedef struct jt_img_pin {
     int32_t x;
@@ -64,7 +84,16 @@ typedef struct jt_img {
     size_t nbytes;
     uint32_t placement_n;
     uint8_t transient;
+    uint8_t has_anim;
+    uint8_t anim_state;
     uint64_t generation;
+    jt_img_frame *frames;
+    int32_t frame_n;
+    uint32_t root_gap_ms;
+    uint32_t current_index;
+    uint32_t max_loops;
+    uint32_t current_loop;
+    uint64_t frame_shown_at_ms;
 } jt_img;
 
 typedef struct jt_img_store {
@@ -104,6 +133,20 @@ typedef struct jt_img_loading {
     uint8_t *data;
     size_t n, cap;
     uint32_t generation;
+    uint8_t anim_frame;
+    uint8_t anim_overwrite;
+    uint8_t anim_action;
+    uint32_t anim_x, anim_y;
+    uint32_t anim_create_frame;
+    uint32_t anim_edit_frame;
+    int32_t anim_gap_ms;
+    uint32_t anim_bg;
+    uint32_t anim_current;
+    uint32_t anim_loops;
+    uint32_t anim_src_frame, anim_dst_frame;
+    uint32_t anim_w, anim_h;
+    uint32_t anim_src_x, anim_src_y;
+    uint64_t anim_image_gen;
 } jt_img_loading;
 
 typedef struct jt_img_snap {
@@ -186,6 +229,26 @@ int jt_img_add(
     uint8_t transient
 );
 int jt_img_put(struct jt_scr *s, const jt_img_loading *ld);
+int jt_img_anim_add_frame(
+    struct jt_scr *s,
+    const jt_img_loading *ld,
+    uint8_t *rgba,
+    uint32_t w,
+    uint32_t h,
+    uint32_t *out_frame
+);
+int jt_img_anim_control(struct jt_scr *s, const jt_img_loading *ld);
+int jt_img_anim_compose(struct jt_scr *s, const jt_img_loading *ld);
+int jt_img_anim_delete_frame(
+    struct jt_scr *s,
+    uint32_t i,
+    uint32_t I,
+    uint32_t frame,
+    int upper
+);
+int64_t jt_img_anim_tick(struct jt_scr *s, uint64_t now_ms);
+uint32_t jt_img_anim_frame_count(const struct jt_scr *s, uint32_t id);
+uint32_t jt_img_anim_current(const struct jt_scr *s, uint32_t id);
 int jt_img_delete(
     struct jt_scr *s,
     uint8_t d,

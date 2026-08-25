@@ -222,11 +222,12 @@ static int parse_cmd(const uint8_t *src, size_t n, apc_cmd *out) {
     return 0;
 }
 
-static void reply(
+static void reply_full(
     const jt_vt_host *h,
     uint32_t i,
     uint32_t I,
     uint32_t p,
+    uint32_t frame,
     const char *msg,
     uint8_t quiet,
     int is_ok
@@ -249,9 +250,46 @@ static void reply(
     }
     if (p) {
         n += snprintf(buf + n, sizeof buf - (size_t)n, "%sp=%u", prior ? "," : "", p);
+        prior = 1;
+    }
+    if (frame) {
+        n += snprintf(buf + n, sizeof buf - (size_t)n, "%sr=%u", prior ? "," : "", frame);
     }
     n += snprintf(buf + n, sizeof buf - (size_t)n, ";%s\033\\", msg ? msg : "OK");
     if (n > 0) h->write_pty(h->ctx, (const uint8_t *)buf, (size_t)n);
+}
+
+static void reply(
+    const jt_vt_host *h,
+    uint32_t i,
+    uint32_t I,
+    uint32_t p,
+    const char *msg,
+    uint8_t quiet,
+    int is_ok
+) {
+    reply_full(h, i, I, p, 0, msg, quiet, is_ok);
+}
+
+static const char *img_err_msg(int rc) {
+    switch (rc) {
+    case JT_IMG_ENOENT: return "ENOENT: image not found";
+    case JT_IMG_ENOSPC: return "ENOSPC";
+    case JT_IMG_ENOPARENT_IMG: return "ENOPARENT: parent image not found";
+    case JT_IMG_ENOPARENT_PL: return "ENOPARENT: parent placement not found";
+    case JT_IMG_ESELF: return "EINVAL: placement cannot be its own parent";
+    case JT_IMG_ECYCLE: return "ECYCLE: parent chain creates a cycle";
+    case JT_IMG_ETOODEEP: return "ETOODEEP: parent chain too deep";
+    case JT_IMG_EVIRTUAL_REL: return "EINVAL: virtual placement cannot refer to a parent";
+    case JT_IMG_ENOENT_SRC: return "ENOENT: source frame not found";
+    case JT_IMG_ENOENT_DST: return "ENOENT: destination frame not found";
+    case JT_IMG_EINVAL_BOUNDS: return "EINVAL: rectangle out of bounds";
+    case JT_IMG_EINVAL_OVERLAP: return "EINVAL: source and destination rectangles overlap";
+    case JT_IMG_EINVAL_INCOMPLETE: return "EINVAL: image data incomplete";
+    case JT_IMG_EINVAL_BASE: return "EINVAL: base frame not found";
+    case JT_IMG_EINVAL_DIM: return "EINVAL: frame dimensions exceed image";
+    default: return "EINVAL";
+    }
 }
 
 void jt_apc_begin(jt_vt *p) {
@@ -517,6 +555,32 @@ static void fill_loading_from_cmd(jt_img_loading *ld, const apc_cmd *c) {
     ld->unicode = kv_u(c, 'U', 0) != 0;
     ld->transient = (kv_u(c, 'N', 0) & 1u) != 0;
     ld->has_display = (a == 'T' || a == 'p');
+    if (a == 'f') {
+        ld->anim_frame = 1;
+        ld->anim_x = kv_u(c, 'x', 0);
+        ld->anim_y = kv_u(c, 'y', 0);
+        ld->anim_create_frame = kv_u(c, 'c', 0);
+        ld->anim_edit_frame = kv_u(c, 'r', 0);
+        ld->anim_gap_ms = kv_i(c, 'z', 0);
+        ld->anim_overwrite = kv_u(c, 'X', 0) == 1;
+        ld->anim_bg = kv_u(c, 'Y', 0);
+    } else if (a == 'a') {
+        ld->anim_action = (uint8_t)kv_u(c, 's', 0);
+        ld->anim_edit_frame = kv_u(c, 'r', 0);
+        ld->anim_gap_ms = kv_i(c, 'z', 0);
+        ld->anim_current = kv_u(c, 'c', 0);
+        ld->anim_loops = kv_u(c, 'v', 0);
+    } else if (a == 'c') {
+        ld->anim_src_frame = kv_u(c, 'r', 0);
+        ld->anim_dst_frame = kv_u(c, 'c', 0);
+        ld->anim_w = kv_u(c, 'w', 0);
+        ld->anim_h = kv_u(c, 'h', 0);
+        ld->anim_x = kv_u(c, 'x', 0);
+        ld->anim_y = kv_u(c, 'y', 0);
+        ld->anim_src_x = kv_u(c, 'X', 0);
+        ld->anim_src_y = kv_u(c, 'Y', 0);
+        ld->anim_overwrite = kv_u(c, 'C', 0) != 0;
+    }
 }
 
 static int pixels_from_raw(jt_img_loading *ld, uint8_t **rgba, uint32_t *w, uint32_t *h) {
@@ -678,12 +742,29 @@ static int complete_transmit(
     uint32_t client_i = ld->image_id;
     uint32_t client_I = ld->number;
     uint32_t id = ld->image_id;
+
+    if (ld->action == 'f' || ld->anim_frame) {
+        uint32_t frame = ld->anim_edit_frame;
+        int rc = jt_img_anim_add_frame(scr, ld, rgba, iw, ih, &frame);
+        jt_img_abort_loading(ld);
+        if (rc != 0) {
+            if (client_i || client_I)
+                reply_full(h, client_i ? client_i : id, client_I, echo_p, frame,
+                           img_err_msg(rc), quiet, 0);
+            return -1;
+        }
+        if (client_i || client_I)
+            reply_full(h, client_i ? client_i : id, client_I, echo_p, frame,
+                       "OK", quiet, 1);
+        return 0;
+    }
+
     int rc = jt_img_add(scr, &id, ld->number, rgba, iw, ih, ld->transient);
     if (rc != 0) {
         jt_img_abort_loading(ld);
         if (client_i || client_I)
             reply(h, client_i ? client_i : id, client_I, echo_p,
-                  rc == JT_IMG_ENOSPC ? "ENOSPC" : "EINVAL", quiet, 0);
+                  img_err_msg(rc), quiet, 0);
         return -1;
     }
     ld->image_id = id;
@@ -691,21 +772,8 @@ static int complete_transmit(
         int prc = jt_img_put(scr, ld);
         if (prc != 0) {
             jt_img_abort_loading(ld);
-            if (client_i || client_I) {
-                const char *msg = "EINVAL";
-                switch (prc) {
-                case JT_IMG_ENOENT: msg = "ENOENT: image not found"; break;
-                case JT_IMG_ENOSPC: msg = "ENOSPC"; break;
-                case JT_IMG_ENOPARENT_IMG: msg = "ENOPARENT: parent image not found"; break;
-                case JT_IMG_ENOPARENT_PL: msg = "ENOPARENT: parent placement not found"; break;
-                case JT_IMG_ESELF: msg = "EINVAL: placement cannot be its own parent"; break;
-                case JT_IMG_ECYCLE: msg = "ECYCLE: parent chain creates a cycle"; break;
-                case JT_IMG_ETOODEEP: msg = "ETOODEEP: parent chain too deep"; break;
-                case JT_IMG_EVIRTUAL_REL: msg = "EINVAL: virtual placement cannot refer to a parent"; break;
-                default: break;
-                }
-                reply(h, id, client_I, echo_p, msg, quiet, 0);
-            }
+            if (client_i || client_I)
+                reply(h, id, client_I, echo_p, img_err_msg(prc), quiet, 0);
             return -1;
         }
     }
@@ -728,6 +796,15 @@ static void execute(jt_vt *p, jt_scr *scr, const jt_vt_host *h, apc_cmd *c) {
     uint8_t m = (uint8_t)kv_u(c, 'm', 0);
     uint8_t t = (uint8_t)kv_u(c, 't', 'd');
 
+    if (i && I) {
+        reply(h, i, I, pid, "EINVAL: image ID and number are mutually exclusive", quiet, 0);
+        return;
+    }
+
+    if (p->load.active && p->load.anim_frame
+        && a != 'd' && a != 'a' && a != 'c' && a != 'p')
+        a = 'f';
+
     if (a == 'd') {
         jt_img_abort_loading(&p->load);
         uint8_t d = (uint8_t)kv_u(c, 'd', 'a');
@@ -735,7 +812,9 @@ static void execute(jt_vt *p, jt_scr *scr, const jt_vt_host *h, apc_cmd *c) {
         uint32_t x = kv_u(c, 'x', 0);
         uint32_t y = kv_u(c, 'y', 0);
         if (d == 'f' || d == 'F') {
-            reply(h, i, I, pid, "ENOTSUP", quiet, 0);
+            int rc = jt_img_anim_delete_frame(scr, i, I, kv_u(c, 'r', 0), d == 'F');
+            if (rc != 0) reply(h, i, I, pid, img_err_msg(rc), quiet, 0);
+            else reply(h, i, I, pid, "OK", quiet, 1);
             return;
         }
         int rc = jt_img_delete(scr, d, i, I, pid, x, y, z);
@@ -744,13 +823,28 @@ static void execute(jt_vt *p, jt_scr *scr, const jt_vt_host *h, apc_cmd *c) {
         return;
     }
 
-    if (a == 'f' || a == 'a' || a == 'c') {
-        if (i || I) reply(h, i, I, pid, "ENOTSUP", quiet, 0);
+    if (a == 'a') {
         jt_img_abort_loading(&p->load);
+        jt_img_loading tmp;
+        memset(&tmp, 0, sizeof tmp);
+        fill_loading_from_cmd(&tmp, c);
+        int rc = jt_img_anim_control(scr, &tmp);
+        if (rc != 0) reply(h, i, I, pid, img_err_msg(rc), quiet, 0);
         return;
     }
 
-    if (a != 't' && a != 'T' && a != 'q' && a != 'p') {
+    if (a == 'c') {
+        jt_img_abort_loading(&p->load);
+        jt_img_loading tmp;
+        memset(&tmp, 0, sizeof tmp);
+        fill_loading_from_cmd(&tmp, c);
+        int rc = jt_img_anim_compose(scr, &tmp);
+        if (rc != 0) reply(h, i, I, pid, img_err_msg(rc), quiet, 0);
+        else reply(h, i, I, pid, "OK", quiet, 1);
+        return;
+    }
+
+    if (a != 't' && a != 'T' && a != 'q' && a != 'p' && a != 'f') {
         jt_img_abort_loading(&p->load);
         if (i || I) reply(h, i, I, pid, "EINVAL", quiet, 0);
         return;
@@ -767,21 +861,8 @@ static void execute(jt_vt *p, jt_scr *scr, const jt_vt_host *h, apc_cmd *c) {
         }
         int rc = jt_img_put(scr, &tmp);
         uint32_t echo = tmp.image_id;
-        if (rc != 0) {
-            const char *msg = "EINVAL";
-            switch (rc) {
-            case JT_IMG_ENOENT: msg = "ENOENT: image not found"; break;
-            case JT_IMG_ENOSPC: msg = "ENOSPC"; break;
-            case JT_IMG_ENOPARENT_IMG: msg = "ENOPARENT: parent image not found"; break;
-            case JT_IMG_ENOPARENT_PL: msg = "ENOPARENT: parent placement not found"; break;
-            case JT_IMG_ESELF: msg = "EINVAL: placement cannot be its own parent"; break;
-            case JT_IMG_ECYCLE: msg = "ECYCLE: parent chain creates a cycle"; break;
-            case JT_IMG_ETOODEEP: msg = "ETOODEEP: parent chain too deep"; break;
-            case JT_IMG_EVIRTUAL_REL: msg = "EINVAL: virtual placement cannot refer to a parent"; break;
-            default: break;
-            }
-            reply(h, i ? i : echo, I, pid, msg, quiet, 0);
-        } else reply(h, i ? i : echo, I, pid, "OK", quiet, 1);
+        if (rc != 0) reply(h, i ? i : echo, I, pid, img_err_msg(rc), quiet, 0);
+        else reply(h, i ? i : echo, I, pid, "OK", quiet, 1);
         return;
     }
 
@@ -810,6 +891,24 @@ static void execute(jt_vt *p, jt_scr *scr, const jt_vt_host *h, apc_cmd *c) {
     if (p->load.active) jt_img_abort_loading(&p->load);
 
     fill_loading_from_cmd(&p->load, c);
+    if (a == 'f') {
+        if (p->load.image_id == 0 && p->load.number == 0) {
+            jt_img_abort_loading(&p->load);
+            reply(h, i, I, pid, "EINVAL: image ID or number required", quiet, 0);
+            return;
+        }
+        jt_img *im = p->load.image_id
+            ? jt_img_find(jt_img_active(scr), p->load.image_id)
+            : jt_img_find_number(jt_img_active(scr), p->load.number);
+        if (!im) {
+            jt_img_abort_loading(&p->load);
+            reply(h, i, I, pid, "ENOENT: image not found", quiet, 0);
+            return;
+        }
+        p->load.image_id = im->id;
+        p->load.anim_image_gen = im->generation;
+        p->load.anim_frame = 1;
+    }
     p->load.active = 1;
     p->load.generation++;
     if (append_load(&p->load, c->payload, c->payload_n) != 0) {

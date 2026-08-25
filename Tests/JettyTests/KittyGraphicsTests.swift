@@ -667,6 +667,175 @@ final class KittyGraphicsTests: XCTestCase {
         XCTAssertEqual(s.imgLiveN, 1)
     }
 
+    func testAnimFrameAppendAndClientSwitch() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        p.feed(apc("a=T,f=24,s=1,v=1,i=1,t=d,C=1;\(b64([255, 0, 0]))"))
+        p.writes.removeAll()
+        p.feed(apc("a=f,f=24,s=1,v=1,i=1,t=d;\(b64([0, 255, 0]))"))
+        let out = String(bytes: p.writes, encoding: .utf8) ?? ""
+        XCTAssertTrue(out.contains("OK"), out)
+        XCTAssertTrue(out.contains("r=2"), out)
+        XCTAssertEqual(jt_img_anim_frame_count(s.implPtr, 1), 2)
+        XCTAssertEqual(jt_img_anim_current(s.implPtr, 1), 1)
+        XCTAssertEqual(firstPixel(s)?.0, 255)
+        p.writes.removeAll()
+        p.feed(apc("a=a,i=1,c=2"))
+        XCTAssertEqual(p.writes, [])
+        XCTAssertEqual(jt_img_anim_current(s.implPtr, 1), 2)
+        XCTAssertEqual(firstPixel(s)?.1, 255)
+        p.feed(apc("a=a,i=1,c=1"))
+        XCTAssertEqual(jt_img_anim_current(s.implPtr, 1), 1)
+        XCTAssertEqual(firstPixel(s)?.0, 255)
+    }
+
+    func testAnimMissingImage() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        p.feed(apc("a=f,f=24,s=1,v=1,i=99,t=d;\(b64([1, 2, 3]))"))
+        let out = String(bytes: p.writes, encoding: .utf8) ?? ""
+        XCTAssertTrue(out.contains("ENOENT"), out)
+    }
+
+    func testAnimIdAndNumberExclusive() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        p.feed(apc("a=f,i=1,I=2,s=1,v=1,t=d,f=24;\(b64([1, 2, 3]))"))
+        let out = String(bytes: p.writes, encoding: .utf8) ?? ""
+        XCTAssertTrue(out.contains("EINVAL"), out)
+        XCTAssertTrue(out.contains("mutually exclusive"), out)
+    }
+
+    func testAnimTickAdvances() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        p.feed(apc("a=T,f=24,s=1,v=1,i=1,t=d,C=1,q=2;\(b64([255, 0, 0]))"))
+        p.feed(apc("a=f,f=24,s=1,v=1,i=1,z=10,t=d,q=2;\(b64([0, 255, 0]))"))
+        p.feed(apc("a=a,i=1,r=1,z=10"))
+        p.feed(apc("a=a,i=1,s=3"))
+        XCTAssertEqual(jt_img_anim_current(s.implPtr, 1), 1)
+        XCTAssertEqual(jt_img_anim_tick(s.implPtr, 1), 10)
+        XCTAssertEqual(jt_img_anim_current(s.implPtr, 1), 1)
+        XCTAssertEqual(jt_img_anim_tick(s.implPtr, 11), 10)
+        XCTAssertEqual(jt_img_anim_current(s.implPtr, 1), 2)
+        XCTAssertEqual(firstPixel(s)?.1, 255)
+    }
+
+    func testAnimComposeOverwrite() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        p.feed(apc("a=T,f=24,s=1,v=1,i=1,t=d,C=1,q=2;\(b64([255, 0, 0]))"))
+        p.feed(apc("a=f,f=24,s=1,v=1,i=1,t=d,q=2;\(b64([0, 255, 0]))"))
+        p.writes.removeAll()
+        p.feed(apc("a=c,i=1,r=2,c=1,C=1"))
+        let out = String(bytes: p.writes, encoding: .utf8) ?? ""
+        XCTAssertTrue(out.contains("OK"), out)
+        XCTAssertEqual(firstPixel(s)?.1, 255)
+    }
+
+    func testAnimDeleteFrame() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        p.feed(apc("a=T,f=24,s=1,v=1,i=1,t=d,C=1,q=2;\(b64([255, 0, 0]))"))
+        p.feed(apc("a=f,f=24,s=1,v=1,i=1,t=d,q=2;\(b64([0, 255, 0]))"))
+        XCTAssertEqual(jt_img_anim_frame_count(s.implPtr, 1), 2)
+        p.feed(apc("a=d,d=f,i=1,r=2"))
+        XCTAssertEqual(jt_img_anim_frame_count(s.implPtr, 1), 1)
+        XCTAssertEqual(firstPixel(s)?.0, 255)
+    }
+
+    func testAnimDeleteRootPromotes() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        p.feed(apc("a=T,f=24,s=1,v=1,i=1,t=d,C=1,q=2;\(b64([255, 0, 0]))"))
+        p.feed(apc("a=f,f=24,s=1,v=1,i=1,t=d,q=2;\(b64([0, 255, 0]))"))
+        p.feed(apc("a=d,d=f,i=1,r=1"))
+        XCTAssertEqual(jt_img_anim_frame_count(s.implPtr, 1), 1)
+        XCTAssertEqual(firstPixel(s)?.1, 255)
+    }
+
+    func testAnimUppercaseFWithoutFramesDeletesImage() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        p.feed(apc("a=T,f=24,s=1,v=1,i=1,t=d,C=1,q=2;\(b64([255, 0, 0]))"))
+        XCTAssertEqual(s.imgLiveN, 1)
+        p.feed(apc("a=d,d=F,i=1"))
+        XCTAssertEqual(s.imgLiveN, 0)
+        XCTAssertNil(jt_img_find(jt_img_active(s.implPtr), 1))
+    }
+
+    func testAnimIdleYnDoesNotTick() {
+        let s = Screen(cols: 8, rows: 4, scrollbackCapRows: 16)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        p.feed(apc("a=T,f=24,s=1,v=1,i=1,t=d,C=1,q=2;\(b64([255, 0, 0]))"))
+        p.feed(apc("a=f,f=24,s=1,v=1,i=1,z=10,t=d,q=2;\(b64([0, 255, 0]))"))
+        p.feed(apc("a=a,i=1,r=1,z=10"))
+        p.feed(apc("a=a,i=1,s=3"))
+        XCTAssertEqual(jt_img_anim_current(s.implPtr, 1), 1)
+        p.feed(String(repeating: "y\n", count: 20))
+        XCTAssertEqual(jt_img_anim_current(s.implPtr, 1), 1)
+        XCTAssertEqual(s.poolCells, 0)
+    }
+
+    func testAnimFrameTooBig() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        p.feed(apc("a=T,f=24,s=1,v=1,i=1,t=d,C=1,q=2;\(b64([255, 0, 0]))"))
+        p.writes.removeAll()
+        let rgb = [UInt8](repeating: 1, count: 27)
+        p.feed(apc("a=f,f=24,s=3,v=3,i=1,t=d;\(b64(rgb))"))
+        let out = String(bytes: p.writes, encoding: .utf8) ?? ""
+        XCTAssertTrue(out.contains("EINVAL"), out)
+        XCTAssertEqual(jt_img_anim_frame_count(s.implPtr, 1), 1)
+    }
+
+    func testAnimChunkedFrame() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        p.feed(apc("a=T,f=24,s=2,v=2,i=1,t=d,C=1,q=2;\(b64([UInt8](repeating: 9, count: 12)))"))
+        let rgb = [UInt8](repeating: 7, count: 12)
+        let enc = b64(rgb)
+        let mid = enc.index(enc.startIndex, offsetBy: 8)
+        p.feed(apc("a=f,f=24,s=2,v=2,i=1,t=d,m=1;\(enc[..<mid])"))
+        XCTAssertEqual(jt_img_anim_frame_count(s.implPtr, 1), 1)
+        p.writes.removeAll()
+        p.feed(apc("a=f,m=0;\(enc[mid...])"))
+        let out = String(bytes: p.writes, encoding: .utf8) ?? ""
+        XCTAssertTrue(out.contains("OK"), out)
+        XCTAssertEqual(jt_img_anim_frame_count(s.implPtr, 1), 2)
+    }
+
+    private func firstPixel(_ s: Screen) -> (UInt8, UInt8, UInt8, UInt8)? {
+        var snaps = [jt_img_snap](repeating: jt_img_snap(), count: 4)
+        let n = snaps.withUnsafeMutableBufferPointer { buf in
+            jt_img_snapshot(s.implPtr, 0, Int32(s.rows), 8, 16, buf.baseAddress!, 4)
+        }
+        guard n > 0, let rgba = snaps[0].rgba else { return nil }
+        return (rgba[0], rgba[1], rgba[2], rgba[3])
+    }
+
     /// 1×1 opaque red PNG.
     private static let png1x1Red: [UInt8] = [
         0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,

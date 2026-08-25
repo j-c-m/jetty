@@ -39,6 +39,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var markedText = NSMutableAttributedString()
     private var imeInsert = false
     private var cursorBlinkWork: DispatchWorkItem?
+    private var animWake: DispatchWorkItem?
     private var liveDirty = ContiguousArray<UInt8>()
     private var skipLast: DirtySkip.Key?
     private var rowDocId: [Int] = []
@@ -283,6 +284,10 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         var snaps = [jt_img_snap](repeating: jt_img_snap(), count: 1024)
         var snapN: Int32 = 0
         var rgbaCopy: [UInt32: Data] = [:]
+        let animDelay = jt_img_anim_tick(
+            session.screen.implPtr,
+            UInt64(CACurrentMediaTime() * 1000.0)
+        )
         let virtN = jt_img_virtual_n(session.screen.implPtr)
         let relN = jt_img_relative_n(session.screen.implPtr)
         var phHide = ContiguousArray<UInt8>(repeating: 0, count: max(cellCount, 0))
@@ -354,6 +359,18 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             }
         }
         session.unlockDemand()
+        if animDelay >= 0 {
+            animWake?.cancel()
+            let item = DispatchWorkItem { [weak self] in
+                self?.needsDisplay = true
+            }
+            animWake = item
+            let ms = max(Int(animDelay), 1)
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + .milliseconds(ms),
+                execute: item
+            )
+        }
         applyChrome(defBG, reverse: rev)
 
         let dw = drawableSize.width
