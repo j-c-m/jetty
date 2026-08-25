@@ -236,6 +236,80 @@ final class KittyGraphicsTests: XCTestCase {
         XCTAssertEqual(s.imgLiveN, 1)
     }
 
+    func testDeletePHitsCoveredNonOriginCell() {
+        let s = Screen(cols: 20, rows: 8, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 8, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,i=1,c=4,r=6,t=d,C=1;\(b64(rgb))"))
+        XCTAssertEqual(s.imgLiveN, 1)
+        p.feed(apc("a=d,d=p,x=2,y=4"))
+        XCTAssertEqual(s.imgLiveN, 0)
+    }
+
+    func testDeleteIWithPlacementId() {
+        let s = Screen(cols: 20, rows: 8, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 8, count: 12)
+        p.feed(apc("a=t,f=24,s=2,v=2,i=4,t=d;\(b64(rgb))"))
+        p.feed("\u{1B}[1;1H")
+        p.feed(apc("a=p,i=4,p=1,c=2,r=1,C=1"))
+        p.feed("\u{1B}[2;1H")
+        p.feed(apc("a=p,i=4,p=2,c=2,r=1,C=1"))
+        XCTAssertEqual(s.imgLiveN, 2)
+        p.feed(apc("a=d,d=i,i=4,p=1"))
+        XCTAssertEqual(s.imgLiveN, 1)
+        p.feed(apc("a=d,d=I,i=4"))
+        XCTAssertEqual(s.imgLiveN, 0)
+    }
+
+    func testDeleteRangeInvertedMatchesNothing() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 8, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,i=5,t=d,C=1;\(b64(rgb))"))
+        XCTAssertEqual(s.imgLiveN, 1)
+        p.feed(apc("a=d,d=r,x=9,y=1"))
+        XCTAssertEqual(s.imgLiveN, 1)
+        p.feed(apc("a=d,d=r,x=5,y=5"))
+        XCTAssertEqual(s.imgLiveN, 0)
+    }
+
+    func testDeleteColumnAndZ() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 8, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,i=6,c=3,r=2,z=-1,t=d,C=1;\(b64(rgb))"))
+        XCTAssertEqual(s.imgLiveN, 1)
+        p.feed(apc("a=d,d=z,z=0"))
+        XCTAssertEqual(s.imgLiveN, 1)
+        p.feed(apc("a=d,d=x,x=2"))
+        XCTAssertEqual(s.imgLiveN, 0)
+    }
+
+    func testImageNumberNewest() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 8, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,I=3,t=d,C=1;\(b64(rgb))"))
+        p.writes.removeAll()
+        p.feed(apc("a=T,f=24,s=2,v=2,I=3,t=d,C=1;\(b64(rgb))"))
+        XCTAssertEqual(s.imgLiveN, 2)
+        p.feed(apc("a=d,d=N,I=3"))
+        XCTAssertEqual(s.imgLiveN, 1)
+        p.feed(apc("a=d,d=N,I=3"))
+        XCTAssertEqual(s.imgLiveN, 0)
+    }
+
     func testChunkedRGB() {
         let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
         s.setCellPx(width: 8, height: 16)

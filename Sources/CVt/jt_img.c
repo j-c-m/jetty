@@ -452,15 +452,25 @@ static int match_delete(
     dest_cell_rect(p, s, &x0, &y0, &x1, &y1);
     uint8_t kind = d;
     if (kind >= 'A' && kind <= 'Z') kind = (uint8_t)(kind - 'A' + 'a');
+    /* Virtuals: only i/I n/N r/R (image identity), not screen-geometry deletes. */
+    if (p->virtual) {
+        if (kind != 'i' && kind != 'n' && kind != 'r') return 0;
+    }
     switch (kind) {
     case 'a':
     case 0:
         return dest_intersects_live(p, s);
     case 'i':
-        return i != 0 && p->image_id == i;
-    case 'n':
-        return I != 0 && jt_img_find(jt_img_active((jt_scr *)s), p->image_id)
-            && jt_img_find(jt_img_active((jt_scr *)s), p->image_id)->number == I;
+        if (i == 0 || p->image_id != i) return 0;
+        if (pid && (p->internal || p->placement_id != pid)) return 0;
+        return 1;
+    case 'n': {
+        if (I == 0) return 0;
+        jt_img *newest = jt_img_find_number(jt_img_active((jt_scr *)s), I);
+        if (!newest || p->image_id != newest->id) return 0;
+        if (pid && (p->internal || p->placement_id != pid)) return 0;
+        return 1;
+    }
     case 'c':
         return dest_intersects_live(p, s)
             && x0 <= s->active->cx && s->active->cx <= x1
@@ -478,16 +488,15 @@ static int match_delete(
         return p->z == z && x0 <= (int32_t)x - 1 && (int32_t)x - 1 <= x1
             && y0 <= (int32_t)y - 1 && (int32_t)y - 1 <= y1;
     case 'r':
-        return I != 0 && p->image_id != 0
-            && jt_img_find(jt_img_active((jt_scr *)s), p->image_id)
-            && jt_img_find(jt_img_active((jt_scr *)s), p->image_id)->number == I
-            && p->placement_id == pid;
+        /* Image-id range [x, y]. Inverted or empty matches nothing (Kitty). */
+        if (x == 0 || y == 0 || x > y) return 0;
+        return p->image_id >= x && p->image_id <= y;
     case 'x':
         return x0 <= (int32_t)x - 1 && (int32_t)x - 1 <= x1;
     case 'y':
         return y0 <= (int32_t)y - 1 && (int32_t)y - 1 <= y1;
     case 'z':
-        return p->z == z;
+        return !p->virtual && p->z == z;
     default:
         return 0;
     }
