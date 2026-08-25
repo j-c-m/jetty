@@ -4,7 +4,9 @@ Experimental macOS terminal. Swift 6 + C. `TERM=xterm-256color`.
 
 This is not production software. The goal is to test new ideas in relation to
 [Ghostty](https://ghostty.org/). Ghostty has been a clear reference for
-implementation. Not affiliated with Ghostty.
+implementation. Not affiliated with Ghostty. Differences and why Jetty is a
+bit faster / about 2× cheaper on CPU+GPU:
+[docs/vs-ghostty.md](docs/vs-ghostty.md).
 
 Not the Eclipse Jetty Java server.
 
