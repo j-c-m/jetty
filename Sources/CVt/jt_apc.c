@@ -510,6 +510,7 @@ static void fill_loading_from_cmd(jt_img_loading *ld, const apc_cmd *c) {
     ld->off_x = kv_u(c, 'X', 0);
     ld->off_y = kv_u(c, 'Y', 0);
     ld->no_cursor = kv_u(c, 'C', 0) == 1;
+    ld->unicode = kv_u(c, 'U', 0) != 0;
     ld->has_display = (a == 'T' || a == 'p');
 }
 
@@ -730,7 +731,7 @@ static void execute(jt_vt *p, jt_scr *scr, const jt_vt_host *h, apc_cmd *c) {
         return;
     }
 
-    if (kv_u(c, 'U', 0) != 0 || kv_u(c, 'P', 0) != 0) {
+    if (kv_u(c, 'P', 0) != 0 || kv_u(c, 'Q', 0) != 0) {
         jt_img_abort_loading(&p->load);
         reply(h, i, I, pid, "ENOTSUP", quiet, 0);
         return;

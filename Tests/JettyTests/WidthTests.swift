@@ -7,6 +7,7 @@ final class WidthTests: XCTestCase {
         XCTAssertEqual(jt_codepoint_width(UInt32(UInt8(ascii: "a"))), 1)
         XCTAssertEqual(jt_codepoint_width(0x20), 1)
         XCTAssertEqual(jt_codepoint_width(0x10FFFF), 1)
+        XCTAssertEqual(jt_codepoint_width(0x10EEEE), 1)
         XCTAssertEqual(jt_codepoint_width(0x00), 0)
         XCTAssertEqual(jt_codepoint_width(0x1B), 0)
         XCTAssertEqual(jt_codepoint_width(0x0301), 0)

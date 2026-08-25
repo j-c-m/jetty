@@ -203,14 +203,110 @@ final class KittyGraphicsTests: XCTestCase {
         XCTAssertEqual(s.imgLiveN, 1)
     }
 
-    func testU1ENOTSUP() {
+    func testU1VirtualPutDoesNotPinOrMoveCursor() {
         let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
         let p = Parser()
         p.screen = s
-        p.feed(apc("a=T,U=1,i=1,s=1,v=1,f=24,t=d;\(b64([1, 2, 3]))"))
+        p.feed("\u{1B}[2;3H")
+        let rgb = [UInt8](repeating: 9, count: 12)
+        p.feed(apc("a=T,U=1,i=42,s=2,v=2,f=24,c=2,r=2,t=d;\(b64(rgb))"))
+        let out = String(bytes: p.writes, encoding: .utf8) ?? ""
+        XCTAssertTrue(out.contains("OK"), out)
+        XCTAssertFalse(out.contains("ENOTSUP"), out)
+        XCTAssertEqual(s.imgLiveN, 0)
+        XCTAssertEqual(s.imgHistN, 0)
+        XCTAssertEqual(s.imgVirtualN, 1)
+        XCTAssertEqual(s.cursorX, 2)
+        XCTAssertEqual(s.cursorY, 1)
+    }
+
+    func testRelativePlacementStillENOTSUP() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 1, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,i=1,t=d,C=1;\(b64(rgb))"))
+        p.writes.removeAll()
+        p.feed(apc("a=p,i=1,P=1,C=1"))
         let out = String(bytes: p.writes, encoding: .utf8) ?? ""
         XCTAssertTrue(out.contains("ENOTSUP"), out)
+    }
+
+    func testDeleteALeavesVirtualDeleteIRemoves() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 9, count: 12)
+        p.feed(apc("a=T,U=1,i=42,s=2,v=2,f=24,c=2,r=2,t=d,q=2;\(b64(rgb))"))
+        XCTAssertEqual(s.imgVirtualN, 1)
+        p.feed(apc("a=d,d=a"))
+        XCTAssertEqual(s.imgVirtualN, 1)
+        p.feed(apc("a=d,d=i,i=42"))
+        XCTAssertEqual(s.imgVirtualN, 0)
+    }
+
+    func testPlaceholder2x2IndexedFg() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 7, count: 12)
+        p.feed(apc("a=T,U=1,i=42,s=2,v=2,f=24,c=2,r=2,t=d,q=2;\(b64(rgb))"))
+        XCTAssertEqual(s.imgVirtualN, 1)
+        p.feed("\u{1B}[1;1H\u{1B}[38;5;42m")
+        p.feed("\u{10EEEE}\u{0305}\u{0305}\u{10EEEE}\u{0305}\u{030D}\r\n")
+        p.feed("\u{10EEEE}\u{030D}\u{0305}\u{10EEEE}\u{030D}\u{030D}\u{1B}[39m")
+        var paint = [Cell](repeating: .empty, count: s.cols * s.rows)
+        paint.withUnsafeMutableBufferPointer { dest in
+            s.blitLiveGrid(to: dest.baseAddress!)
+        }
+        var hide = [UInt8](repeating: 0, count: s.cols * s.rows)
+        var snaps = [jt_img_snap](repeating: jt_img_snap(), count: 8)
+        let n = hide.withUnsafeMutableBufferPointer { hideBuf in
+            paint.withUnsafeBufferPointer { cellBuf in
+                snaps.withUnsafeMutableBufferPointer { snapBuf in
+                    jt_img_placeholder_scan(
+                        s.implPtr,
+                        cellBuf.baseAddress!,
+                        Int32(s.cols),
+                        Int32(s.rows),
+                        8,
+                        16,
+                        hideBuf.baseAddress!,
+                        snapBuf.baseAddress!,
+                        8
+                    )
+                }
+            }
+        }
+        XCTAssertEqual(n, 2)
+        XCTAssertEqual(hide[0], 1)
+        XCTAssertEqual(hide[1], 1)
+        XCTAssertEqual(hide[s.cols], 1)
+        XCTAssertEqual(hide[s.cols + 1], 1)
+        XCTAssertEqual(snaps[0].image_id, 42)
+        XCTAssertEqual(snaps[1].image_id, 42)
+        XCTAssertGreaterThan(snaps[0].sx, 0)
+        XCTAssertGreaterThan(snaps[1].sx, 0)
+        XCTAssertEqual(s.row(0)[0].contentKind, CONTENT_GRAPHEME)
+    }
+
+    func testVirtualIdleYnDoesNotInternGrapheme() {
+        let s = Screen(cols: 8, rows: 4, scrollbackCapRows: 16)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 3, count: 12)
+        p.feed(apc("a=T,U=1,i=9,s=2,v=2,f=24,c=2,r=2,t=d,q=2;\(b64(rgb))"))
+        XCTAssertEqual(s.imgVirtualN, 1)
+        XCTAssertEqual(s.poolCells, 0)
+        p.feed(String(repeating: "y\n", count: 200))
         XCTAssertEqual(s.imgLiveN, 0)
+        XCTAssertEqual(s.imgVirtualN, 1)
+        XCTAssertEqual(s.poolCells, 0)
     }
 
     func testPasswdFileRefused() {

@@ -283,6 +283,9 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         var snaps = [jt_img_snap](repeating: jt_img_snap(), count: 1024)
         var snapN: Int32 = 0
         var rgbaCopy: [UInt32: Data] = [:]
+        let virtN = jt_img_virtual_n(session.screen.implPtr)
+        var phHide = ContiguousArray<UInt8>(repeating: 0, count: max(cellCount, 0))
+        var phAny = false
         snaps.withUnsafeMutableBufferPointer { buf in
             guard let p = buf.baseAddress else { return }
             snapN = jt_img_snapshot(
@@ -294,6 +297,31 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 p,
                 1024
             )
+            if virtN > 0, cellCount > 0, cols > 0, paintRows > 0 {
+                paint.withUnsafeBufferPointer { cellBuf in
+                    phHide.withUnsafeMutableBufferPointer { hideBuf in
+                        guard let cp = cellBuf.baseAddress, let hp = hideBuf.baseAddress else { return }
+                        let extra = jt_img_placeholder_scan(
+                            session.screen.implPtr,
+                            cp,
+                            Int32(cols),
+                            Int32(paintRows),
+                            UInt32(cellWPx),
+                            UInt32(cellHPx),
+                            hp,
+                            p + Int(snapN),
+                            1024 - snapN
+                        )
+                        snapN += extra
+                    }
+                }
+                var i = 0
+                while i < phHide.count {
+                    if phHide[i] != 0 { phAny = true; break }
+                    i += 1
+                }
+                if snapN > 1 { jt_img_sort_snaps(p, snapN) }
+            }
         }
         if snapN > 0 {
             var i = 0
@@ -354,7 +382,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             },
             searchSig: findSig,
             preedit: !preedit.isEmpty,
-            imagesUnderText: (0..<Int(snapN)).contains { snaps[$0].z < 0 }
+            imagesUnderText: (0..<Int(snapN)).contains { snaps[$0].z < 0 },
+            imagesVirtual: virtN > 0
         )
         var skipExpand: [Bool]?
         if !forceFullRebuild,
@@ -403,6 +432,13 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 }
             }
         }
+        if phAny, phHide.count == n {
+            var i = 0
+            while i < n {
+                if phHide[i] != 0 { ligaHide[i] = 1 }
+                i += 1
+            }
+        }
         let wantInk = config.ligatures != .off && (!ligaSpans.isEmpty || lastInk)
         let underText = skipKey.imagesUnderText
         if underText { skipExpand = nil }
@@ -419,7 +455,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 paint.withUnsafeBufferPointer { cellBuf in
                     guard let cp = cellBuf.baseAddress, let palBase = pal.baseAddress else { return }
                     let hidePtr: UnsafePointer<UInt8>? =
-                        config.ligatures == .off ? nil : hideBuf.baseAddress
+                        (config.ligatures == .off && !phAny) ? nil : hideBuf.baseAddress
                     var useSkip = skipExpand
                     if useSkip != nil && !renderer.canCopyFromPresented(count: instCount) {
                         useSkip = nil

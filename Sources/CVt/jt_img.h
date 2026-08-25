@@ -1,6 +1,8 @@
 #ifndef JT_IMG_H
 #define JT_IMG_H
 
+#include "jt_cell.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -52,6 +54,7 @@ typedef struct jt_img_store {
     jt_img_placement pl[JT_IMG_MAX_PLACEMENTS];
     int32_t live_n;
     int32_t hist_n;
+    int32_t virtual_n;
     size_t total_bytes;
     uint64_t generation;
     uint32_t dirty;
@@ -68,6 +71,7 @@ typedef struct jt_img_loading {
     uint8_t medium;
     uint8_t compress;
     uint8_t no_cursor;
+    uint8_t unicode;
     uint8_t has_display;
     uint32_t w, h, S, O;
     uint32_t image_id, number, placement_id;
@@ -105,6 +109,20 @@ void jt_img_on_resize(struct jt_scr *s, int32_t old_cols, int32_t old_rows, int3
 
 int32_t jt_img_live_n(const struct jt_scr *s);
 int32_t jt_img_hist_n(const struct jt_scr *s);
+int32_t jt_img_virtual_n(const struct jt_scr *s);
+
+int32_t jt_img_placeholder_scan(
+    const struct jt_scr *s,
+    const Cell *paint,
+    int32_t cols,
+    int32_t paint_rows,
+    uint32_t cell_w,
+    uint32_t cell_h,
+    uint8_t *hide,
+    jt_img_snap *out,
+    int32_t cap
+);
+void jt_img_sort_snaps(jt_img_snap *out, int32_t n);
 
 int32_t jt_img_snapshot(
     const struct jt_scr *s,

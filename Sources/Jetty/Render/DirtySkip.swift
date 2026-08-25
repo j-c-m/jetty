@@ -43,11 +43,13 @@ enum DirtySkip {
         var searchSig: UInt64
         var preedit: Bool
         var imagesUnderText: Bool = false
+        var imagesVirtual: Bool = false
     }
 
     static func fullRebuild(now: Key, last: Key?) -> Bool {
         guard let last else { return true }
         if now.imagesUnderText || last.imagesUnderText { return true }
+        if now.imagesVirtual || last.imagesVirtual { return true }
         if now.extra != 0 || now.contentOffset { return true }
         if now.integerRow != last.integerRow { return true }
         if now.inAlt != last.inAlt { return true }

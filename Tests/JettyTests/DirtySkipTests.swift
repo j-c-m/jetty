@@ -130,6 +130,11 @@ final class DirtySkipTests: XCTestCase {
         XCTAssertTrue(DirtySkip.fullRebuild(now: under, last: under))
         XCTAssertTrue(DirtySkip.fullRebuild(now: under, last: base))
         XCTAssertTrue(DirtySkip.fullRebuild(now: base, last: under))
+        var virt = base
+        virt.imagesVirtual = true
+        XCTAssertTrue(DirtySkip.fullRebuild(now: virt, last: virt))
+        XCTAssertTrue(DirtySkip.fullRebuild(now: virt, last: base))
+        XCTAssertTrue(DirtySkip.fullRebuild(now: base, last: virt))
         XCTAssertFalse(DirtySkip.fullRebuild(now: base, last: base))
     }
 
