@@ -312,6 +312,42 @@ final class KittyGraphicsTests: XCTestCase {
         XCTAssertEqual(snaps[0].sy, 4 * 16)
     }
 
+    func testDim10000Stores10001Rejected() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 1, count: 10000 * 3)
+        p.feed(apc("a=t,f=24,s=10000,v=1,i=1,t=d,q=2;\(b64(rgb))"))
+        let st = jt_img_active(s.implPtr)
+        XCTAssertNotNil(st)
+        XCTAssertNotNil(jt_img_find(st, 1))
+        p.writes.removeAll()
+        p.feed(apc("a=t,f=24,s=10001,v=1,i=2,t=d;\(b64([1, 2, 3]))"))
+        let out = String(bytes: p.writes, encoding: .utf8) ?? ""
+        XCTAssertTrue(out.contains("EINVAL"), out)
+        XCTAssertNil(jt_img_find(st, 2))
+    }
+
+    func testUsageHintNMarksTransientAndEvictsFirst() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let pix = b64([1, 2, 3])
+        for i in 1...255 {
+            p.feed(apc("a=t,f=24,s=1,v=1,i=\(i),t=d,q=2,N=0;\(pix)"))
+        }
+        p.feed(apc("a=t,f=24,s=1,v=1,i=256,t=d,q=2,N=1;\(pix)"))
+        let st = jt_img_active(s.implPtr)
+        XCTAssertEqual(jt_img_find(st, 256)?.pointee.transient, 1)
+        XCTAssertEqual(jt_img_find(st, 1)?.pointee.transient, 0)
+        p.feed(apc("a=t,f=24,s=1,v=1,i=257,t=d,q=2,N=0;\(pix)"))
+        XCTAssertNil(jt_img_find(st, 256))
+        XCTAssertNotNil(jt_img_find(st, 1))
+        XCTAssertNotNil(jt_img_find(st, 257))
+    }
+
     func testVirtualIdleYnDoesNotInternGrapheme() {
         let s = Screen(cols: 8, rows: 4, scrollbackCapRows: 16)
         s.setCellPx(width: 8, height: 16)

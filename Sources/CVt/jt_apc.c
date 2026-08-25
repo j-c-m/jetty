@@ -511,6 +511,7 @@ static void fill_loading_from_cmd(jt_img_loading *ld, const apc_cmd *c) {
     ld->off_y = kv_u(c, 'Y', 0);
     ld->no_cursor = kv_u(c, 'C', 0) == 1;
     ld->unicode = kv_u(c, 'U', 0) != 0;
+    ld->transient = (kv_u(c, 'N', 0) & 1u) != 0;
     ld->has_display = (a == 'T' || a == 'p');
 }
 
@@ -673,7 +674,7 @@ static int complete_transmit(
     uint32_t client_i = ld->image_id;
     uint32_t client_I = ld->number;
     uint32_t id = ld->image_id;
-    int rc = jt_img_add(scr, &id, ld->number, rgba, iw, ih);
+    int rc = jt_img_add(scr, &id, ld->number, rgba, iw, ih, ld->transient);
     if (rc != 0) {
         jt_img_abort_loading(ld);
         if (client_i || client_I)

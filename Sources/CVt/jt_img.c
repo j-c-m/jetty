@@ -211,34 +211,40 @@ static int dest_intersects_live(const jt_img_placement *p, const jt_scr *s) {
     return rect_intersects_live(s, x0, y0, x1, y1);
 }
 
+static uint8_t evict_pri(const jt_img *im) {
+    uint8_t p = im->transient ? 0 : 1;
+    if (im->placement_n > 0) p += 2;
+    return p;
+}
+
+static int32_t pick_evict(const jt_img_store *st) {
+    int32_t best = -1;
+    uint8_t pri = 255;
+    uint64_t gen = UINT64_MAX;
+    uint32_t id = UINT32_MAX;
+    for (int32_t i = 0; i < st->image_n; i++) {
+        const jt_img *im = &st->images[i];
+        uint8_t p = evict_pri(im);
+        if (p > pri) continue;
+        if (p < pri || im->generation < gen || (im->generation == gen && im->id < id)) {
+            pri = p;
+            gen = im->generation;
+            id = im->id;
+            best = i;
+        }
+    }
+    return best;
+}
+
 static int evict_for(jt_img_store *st, size_t need) {
     if (!st) return 0;
-    if (st->total_bytes + need <= JT_IMG_QUOTA && st->image_n < JT_IMG_MAX_IMAGES) return 1;
+    if (need > JT_IMG_QUOTA) return 0;
     int guard = JT_IMG_MAX_IMAGES + 2;
     while (guard-- > 0) {
         if (st->total_bytes + need <= JT_IMG_QUOTA && st->image_n < JT_IMG_MAX_IMAGES) return 1;
-        int32_t unused = -1;
-        uint64_t gen = UINT64_MAX;
-        for (int32_t i = 0; i < st->image_n; i++) {
-            if (st->images[i].placement_n == 0 && st->images[i].generation < gen) {
-                gen = st->images[i].generation;
-                unused = i;
-            }
-        }
-        if (unused >= 0) {
-            remove_image_at(st, unused);
-            continue;
-        }
-        int32_t oldest = -1;
-        gen = UINT64_MAX;
-        for (int32_t i = 0; i < st->image_n; i++) {
-            if (st->images[i].generation < gen) {
-                gen = st->images[i].generation;
-                oldest = i;
-            }
-        }
-        if (oldest < 0) return 0;
-        uint32_t id = st->images[oldest].id;
+        int32_t idx = pick_evict(st);
+        if (idx < 0) return 0;
+        uint32_t id = st->images[idx].id;
         int32_t n = pl_count(st);
         for (int32_t i = n - 1; i >= 0; i--) {
             if (st->pl[i].image_id == id) remove_placement_at(st, i);
@@ -261,7 +267,15 @@ void jt_img_drop_id(jt_scr *s, uint32_t id) {
     jt_img_sync_live(s);
 }
 
-int jt_img_add(jt_scr *s, uint32_t *id, uint32_t number, uint8_t *rgba, uint32_t w, uint32_t h) {
+int jt_img_add(
+    jt_scr *s,
+    uint32_t *id,
+    uint32_t number,
+    uint8_t *rgba,
+    uint32_t w,
+    uint32_t h,
+    uint8_t transient
+) {
     jt_img_store *st = jt_img_active(s);
     if (!st || !rgba || !id || w == 0 || h == 0) {
         free(rgba);
@@ -272,9 +286,9 @@ int jt_img_add(jt_scr *s, uint32_t *id, uint32_t number, uint8_t *rgba, uint32_t
         return -1;
     }
     size_t nbytes = (size_t)w * (size_t)h * 4;
-    if (nbytes > JT_IMG_MAX_BYTES) {
+    if (nbytes > JT_IMG_QUOTA) {
         free(rgba);
-        return -1;
+        return -2;
     }
     if (*id == 0) *id = jt_img_alloc_id(st);
     if (*id == 0) {
@@ -304,6 +318,7 @@ int jt_img_add(jt_scr *s, uint32_t *id, uint32_t number, uint8_t *rgba, uint32_t
     im->height = h;
     im->rgba = rgba;
     im->nbytes = nbytes;
+    im->transient = transient ? 1 : 0;
     st->total_bytes += nbytes;
     st->generation++;
     im->generation = st->generation;

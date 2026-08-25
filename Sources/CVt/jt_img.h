@@ -13,9 +13,9 @@ extern "C" {
 struct jt_scr;
 struct jt_vt_host;
 
-enum { JT_IMG_MAX_DIM = 8192 };
-enum { JT_IMG_MAX_BYTES = 32u * 1024u * 1024u };
-enum { JT_IMG_QUOTA = 320u * 1024u * 1024u };
+enum { JT_IMG_MAX_DIM = 10000 };
+enum { JT_IMG_MAX_BYTES = 400u * 1024u * 1024u };
+enum { JT_IMG_QUOTA = 320u * 1000u * 1000u };
 enum { JT_IMG_MAX_IMAGES = 256 };
 enum { JT_IMG_MAX_PLACEMENTS = 1024 };
 enum { JT_IMG_MAX_APC = 65536 };
@@ -45,6 +45,7 @@ typedef struct jt_img {
     uint8_t *rgba;
     size_t nbytes;
     uint32_t placement_n;
+    uint8_t transient;
     uint64_t generation;
 } jt_img;
 
@@ -72,6 +73,7 @@ typedef struct jt_img_loading {
     uint8_t compress;
     uint8_t no_cursor;
     uint8_t unicode;
+    uint8_t transient;
     uint8_t has_display;
     uint32_t w, h, S, O;
     uint32_t image_id, number, placement_id;
@@ -140,7 +142,15 @@ void jt_scr_set_kitty_graphics(struct jt_scr *s, int on);
 uint32_t jt_img_alloc_id(jt_img_store *st);
 jt_img *jt_img_find(jt_img_store *st, uint32_t id);
 jt_img *jt_img_find_number(jt_img_store *st, uint32_t number);
-int jt_img_add(struct jt_scr *s, uint32_t *id, uint32_t number, uint8_t *rgba, uint32_t w, uint32_t h);
+int jt_img_add(
+    struct jt_scr *s,
+    uint32_t *id,
+    uint32_t number,
+    uint8_t *rgba,
+    uint32_t w,
+    uint32_t h,
+    uint8_t transient
+);
 int jt_img_put(struct jt_scr *s, const jt_img_loading *ld);
 int jt_img_delete(
     struct jt_scr *s,
