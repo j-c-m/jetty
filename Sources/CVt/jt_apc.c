@@ -235,7 +235,7 @@ static void reply(
     if (quiet >= 2) return;
     if (quiet == 1 && is_ok) return;
     if (i == 0 && I == 0) return;
-    char buf[96];
+    char buf[192];
     int n = 0;
     n += snprintf(buf + n, sizeof buf - (size_t)n, "\033_G");
     int prior = 0;
@@ -500,6 +500,10 @@ static void fill_loading_from_cmd(jt_img_loading *ld, const apc_cmd *c) {
     ld->image_id = kv_u(c, 'i', 0);
     ld->number = kv_u(c, 'I', 0);
     ld->placement_id = kv_u(c, 'p', 0);
+    ld->parent_id = kv_u(c, 'P', 0);
+    ld->parent_placement_id = kv_u(c, 'Q', 0);
+    ld->rel_h = kv_i(c, 'H', 0);
+    ld->rel_v = kv_i(c, 'V', 0);
     ld->z = kv_i(c, 'z', 0);
     ld->src_x = kv_u(c, 'x', 0);
     ld->src_y = kv_u(c, 'y', 0);
@@ -679,15 +683,29 @@ static int complete_transmit(
         jt_img_abort_loading(ld);
         if (client_i || client_I)
             reply(h, client_i ? client_i : id, client_I, echo_p,
-                  rc == -2 ? "ENOSPC" : "EINVAL", quiet, 0);
+                  rc == JT_IMG_ENOSPC ? "ENOSPC" : "EINVAL", quiet, 0);
         return -1;
     }
     ld->image_id = id;
     if (ld->action == 'T') {
-        if (jt_img_put(scr, ld) != 0) {
+        int prc = jt_img_put(scr, ld);
+        if (prc != 0) {
             jt_img_abort_loading(ld);
-            if (client_i || client_I)
-                reply(h, id, client_I, echo_p, "EINVAL", quiet, 0);
+            if (client_i || client_I) {
+                const char *msg = "EINVAL";
+                switch (prc) {
+                case JT_IMG_ENOENT: msg = "ENOENT: image not found"; break;
+                case JT_IMG_ENOSPC: msg = "ENOSPC"; break;
+                case JT_IMG_ENOPARENT_IMG: msg = "ENOPARENT: parent image not found"; break;
+                case JT_IMG_ENOPARENT_PL: msg = "ENOPARENT: parent placement not found"; break;
+                case JT_IMG_ESELF: msg = "EINVAL: placement cannot be its own parent"; break;
+                case JT_IMG_ECYCLE: msg = "ECYCLE: parent chain creates a cycle"; break;
+                case JT_IMG_ETOODEEP: msg = "ETOODEEP: parent chain too deep"; break;
+                case JT_IMG_EVIRTUAL_REL: msg = "EINVAL: virtual placement cannot refer to a parent"; break;
+                default: break;
+                }
+                reply(h, id, client_I, echo_p, msg, quiet, 0);
+            }
             return -1;
         }
     }
@@ -732,12 +750,6 @@ static void execute(jt_vt *p, jt_scr *scr, const jt_vt_host *h, apc_cmd *c) {
         return;
     }
 
-    if (kv_u(c, 'P', 0) != 0 || kv_u(c, 'Q', 0) != 0) {
-        jt_img_abort_loading(&p->load);
-        reply(h, i, I, pid, "ENOTSUP", quiet, 0);
-        return;
-    }
-
     if (a != 't' && a != 'T' && a != 'q' && a != 'p') {
         jt_img_abort_loading(&p->load);
         if (i || I) reply(h, i, I, pid, "EINVAL", quiet, 0);
@@ -755,8 +767,21 @@ static void execute(jt_vt *p, jt_scr *scr, const jt_vt_host *h, apc_cmd *c) {
         }
         int rc = jt_img_put(scr, &tmp);
         uint32_t echo = tmp.image_id;
-        if (rc != 0) reply(h, i ? i : echo, I, pid, rc == -1 ? "ENOENT" : "EINVAL", quiet, 0);
-        else reply(h, i ? i : echo, I, pid, "OK", quiet, 1);
+        if (rc != 0) {
+            const char *msg = "EINVAL";
+            switch (rc) {
+            case JT_IMG_ENOENT: msg = "ENOENT: image not found"; break;
+            case JT_IMG_ENOSPC: msg = "ENOSPC"; break;
+            case JT_IMG_ENOPARENT_IMG: msg = "ENOPARENT: parent image not found"; break;
+            case JT_IMG_ENOPARENT_PL: msg = "ENOPARENT: parent placement not found"; break;
+            case JT_IMG_ESELF: msg = "EINVAL: placement cannot be its own parent"; break;
+            case JT_IMG_ECYCLE: msg = "ECYCLE: parent chain creates a cycle"; break;
+            case JT_IMG_ETOODEEP: msg = "ETOODEEP: parent chain too deep"; break;
+            case JT_IMG_EVIRTUAL_REL: msg = "EINVAL: virtual placement cannot refer to a parent"; break;
+            default: break;
+            }
+            reply(h, i ? i : echo, I, pid, msg, quiet, 0);
+        } else reply(h, i ? i : echo, I, pid, "OK", quiet, 1);
         return;
     }
 

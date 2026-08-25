@@ -9,7 +9,7 @@
 #include "jt_img_diacritics.inc"
 
 static int32_t pl_count(const jt_img_store *st) {
-    return st->live_n + st->hist_n + st->virtual_n;
+    return st->live_n + st->hist_n + st->virtual_n + st->relative_n;
 }
 
 static void img_free(jt_img *im) {
@@ -75,6 +75,12 @@ int32_t jt_img_virtual_n(const jt_scr *s) {
     if (!s) return 0;
     const jt_img_store *st = s->in_alt ? s->img_alt : s->img_primary;
     return st ? st->virtual_n : 0;
+}
+
+int32_t jt_img_relative_n(const jt_scr *s) {
+    if (!s) return 0;
+    const jt_img_store *st = s->in_alt ? s->img_alt : s->img_primary;
+    return st ? st->relative_n : 0;
 }
 
 void jt_scr_set_cell_px(jt_scr *s, uint32_t w, uint32_t h) {
@@ -170,15 +176,139 @@ static void remove_placement_at(jt_img_store *st, int32_t idx) {
     if (!st || idx < 0 || idx >= pl_count(st)) return;
     jt_img_placement *p = &st->pl[idx];
     int virt = p->virtual;
-    int live = !virt && p->pin.y >= 0;
+    int rel = p->relative;
+    int live = !virt && !rel && p->pin.y >= 0;
     unref_image(st, p->image_id);
     int32_t n = pl_count(st) - 1;
     if (idx < n) st->pl[idx] = st->pl[n];
     memset(&st->pl[n], 0, sizeof(jt_img_placement));
     if (virt) st->virtual_n--;
+    else if (rel) st->relative_n--;
     else if (live) st->live_n--;
     else st->hist_n--;
     st->dirty = 1;
+}
+
+static const jt_img_placement *find_pl_key(
+    const jt_img_store *st,
+    uint32_t image_id,
+    uint32_t pid,
+    int internal
+) {
+    if (!st || image_id == 0 || pid == 0) return NULL;
+    int32_t n = pl_count(st);
+    for (int32_t i = 0; i < n; i++) {
+        const jt_img_placement *p = &st->pl[i];
+        if (p->image_id == image_id && p->placement_id == pid
+            && (int)p->internal == internal)
+            return p;
+    }
+    return NULL;
+}
+
+static const jt_img_placement *find_pl_external(
+    const jt_img_store *st,
+    uint32_t image_id,
+    uint32_t pid
+) {
+    if (!st || image_id == 0 || pid == 0) return NULL;
+    int32_t n = pl_count(st);
+    for (int32_t i = 0; i < n; i++) {
+        const jt_img_placement *p = &st->pl[i];
+        if (p->image_id == image_id && !p->internal && p->placement_id == pid)
+            return p;
+    }
+    return NULL;
+}
+
+static const jt_img_placement *preferred_pl(const jt_img_store *st, uint32_t image_id) {
+    const jt_img_placement *best = NULL;
+    if (!st || image_id == 0) return NULL;
+    int32_t n = pl_count(st);
+    for (int32_t i = 0; i < n; i++) {
+        const jt_img_placement *p = &st->pl[i];
+        if (p->image_id != image_id) continue;
+        if (!best) {
+            best = p;
+            continue;
+        }
+        int p_ext = !p->internal;
+        int b_ext = !best->internal;
+        if (p_ext != b_ext) {
+            if (p_ext) best = p;
+        } else if (p->placement_id < best->placement_id) {
+            best = p;
+        }
+    }
+    return best;
+}
+
+static int keys_equal(
+    uint32_t a_img,
+    uint32_t a_pid,
+    int a_internal,
+    const jt_img_placement *b
+) {
+    if (!b) return 0;
+    if (a_img != b->image_id || a_pid != b->placement_id) return 0;
+    if (a_internal != b->internal) return 0;
+    return 1;
+}
+
+static int resolve_parent(
+    const jt_img_store *st,
+    uint32_t child_id,
+    uint32_t child_pid,
+    int child_internal,
+    uint32_t parent_image_id,
+    uint32_t parent_pid,
+    const jt_img_placement **out
+) {
+    if (!jt_img_find((jt_img_store *)st, parent_image_id))
+        return JT_IMG_ENOPARENT_IMG;
+    const jt_img_placement *parent = parent_pid
+        ? find_pl_external(st, parent_image_id, parent_pid)
+        : preferred_pl(st, parent_image_id);
+    if (!parent) return JT_IMG_ENOPARENT_PL;
+    if (!child_internal && child_pid
+        && keys_equal(child_id, child_pid, 0, parent))
+        return JT_IMG_ESELF;
+    int depth = 1;
+    const jt_img_placement *cur = parent;
+    for (;;) {
+        if (!child_internal && child_pid
+            && keys_equal(child_id, child_pid, 0, cur))
+            return JT_IMG_ECYCLE;
+        if (!cur->relative) break;
+        if (depth >= JT_IMG_PARENT_CHAIN) return JT_IMG_ETOODEEP;
+        depth++;
+        cur = find_pl_key(
+            st, cur->parent_image_id, cur->parent_placement_id, cur->parent_internal
+        );
+        if (!cur) return JT_IMG_ENOPARENT_PL;
+    }
+    *out = parent;
+    return 0;
+}
+
+static void remove_orphans(jt_img_store *st) {
+    int removed = 1;
+    while (removed) {
+        removed = 0;
+        int32_t n = pl_count(st);
+        for (int32_t i = n - 1; i >= 0; i--) {
+            if (!st->pl[i].relative) continue;
+            if (find_pl_key(
+                    st,
+                    st->pl[i].parent_image_id,
+                    st->pl[i].parent_placement_id,
+                    st->pl[i].parent_internal
+                ))
+                continue;
+            remove_placement_at(st, i);
+            removed = 1;
+        }
+    }
 }
 
 static int dest_cell_rect(
@@ -251,6 +381,7 @@ static int evict_for(jt_img_store *st, size_t need) {
         }
         jt_img *im = jt_img_find(st, id);
         if (im) remove_image_at(st, (int32_t)(im - st->images));
+        remove_orphans(st);
     }
     return st->total_bytes + need <= JT_IMG_QUOTA && st->image_n < JT_IMG_MAX_IMAGES;
 }
@@ -264,6 +395,7 @@ void jt_img_drop_id(jt_scr *s, uint32_t id) {
     }
     jt_img *im = jt_img_find(st, id);
     if (im) remove_image_at(st, (int32_t)(im - st->images));
+    remove_orphans(st);
     jt_img_sync_live(s);
 }
 
@@ -288,7 +420,7 @@ int jt_img_add(
     size_t nbytes = (size_t)w * (size_t)h * 4;
     if (nbytes > JT_IMG_QUOTA) {
         free(rgba);
-        return -2;
+        return JT_IMG_ENOSPC;
     }
     if (*id == 0) *id = jt_img_alloc_id(st);
     if (*id == 0) {
@@ -304,11 +436,11 @@ int jt_img_add(
             once = 1;
             fputs("jetty: kitty-graphics: quota\n", stderr);
         }
-        return -2;
+        return JT_IMG_ENOSPC;
     }
     if (st->image_n >= JT_IMG_MAX_IMAGES) {
         free(rgba);
-        return -2;
+        return JT_IMG_ENOSPC;
     }
     jt_img *im = &st->images[st->image_n++];
     memset(im, 0, sizeof *im);
@@ -347,8 +479,10 @@ int jt_img_put(jt_scr *s, const jt_img_loading *ld) {
             once = 1;
             fputs("jetty: kitty-graphics: too-many-placements\n", stderr);
         }
-        return -2;
+        return JT_IMG_ENOSPC;
     }
+
+    if (ld->unicode && ld->parent_id) return JT_IMG_EVIRTUAL_REL;
 
     uint32_t cell_w = s->cell_w_px ? s->cell_w_px : 12;
     uint32_t cell_h = s->cell_h_px ? s->cell_h_px : 24;
@@ -402,7 +536,23 @@ int jt_img_put(jt_scr *s, const jt_img_loading *ld) {
         pid = st->next_internal_pid++;
         if (st->next_internal_pid == 0) st->next_internal_pid = 1;
         internal = 1;
-    } else {
+    }
+
+    const jt_img_placement *parent = NULL;
+    uint32_t parent_image_id = 0, parent_placement_id = 0;
+    uint8_t parent_internal = 0;
+    if (!ld->unicode && ld->parent_id) {
+        int prc = resolve_parent(
+            st, id, pid, internal,
+            ld->parent_id, ld->parent_placement_id, &parent
+        );
+        if (prc != 0) return prc;
+        parent_image_id = parent->image_id;
+        parent_placement_id = parent->placement_id;
+        parent_internal = parent->internal;
+    }
+
+    if (!internal) {
         int32_t n = pl_count(st);
         for (int32_t i = n - 1; i >= 0; i--) {
             if (st->pl[i].image_id == id && st->pl[i].placement_id == pid && !st->pl[i].internal)
@@ -428,6 +578,36 @@ int jt_img_put(jt_scr *s, const jt_img_loading *ld) {
         p->off_x = off_x;
         p->off_y = off_y;
         st->virtual_n++;
+        im->placement_n++;
+        st->dirty = 1;
+        jt_img_sync_live(s);
+        return 0;
+    }
+
+    if (ld->parent_id) {
+        if (!parent_image_id) return JT_IMG_ENOPARENT_PL;
+        jt_img_placement *p = &st->pl[pl_count(st)];
+        memset(p, 0, sizeof *p);
+        p->image_id = id;
+        p->placement_id = pid;
+        p->internal = internal;
+        p->relative = 1;
+        p->pixel_size = pixel_size;
+        p->z = ld->z;
+        p->src_x = src_x;
+        p->src_y = src_y;
+        p->src_w = src_w;
+        p->src_h = src_h;
+        p->cols = cols;
+        p->rows = rows;
+        p->off_x = off_x;
+        p->off_y = off_y;
+        p->parent_image_id = parent_image_id;
+        p->parent_placement_id = parent_placement_id;
+        p->parent_internal = parent_internal;
+        p->rel_h = ld->rel_h;
+        p->rel_v = ld->rel_v;
+        st->relative_n++;
         im->placement_n++;
         st->dirty = 1;
         jt_img_sync_live(s);
@@ -501,14 +681,17 @@ static int match_delete(
     uint32_t y,
     int32_t z
 ) {
-    int32_t x0, y0, x1, y1;
-    dest_cell_rect(p, s, &x0, &y0, &x1, &y1);
     uint8_t kind = d;
     if (kind >= 'A' && kind <= 'Z') kind = (uint8_t)(kind - 'A' + 'a');
-    /* Virtuals: only i/I n/N r/R (image identity), not screen-geometry deletes. */
+    /* Virtuals: identity deletes only. Relatives: identity plus z. */
     if (p->virtual) {
         if (kind != 'i' && kind != 'n' && kind != 'r') return 0;
+    } else if (p->relative) {
+        if (kind != 'i' && kind != 'n' && kind != 'r' && kind != 'z') return 0;
     }
+    int32_t x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    if (!p->virtual && !p->relative)
+        dest_cell_rect(p, s, &x0, &y0, &x1, &y1);
     switch (kind) {
     case 'a':
     case 0:
@@ -588,6 +771,7 @@ int jt_img_delete(
         for (int t = 0; t < tn; t++) delete_if_unused(st, touched[t]);
         if ((d == 'I' || d == 'i') && i) delete_if_unused(st, i);
     }
+    remove_orphans(st);
     jt_img_sync_live(s);
     return 0;
 }
@@ -601,7 +785,8 @@ void jt_img_clear_history_pins(jt_scr *s) {
     if (!st || st->hist_n == 0) return;
     int32_t n = pl_count(st);
     for (int32_t i = n - 1; i >= 0; i--) {
-        if (!st->pl[i].virtual && st->pl[i].pin.y < 0) remove_placement_at(st, i);
+        if (!st->pl[i].virtual && !st->pl[i].relative && st->pl[i].pin.y < 0)
+            remove_placement_at(st, i);
     }
     jt_img_sync_live(s);
 }
@@ -614,7 +799,8 @@ static void prune_hist(jt_scr *s) {
         : 0;
     int32_t n = pl_count(st);
     for (int32_t i = n - 1; i >= 0; i--) {
-        if (!st->pl[i].virtual && st->pl[i].pin.y < 0 && st->pl[i].pin.doc < lo)
+        if (!st->pl[i].virtual && !st->pl[i].relative && st->pl[i].pin.y < 0
+            && st->pl[i].pin.doc < lo)
             remove_placement_at(st, i);
     }
 }
@@ -626,7 +812,7 @@ void jt_img_shift_region(jt_scr *s, int32_t top, int32_t bot, int dir, int sb_pu
     if (sb_pushed) {
         for (int32_t i = n - 1; i >= 0; i--) {
             jt_img_placement *p = &st->pl[i];
-            if (p->virtual || p->pin.y < 0) continue;
+            if (p->virtual || p->relative || p->pin.y < 0) continue;
             if (p->pin.y == 0) {
                 p->pin.y = -1;
                 p->pin.doc = s->lines_scrolled ? s->lines_scrolled - 1 : 0;
@@ -644,7 +830,7 @@ void jt_img_shift_region(jt_scr *s, int32_t top, int32_t bot, int dir, int sb_pu
     }
     for (int32_t i = n - 1; i >= 0; i--) {
         jt_img_placement *p = &st->pl[i];
-        if (p->virtual || p->pin.y < 0) continue;
+        if (p->virtual || p->relative || p->pin.y < 0) continue;
         if (p->pin.y < top || p->pin.y > bot) continue;
         p->pin.y += dir;
         if (p->pin.y < top || p->pin.y > bot) {
@@ -676,7 +862,7 @@ void jt_img_on_resize(jt_scr *s, int32_t old_cols, int32_t old_rows, int32_t nc,
         int32_t n = pl_count(st);
         for (int32_t i = n - 1; i >= 0; i--) {
             jt_img_placement *p = &st->pl[i];
-            if (p->virtual) continue;
+            if (p->virtual || p->relative) continue;
             if (p->pin.x >= nc) {
                 remove_placement_at(st, i);
                 continue;
@@ -706,6 +892,77 @@ void jt_img_on_resize(jt_scr *s, int32_t old_cols, int32_t old_rows, int32_t nc,
     jt_img_sync_live(s);
 }
 
+static uint64_t view_start_doc(const jt_scr *s, int32_t integer_row) {
+    if (s->in_alt) return s->lines_scrolled;
+    uint64_t lo = 0;
+    if (s->lines_scrolled >= (uint64_t)s->sb_len)
+        lo = s->lines_scrolled - (uint64_t)s->sb_len;
+    return lo + (uint64_t)(integer_row < 0 ? 0 : integer_row);
+}
+
+static int placement_to_snap(
+    const jt_img_placement *p,
+    const jt_img *im,
+    int32_t origin_x,
+    int32_t paint_row,
+    uint32_t cell_w,
+    uint32_t cell_h,
+    int32_t vw,
+    int32_t vh,
+    jt_img_snap *o
+) {
+    uint32_t off_x = p->off_x;
+    uint32_t off_y = p->off_y;
+    if (off_x >= cell_w) off_x = cell_w ? cell_w - 1 : 0;
+    if (off_y >= cell_h) off_y = cell_h ? cell_h - 1 : 0;
+    int32_t ox0 = origin_x * (int32_t)cell_w + (int32_t)off_x;
+    int32_t oy0 = paint_row * (int32_t)cell_h + (int32_t)off_y;
+    int32_t sx0, sy0;
+    if (p->pixel_size) {
+        sx0 = (int32_t)p->src_w;
+        sy0 = (int32_t)p->src_h;
+    } else {
+        sx0 = (int32_t)p->cols * (int32_t)cell_w - (int32_t)off_x;
+        sy0 = (int32_t)p->rows * (int32_t)cell_h - (int32_t)off_y;
+    }
+    if (sx0 <= 0 || sy0 <= 0) return 0;
+    int32_t ix0 = ox0 > 0 ? ox0 : 0;
+    int32_t iy0 = oy0 > 0 ? oy0 : 0;
+    int32_t ix1 = ox0 + sx0 < vw ? ox0 + sx0 : vw;
+    int32_t iy1 = oy0 + sy0 < vh ? oy0 + sy0 : vh;
+    if (ix1 <= ix0 || iy1 <= iy0) return 0;
+    double u0 = (double)p->src_x + (double)(ix0 - ox0) * (double)p->src_w / (double)sx0;
+    double v0 = (double)p->src_y + (double)(iy0 - oy0) * (double)p->src_h / (double)sy0;
+    double u1 = (double)p->src_x + (double)(ix1 - ox0) * (double)p->src_w / (double)sx0;
+    double v1 = (double)p->src_y + (double)(iy1 - oy0) * (double)p->src_h / (double)sy0;
+    if (u0 < 0) u0 = 0;
+    if (v0 < 0) v0 = 0;
+    if (u1 > (double)im->width) u1 = (double)im->width;
+    if (v1 > (double)im->height) v1 = (double)im->height;
+    o->image_id = im->id;
+    o->generation = im->generation;
+    o->z = p->z;
+    o->ox = ix0;
+    o->oy = iy0;
+    o->sx = ix1 - ix0;
+    o->sy = iy1 - iy0;
+    o->u0 = (uint16_t)(u0 < 0 ? 0 : u0 > 65535 ? 65535 : u0);
+    o->v0 = (uint16_t)(v0 < 0 ? 0 : v0 > 65535 ? 65535 : v0);
+    o->u1 = (uint16_t)(u1 < 0 ? 0 : u1 > 65535 ? 65535 : u1);
+    o->v1 = (uint16_t)(v1 < 0 ? 0 : v1 > 65535 ? 65535 : v1);
+    o->width = im->width;
+    o->height = im->height;
+    o->rgba = im->rgba;
+    return 1;
+}
+
+static const jt_img *img_by_id(const jt_img_store *st, uint32_t id) {
+    for (int32_t k = 0; k < st->image_n; k++) {
+        if (st->images[k].id == id) return &st->images[k];
+    }
+    return NULL;
+}
+
 int32_t jt_img_snapshot(
     const jt_scr *s,
     int32_t integer_row,
@@ -722,62 +979,19 @@ int32_t jt_img_snapshot(
     if (npl == 0) return 0;
     if (cell_w == 0) cell_w = 1;
     if (cell_h == 0) cell_h = 1;
-    uint64_t lo = 0;
-    uint64_t view_start_doc;
-    if (s->in_alt) {
-        view_start_doc = s->lines_scrolled;
-    } else {
-        if (s->lines_scrolled >= (uint64_t)s->sb_len) lo = s->lines_scrolled - (uint64_t)s->sb_len;
-        view_start_doc = lo + (uint64_t)(integer_row < 0 ? 0 : integer_row);
-    }
+    uint64_t vsd = view_start_doc(s, integer_row);
     int32_t vw = s->cols * (int32_t)cell_w;
     int32_t vh = paint_rows * (int32_t)cell_h;
     int32_t n = 0;
     for (int32_t i = 0; i < npl; i++) {
         const jt_img_placement *p = &st->pl[i];
-        if (p->virtual) continue;
-        const jt_img *im = NULL;
-        for (int32_t k = 0; k < st->image_n; k++) {
-            if (st->images[k].id == p->image_id) {
-                im = &st->images[k];
-                break;
-            }
-        }
+        if (p->virtual || p->relative) continue;
+        const jt_img *im = img_by_id(st, p->image_id);
         if (!im || !im->rgba) continue;
         uint64_t origin_doc = p->pin.y >= 0
             ? s->lines_scrolled + (uint64_t)p->pin.y
             : p->pin.doc;
-        int32_t paint_row = (int32_t)((int64_t)origin_doc - (int64_t)view_start_doc);
-        uint32_t off_x = p->off_x;
-        uint32_t off_y = p->off_y;
-        if (off_x >= cell_w) off_x = cell_w - 1;
-        if (off_y >= cell_h) off_y = cell_h - 1;
-        int32_t ox0 = p->pin.x * (int32_t)cell_w + (int32_t)off_x;
-        int32_t oy0 = paint_row * (int32_t)cell_h + (int32_t)off_y;
-        int32_t sx0, sy0;
-        if (p->pixel_size) {
-            sx0 = (int32_t)p->src_w;
-            sy0 = (int32_t)p->src_h;
-        } else {
-            sx0 = (int32_t)p->cols * (int32_t)cell_w - (int32_t)off_x;
-            sy0 = (int32_t)p->rows * (int32_t)cell_h - (int32_t)off_y;
-        }
-        if (sx0 <= 0 || sy0 <= 0) continue;
-        int32_t ix0 = ox0 > 0 ? ox0 : 0;
-        int32_t iy0 = oy0 > 0 ? oy0 : 0;
-        int32_t ix1 = ox0 + sx0 < vw ? ox0 + sx0 : vw;
-        int32_t iy1 = oy0 + sy0 < vh ? oy0 + sy0 : vh;
-        if (ix1 <= ix0 || iy1 <= iy0) continue;
-        int32_t csx = ix1 - ix0;
-        int32_t csy = iy1 - iy0;
-        double u0 = (double)p->src_x + (double)(ix0 - ox0) * (double)p->src_w / (double)sx0;
-        double v0 = (double)p->src_y + (double)(iy0 - oy0) * (double)p->src_h / (double)sy0;
-        double u1 = (double)p->src_x + (double)(ix1 - ox0) * (double)p->src_w / (double)sx0;
-        double v1 = (double)p->src_y + (double)(iy1 - oy0) * (double)p->src_h / (double)sy0;
-        if (u0 < 0) u0 = 0;
-        if (v0 < 0) v0 = 0;
-        if (u1 > (double)im->width) u1 = (double)im->width;
-        if (v1 > (double)im->height) v1 = (double)im->height;
+        int32_t paint_row = (int32_t)((int64_t)origin_doc - (int64_t)vsd);
         if (n >= cap) {
             static int once;
             if (!once) {
@@ -786,21 +1000,8 @@ int32_t jt_img_snapshot(
             }
             break;
         }
-        jt_img_snap *o = &out[n++];
-        o->image_id = im->id;
-        o->generation = im->generation;
-        o->z = p->z;
-        o->ox = ix0;
-        o->oy = iy0;
-        o->sx = csx;
-        o->sy = csy;
-        o->u0 = (uint16_t)(u0 < 0 ? 0 : u0 > 65535 ? 65535 : u0);
-        o->v0 = (uint16_t)(v0 < 0 ? 0 : v0 > 65535 ? 65535 : v0);
-        o->u1 = (uint16_t)(u1 < 0 ? 0 : u1 > 65535 ? 65535 : u1);
-        o->v1 = (uint16_t)(v1 < 0 ? 0 : v1 > 65535 ? 65535 : v1);
-        o->width = im->width;
-        o->height = im->height;
-        o->rgba = im->rgba;
+        if (placement_to_snap(p, im, p->pin.x, paint_row, cell_w, cell_h, vw, vh, &out[n]))
+            n++;
     }
     jt_img_sort_snaps(out, n);
     return n;
@@ -869,13 +1070,6 @@ static const jt_img_placement *placeholder_target(
         }
     }
     return best;
-}
-
-static const jt_img *img_by_id(const jt_img_store *st, uint32_t id) {
-    for (int32_t k = 0; k < st->image_n; k++) {
-        if (st->images[k].id == id) return &st->images[k];
-    }
-    return NULL;
 }
 
 typedef struct {
@@ -1161,6 +1355,116 @@ int32_t jt_img_placeholder_scan(
             have = 1;
         }
         if (have) emit_run(s, st, &run, cols, cell_w, cell_h, vw, vh, hide, out, cap, &n);
+    }
+    return n;
+}
+
+static int resolve_chain(
+    const jt_img_store *st,
+    const jt_img_placement *rel,
+    const jt_img_placement **root,
+    int32_t *h,
+    int32_t *v
+) {
+    int32_t acc_h = rel->rel_h;
+    int32_t acc_v = rel->rel_v;
+    const jt_img_placement *cur = rel;
+    int depth = 1;
+    while (cur->relative) {
+        if (depth >= JT_IMG_PARENT_CHAIN) return 0;
+        const jt_img_placement *par = find_pl_key(
+            st, cur->parent_image_id, cur->parent_placement_id, cur->parent_internal
+        );
+        if (!par) return 0;
+        if (par->relative) {
+            acc_h += par->rel_h;
+            acc_v += par->rel_v;
+        }
+        cur = par;
+        depth++;
+    }
+    *root = cur;
+    *h = acc_h;
+    *v = acc_v;
+    return 1;
+}
+
+static int virt_origin_cell(
+    const jt_scr *s,
+    const jt_img_store *st,
+    const Cell *paint,
+    int32_t cols,
+    int32_t paint_rows,
+    const jt_img_placement *root,
+    int32_t *ox,
+    int32_t *oy
+) {
+    if (!paint || cols <= 0 || paint_rows <= 0) return 0;
+    for (int32_t y = 0; y < paint_rows; y++) {
+        for (int32_t x = 0; x < cols; x++) {
+            ph_run cur;
+            if (!parse_placeholder(s, &paint[y * cols + x], &cur)) continue;
+            uint32_t image_id = cur.image_id_low;
+            if (cur.has_high) image_id |= ((uint32_t)cur.image_id_high) << 24;
+            if (image_id == 0) continue;
+            uint32_t pid = cur.has_pid ? cur.placement_id : 0;
+            const jt_img_placement *t = placeholder_target(st, image_id, pid);
+            if (!t) continue;
+            if (t->image_id == root->image_id && t->placement_id == root->placement_id) {
+                *ox = x;
+                *oy = y;
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+int32_t jt_img_relative_scan(
+    const jt_scr *s,
+    const Cell *paint,
+    int32_t cols,
+    int32_t paint_rows,
+    int32_t integer_row,
+    uint32_t cell_w,
+    uint32_t cell_h,
+    jt_img_snap *out,
+    int32_t cap
+) {
+    if (!s || !out || cap <= 0 || paint_rows <= 0) return 0;
+    const jt_img_store *st = s->in_alt ? s->img_alt : s->img_primary;
+    if (!st || st->relative_n == 0) return 0;
+    if (cell_w == 0) cell_w = 1;
+    if (cell_h == 0) cell_h = 1;
+    uint64_t vsd = view_start_doc(s, integer_row);
+    int32_t vw = s->cols * (int32_t)cell_w;
+    int32_t vh = paint_rows * (int32_t)cell_h;
+    int32_t n = 0;
+    int32_t npl = pl_count(st);
+    for (int32_t i = 0; i < npl; i++) {
+        const jt_img_placement *p = &st->pl[i];
+        if (!p->relative) continue;
+        const jt_img *im = img_by_id(st, p->image_id);
+        if (!im || !im->rgba) continue;
+        const jt_img_placement *root = NULL;
+        int32_t h = 0, v = 0;
+        if (!resolve_chain(st, p, &root, &h, &v)) continue;
+        int32_t ox, oy;
+        if (root->virtual) {
+            if (!virt_origin_cell(s, st, paint, cols, paint_rows, root, &ox, &oy))
+                continue;
+            ox += h;
+            oy += v;
+        } else {
+            uint64_t origin_doc = root->pin.y >= 0
+                ? s->lines_scrolled + (uint64_t)root->pin.y
+                : root->pin.doc;
+            ox = root->pin.x + h;
+            oy = (int32_t)((int64_t)origin_doc - (int64_t)vsd) + v;
+        }
+        if (n >= cap) break;
+        if (placement_to_snap(p, im, ox, oy, cell_w, cell_h, vw, vh, &out[n]))
+            n++;
     }
     return n;
 }

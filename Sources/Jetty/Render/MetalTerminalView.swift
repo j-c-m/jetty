@@ -284,6 +284,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         var snapN: Int32 = 0
         var rgbaCopy: [UInt32: Data] = [:]
         let virtN = jt_img_virtual_n(session.screen.implPtr)
+        let relN = jt_img_relative_n(session.screen.implPtr)
         var phHide = ContiguousArray<UInt8>(repeating: 0, count: max(cellCount, 0))
         var phAny = false
         snaps.withUnsafeMutableBufferPointer { buf in
@@ -320,8 +321,24 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                     if phHide[i] != 0 { phAny = true; break }
                     i += 1
                 }
-                if snapN > 1 { jt_img_sort_snaps(p, snapN) }
             }
+            if relN > 0, cols > 0, paintRows > 0 {
+                paint.withUnsafeBufferPointer { cellBuf in
+                    let extra = jt_img_relative_scan(
+                        session.screen.implPtr,
+                        cellBuf.baseAddress,
+                        Int32(cols),
+                        Int32(paintRows),
+                        Int32(start),
+                        UInt32(cellWPx),
+                        UInt32(cellHPx),
+                        p + Int(snapN),
+                        1024 - snapN
+                    )
+                    snapN += extra
+                }
+            }
+            if snapN > 1 { jt_img_sort_snaps(p, snapN) }
         }
         if snapN > 0 {
             var i = 0

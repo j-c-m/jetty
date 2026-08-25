@@ -221,17 +221,210 @@ final class KittyGraphicsTests: XCTestCase {
         XCTAssertEqual(s.cursorY, 1)
     }
 
-    func testRelativePlacementStillENOTSUP() {
+    func testRelativePutOffsetsFromParentPin() {
+        let s = Screen(cols: 20, rows: 8, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 8, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,i=1,c=2,r=1,t=d,C=1;\(b64(rgb))"))
+        p.feed(apc("a=t,f=24,s=2,v=2,i=2,t=d,q=2;\(b64(rgb))"))
+        p.writes.removeAll()
+        p.feed(apc("a=p,i=2,P=1,H=3,V=1,c=2,r=1,C=1"))
+        let out = String(bytes: p.writes, encoding: .utf8) ?? ""
+        XCTAssertTrue(out.contains("OK"), out)
+        XCTAssertFalse(out.contains("ENOTSUP"), out)
+        XCTAssertEqual(s.imgLiveN, 1)
+        XCTAssertEqual(s.imgRelativeN, 1)
+        XCTAssertEqual(s.cursorX, 0)
+        XCTAssertEqual(s.cursorY, 0)
+        var snaps = [jt_img_snap](repeating: jt_img_snap(), count: 8)
+        let n = snaps.withUnsafeMutableBufferPointer { buf in
+            let pins = jt_img_snapshot(s.implPtr, 0, 8, 8, 16, buf.baseAddress!, 8)
+            let rel = jt_img_relative_scan(
+                s.implPtr, nil, 20, 8, 0, 8, 16,
+                buf.baseAddress! + Int(pins), 8 - pins
+            )
+            return pins + rel
+        }
+        XCTAssertEqual(n, 2)
+        let parent = snaps[0].image_id == 1 ? snaps[0] : snaps[1]
+        let child = snaps[0].image_id == 2 ? snaps[0] : snaps[1]
+        XCTAssertEqual(parent.image_id, 1)
+        XCTAssertEqual(child.image_id, 2)
+        XCTAssertEqual(child.ox, parent.ox + 3 * 8)
+        XCTAssertEqual(child.oy, parent.oy + 1 * 16)
+    }
+
+    func testRelativeMissingParent() {
         let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
         s.setCellPx(width: 8, height: 16)
         let p = Parser()
         p.screen = s
-        let rgb = [UInt8](repeating: 1, count: 12)
-        p.feed(apc("a=T,f=24,s=2,v=2,i=1,t=d,C=1;\(b64(rgb))"))
+        let rgb = [UInt8](repeating: 8, count: 12)
+        p.feed(apc("a=t,f=24,s=2,v=2,i=2,t=d,q=2;\(b64(rgb))"))
         p.writes.removeAll()
-        p.feed(apc("a=p,i=1,P=1,C=1"))
+        p.feed(apc("a=p,i=2,P=99,C=1"))
         let out = String(bytes: p.writes, encoding: .utf8) ?? ""
-        XCTAssertTrue(out.contains("ENOTSUP"), out)
+        XCTAssertTrue(out.contains("ENOPARENT"), out)
+        XCTAssertEqual(s.imgRelativeN, 0)
+    }
+
+    func testRelativeVirtualParentRejected() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 8, count: 12)
+        p.feed(apc("a=T,U=1,i=1,s=2,v=2,f=24,c=2,r=2,t=d,q=2;\(b64(rgb))"))
+        p.writes.removeAll()
+        p.feed(apc("a=p,U=1,i=1,P=1,C=1"))
+        let out = String(bytes: p.writes, encoding: .utf8) ?? ""
+        XCTAssertTrue(out.contains("EINVAL"), out)
+        XCTAssertTrue(out.contains("virtual"), out)
+    }
+
+    func testRelativeSelfParent() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 8, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,i=1,p=7,t=d,C=1;\(b64(rgb))"))
+        p.writes.removeAll()
+        p.feed(apc("a=p,i=1,p=7,P=1,Q=7,C=1"))
+        let out = String(bytes: p.writes, encoding: .utf8) ?? ""
+        XCTAssertTrue(out.contains("EINVAL"), out)
+        XCTAssertTrue(out.contains("parent"), out)
+    }
+
+    func testRelativeOrphanedWhenParentDeleted() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 8, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,i=1,c=2,r=1,t=d,C=1,q=2;\(b64(rgb))"))
+        p.feed(apc("a=t,f=24,s=2,v=2,i=2,t=d,q=2;\(b64(rgb))"))
+        p.feed(apc("a=p,i=2,P=1,H=1,C=1,q=2"))
+        XCTAssertEqual(s.imgRelativeN, 1)
+        p.feed(apc("a=d,d=a"))
+        XCTAssertEqual(s.imgLiveN, 0)
+        XCTAssertEqual(s.imgRelativeN, 0)
+    }
+
+    func testRelativeIdentityDeleteOrphans() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 8, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,i=1,p=7,t=d,C=1,q=2;\(b64(rgb))"))
+        p.feed(apc("a=t,f=24,s=2,v=2,i=2,t=d,q=2;\(b64(rgb))"))
+        p.feed(apc("a=p,i=2,P=1,Q=7,H=1,C=1,q=2"))
+        XCTAssertEqual(s.imgRelativeN, 1)
+        p.feed(apc("a=d,d=i,i=1"))
+        XCTAssertEqual(s.imgRelativeN, 0)
+    }
+
+    func testDeleteALeavesRelativeWhenParentInHistory() {
+        let s = Screen(cols: 8, rows: 4, scrollbackCapRows: 16)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 3, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,i=1,t=d,C=1,q=2;\(b64(rgb))"))
+        p.feed(apc("a=t,f=24,s=2,v=2,i=2,t=d,q=2;\(b64(rgb))"))
+        p.feed(apc("a=p,i=2,P=1,H=1,C=1,q=2"))
+        p.feed(String(repeating: "y\n", count: 20))
+        XCTAssertEqual(s.imgLiveN, 0)
+        XCTAssertEqual(s.imgHistN, 1)
+        XCTAssertEqual(s.imgRelativeN, 1)
+        p.feed(apc("a=d,d=a"))
+        XCTAssertEqual(s.imgHistN, 1)
+        XCTAssertEqual(s.imgRelativeN, 1)
+    }
+
+    func testRelativeCycle() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 8, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,i=1,p=1,t=d,C=1,q=2;\(b64(rgb))"))
+        p.feed(apc("a=t,f=24,s=2,v=2,i=2,t=d,q=2;\(b64(rgb))"))
+        p.feed(apc("a=p,i=2,p=2,P=1,Q=1,C=1,q=2"))
+        XCTAssertEqual(s.imgRelativeN, 1)
+        p.writes.removeAll()
+        p.feed(apc("a=p,i=1,p=1,P=2,Q=2,C=1"))
+        let out = String(bytes: p.writes, encoding: .utf8) ?? ""
+        XCTAssertTrue(out.contains("ECYCLE"), out)
+        XCTAssertEqual(s.imgRelativeN, 1)
+    }
+
+    func testRelativeTooDeep() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 8, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,i=1,p=1,t=d,C=1,q=2;\(b64(rgb))"))
+        for n in 2...9 {
+            p.feed(apc("a=t,f=24,s=2,v=2,i=\(n),t=d,q=2;\(b64(rgb))"))
+            p.feed(apc("a=p,i=\(n),p=\(n),P=\(n - 1),Q=\(n - 1),C=1,q=2"))
+        }
+        XCTAssertEqual(s.imgRelativeN, 8)
+        p.feed(apc("a=t,f=24,s=2,v=2,i=10,t=d,q=2;\(b64(rgb))"))
+        p.writes.removeAll()
+        p.feed(apc("a=p,i=10,p=10,P=9,Q=9,C=1"))
+        let out = String(bytes: p.writes, encoding: .utf8) ?? ""
+        XCTAssertTrue(out.contains("ETOODEEP"), out)
+        XCTAssertEqual(s.imgRelativeN, 8)
+    }
+
+    func testRelativeNegativeOffset() {
+        let s = Screen(cols: 20, rows: 8, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[1;4H")
+        let rgb = [UInt8](repeating: 8, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,i=1,c=2,r=1,t=d,C=1;\(b64(rgb))"))
+        p.feed(apc("a=t,f=24,s=2,v=2,i=2,t=d,q=2;\(b64(rgb))"))
+        p.writes.removeAll()
+        p.feed(apc("a=p,i=2,P=1,H=-1,V=0,c=2,r=1,C=1"))
+        let out = String(bytes: p.writes, encoding: .utf8) ?? ""
+        XCTAssertTrue(out.contains("OK"), out)
+        var snaps = [jt_img_snap](repeating: jt_img_snap(), count: 8)
+        let n = snaps.withUnsafeMutableBufferPointer { buf in
+            let pins = jt_img_snapshot(s.implPtr, 0, 8, 8, 16, buf.baseAddress!, 8)
+            let rel = jt_img_relative_scan(
+                s.implPtr, nil, 20, 8, 0, 8, 16,
+                buf.baseAddress! + Int(pins), 8 - pins
+            )
+            return pins + rel
+        }
+        XCTAssertEqual(n, 2)
+        let parent = snaps[0].image_id == 1 ? snaps[0] : snaps[1]
+        let child = snaps[0].image_id == 2 ? snaps[0] : snaps[1]
+        XCTAssertEqual(child.ox, parent.ox - 8)
+    }
+
+    func testRelativeIdleYnDoesNotWalk() {
+        let s = Screen(cols: 8, rows: 4, scrollbackCapRows: 16)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 3, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,i=1,t=d,C=1,q=2;\(b64(rgb))"))
+        p.feed(apc("a=t,f=24,s=2,v=2,i=2,t=d,q=2;\(b64(rgb))"))
+        p.feed(apc("a=p,i=2,P=1,H=1,C=1,q=2"))
+        XCTAssertEqual(s.imgLiveN, 1)
+        XCTAssertEqual(s.imgRelativeN, 1)
+        p.feed(String(repeating: "y\n", count: 20))
+        XCTAssertEqual(s.imgLiveN, 0)
+        XCTAssertEqual(s.imgRelativeN, 1)
+        XCTAssertEqual(s.poolCells, 0)
     }
 
     func testDeleteALeavesVirtualDeleteIRemoves() {

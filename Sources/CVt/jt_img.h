@@ -19,6 +19,20 @@ enum { JT_IMG_QUOTA = 320u * 1000u * 1000u };
 enum { JT_IMG_MAX_IMAGES = 256 };
 enum { JT_IMG_MAX_PLACEMENTS = 1024 };
 enum { JT_IMG_MAX_APC = 65536 };
+enum { JT_IMG_PARENT_CHAIN = 8 };
+
+enum {
+    JT_IMG_OK = 0,
+    JT_IMG_ENOENT = -1,
+    JT_IMG_EINVAL = -2,
+    JT_IMG_ENOSPC = -3,
+    JT_IMG_ENOPARENT_IMG = -4,
+    JT_IMG_ENOPARENT_PL = -5,
+    JT_IMG_ESELF = -6,
+    JT_IMG_ECYCLE = -7,
+    JT_IMG_ETOODEEP = -8,
+    JT_IMG_EVIRTUAL_REL = -9
+};
 
 typedef struct jt_img_pin {
     int32_t x;
@@ -31,11 +45,15 @@ typedef struct jt_img_placement {
     uint32_t placement_id;
     uint8_t internal;
     uint8_t virtual;
+    uint8_t relative;
     uint8_t pixel_size;
     int32_t z;
     uint32_t src_x, src_y, src_w, src_h;
     uint32_t cols, rows;
     uint32_t off_x, off_y;
+    uint32_t parent_image_id, parent_placement_id;
+    uint8_t parent_internal;
+    int32_t rel_h, rel_v;
     jt_img_pin pin;
 } jt_img_placement;
 
@@ -56,6 +74,7 @@ typedef struct jt_img_store {
     int32_t live_n;
     int32_t hist_n;
     int32_t virtual_n;
+    int32_t relative_n;
     size_t total_bytes;
     uint64_t generation;
     uint32_t dirty;
@@ -77,6 +96,8 @@ typedef struct jt_img_loading {
     uint8_t has_display;
     uint32_t w, h, S, O;
     uint32_t image_id, number, placement_id;
+    uint32_t parent_id, parent_placement_id;
+    int32_t rel_h, rel_v;
     int32_t z;
     uint32_t src_x, src_y, src_w, src_h;
     uint32_t cols, rows, off_x, off_y;
@@ -112,6 +133,19 @@ void jt_img_on_resize(struct jt_scr *s, int32_t old_cols, int32_t old_rows, int3
 int32_t jt_img_live_n(const struct jt_scr *s);
 int32_t jt_img_hist_n(const struct jt_scr *s);
 int32_t jt_img_virtual_n(const struct jt_scr *s);
+int32_t jt_img_relative_n(const struct jt_scr *s);
+
+int32_t jt_img_relative_scan(
+    const struct jt_scr *s,
+    const Cell *paint,
+    int32_t cols,
+    int32_t paint_rows,
+    int32_t integer_row,
+    uint32_t cell_w,
+    uint32_t cell_h,
+    jt_img_snap *out,
+    int32_t cap
+);
 
 int32_t jt_img_placeholder_scan(
     const struct jt_scr *s,

@@ -116,6 +116,7 @@ public final class Screen {
     public var imgLiveN: Int { Int(jt_img_live_n(implPtr)) }
     public var imgHistN: Int { Int(jt_img_hist_n(implPtr)) }
     public var imgVirtualN: Int { Int(jt_img_virtual_n(implPtr)) }
+    public var imgRelativeN: Int { Int(jt_img_relative_n(implPtr)) }
 
     deinit {
         jt_scr_deinit(implPtr)
