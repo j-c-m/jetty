@@ -1,6 +1,7 @@
 import CoreGraphics
 import CoreText
 import Foundation
+import CVt
 
 struct ShapedCell: Sendable {
     var x: UInt16
@@ -9,15 +10,21 @@ struct ShapedCell: Sendable {
     var glyph: CGGlyph
 }
 
+struct ShapedRun: Sendable {
+    var cells: [ShapedCell]
+    var ligated: [Bool]
+}
+
 final class ShaperCache {
     private let bucketCount = 512
     private let bucketSize = 8
     private var buckets: [[Bucket]]
     private var featured: [FeaturedKey: CTFont] = [:]
+    private(set) var missCount = 0
 
     private struct Bucket {
         var key: UInt64
-        var value: [ShapedCell]
+        var value: ShapedRun
     }
 
     private struct FeaturedKey: Hashable {
@@ -28,6 +35,28 @@ final class ShaperCache {
 
     static let fnvOffset: UInt64 = 14_695_981_039_346_656_037
     private static let fnvPrime: UInt64 = 1_099_511_628_211
+    static let space: UnicodeScalar = " "
+
+    static func mix(_ digest: inout UInt64, _ v: UInt64) {
+        digest ^= v
+        digest &*= fnvPrime
+    }
+
+    static func mixCell(_ digest: inout UInt64, cp: UInt32, cluster: Int) {
+        mix(&digest, UInt64(cp == 0 ? 32 : cp))
+        mix(&digest, UInt64(cluster))
+    }
+
+    static func hashCells(row: UnsafePointer<Cell>, start: Int, count: Int) -> UInt64 {
+        var digest = fnvOffset
+        var i = 0
+        while i < count {
+            mixCell(&digest, cp: row[start + i].contentPayload, cluster: i)
+            i += 1
+        }
+        mix(&digest, UInt64(count))
+        return digest
+    }
 
     init() {
         let cap = 8
@@ -46,6 +75,7 @@ final class ShaperCache {
             buckets[i].removeAll(keepingCapacity: true)
         }
         featured.removeAll(keepingCapacity: true)
+        missCount = 0
     }
 
     func featuredFont(_ base: CTFont, feature: String) -> CTFont {
@@ -65,19 +95,29 @@ final class ShaperCache {
         return created
     }
 
-    func shape(text: String, font: CTFont, fontPx: Int) -> [ShapedCell] {
-        guard !text.isEmpty else { return [] }
-        var digest = Self.fnvOffset
-        digest ^= UInt64(fontPx)
-        digest &*= Self.fnvPrime
-        digest ^= UInt64(text.utf8.count)
-        digest &*= Self.fnvPrime
-        for b in text.utf8 {
-            digest ^= UInt64(b)
-            digest &*= Self.fnvPrime
+    /// Lookup by precomputed content hash. Builds the Core Text string on miss only.
+    func shape(
+        row: UnsafePointer<Cell>,
+        start: Int,
+        count: Int,
+        contentHash: UInt64,
+        font: CTFont,
+        fontPx: Int,
+        bold: Bool,
+        italic: Bool,
+        feature: String
+    ) -> ShapedRun {
+        guard count > 0 else { return ShapedRun(cells: [], ligated: []) }
+
+        var digest = contentHash
+        Self.mix(&digest, UInt64(fontPx))
+        Self.mix(&digest, bold ? 1 : 0)
+        Self.mix(&digest, italic ? 1 : 0)
+        Self.mix(&digest, UInt64(feature.utf8.count))
+        for b in feature.utf8 {
+            Self.mix(&digest, UInt64(b))
         }
-        digest ^= UInt64(bitPattern: Int64(ObjectIdentifier(font as AnyObject).hashValue))
-        digest &*= Self.fnvPrime
+
         let i = Int(digest & UInt64(bucketCount - 1))
         if let j = buckets[i].firstIndex(where: { $0.key == digest }) {
             if j + 1 != buckets[i].count {
@@ -87,14 +127,30 @@ final class ShaperCache {
             }
             return buckets[i][j].value
         }
-        let shaped = shapeUncached(text: text, font: font)
+
+        missCount += 1
+        let built = Self.textFromCells(row: row, start: start, count: count)
+        let shaped = shapeUncached(
+            text: built.text,
+            cellUTF16Starts: built.starts,
+            font: font,
+            cellCount: count
+        )
+        let ligated: [Bool]
+        if shaped.isEmpty {
+            ligated = [Bool](repeating: false, count: count)
+        } else {
+            let cmap = Self.cmapGlyphs(text: built.text, starts: built.starts, font: font)
+            ligated = Self.ligatedMask(shaped, cells: count, cmap: cmap)
+        }
+        let run = ShapedRun(cells: shaped, ligated: ligated)
         if buckets[i].count == bucketSize { buckets[i].removeFirst() }
-        buckets[i].append(Bucket(key: digest, value: shaped))
-        return shaped
+        buckets[i].append(Bucket(key: digest, value: run))
+        return run
     }
 
-    /// One cmap glyph per Swift `Character` (terminal cell), not per UTF-16 unit.
-    static func cmapGlyphs(text: String, font: CTFont) -> [CGGlyph] {
+    /// One cmap glyph per terminal cell (utf16 start), not per Swift `Character`.
+    static func cmapGlyphs(text: String, starts: [Int], font: CTFont) -> [CGGlyph] {
         let units = Array(text.utf16)
         var cmap = [CGGlyph](repeating: 0, count: units.count)
         if !units.isEmpty {
@@ -106,13 +162,8 @@ final class ShaperCache {
                 }
             }
         }
-        var starts: [Int] = [0]
-        var u = 0
-        for ch in text {
-            u += ch.utf16.count
-            starts.append(u)
-        }
-        var out = [CGGlyph](repeating: 0, count: max(0, starts.count - 1))
+        let cells = max(0, starts.count - 1)
+        var out = [CGGlyph](repeating: 0, count: cells)
         for i in out.indices {
             let gi = starts[i]
             if gi < cmap.count { out[i] = cmap[gi] }
@@ -140,21 +191,38 @@ final class ShaperCache {
         return lig
     }
 
-    static func isLigature(_ shaped: [ShapedCell], text: String, font: CTFont) -> Bool {
-        if shaped.isEmpty || text.isEmpty { return false }
-        let cmap = cmapGlyphs(text: text, font: font)
-        return ligatedMask(shaped, cells: cmap.count, cmap: cmap).contains(true)
+    static func cellScalar(_ payload: UInt32) -> UnicodeScalar {
+        if payload == 0 { return space }
+        return UnicodeScalar(payload) ?? space
     }
 
-    private func shapeUncached(text: String, font: CTFont) -> [ShapedCell] {
-        var utf16Starts: [Int] = [0]
-        utf16Starts.reserveCapacity(text.count + 1)
-        var u = 0
-        for ch in text {
-            u += ch.utf16.count
-            utf16Starts.append(u)
+    static func textFromCells(
+        row: UnsafePointer<Cell>,
+        start: Int,
+        count: Int
+    ) -> (text: String, starts: [Int]) {
+        var scalars = String.UnicodeScalarView()
+        scalars.reserveCapacity(count)
+        var starts: [Int] = [0]
+        starts.reserveCapacity(count + 1)
+        var utf16 = 0
+        var i = 0
+        while i < count {
+            let u = cellScalar(row[start + i].contentPayload)
+            scalars.append(u)
+            utf16 += u.utf16.count
+            starts.append(utf16)
+            i += 1
         }
-        let cellCount = utf16Starts.count - 1
+        return (String(scalars), starts)
+    }
+
+    private func shapeUncached(
+        text: String,
+        cellUTF16Starts: [Int],
+        font: CTFont,
+        cellCount: Int
+    ) -> [ShapedCell] {
         let attrs: [CFString: Any] = [kCTFontAttributeName: font]
         guard let attr = CFAttributedStringCreate(
             kCFAllocatorDefault, text as CFString, attrs as CFDictionary
@@ -189,14 +257,15 @@ final class ShaperCache {
             CTRunGetStringIndices(run, range, &indices)
             for i in 0..<count {
                 let utf16Index = Int(indices[i])
-                let cluster = Self.cellIndex(utf16: utf16Index, starts: utf16Starts)
+                let cluster = Self.cellIndex(utf16: utf16Index, starts: cellUTF16Starts)
                 guard cluster >= 0, cluster < cellCount else {
                     runOffsetX += advances[i].width
                     continue
                 }
                 if cellOffsetCluster != cluster {
                     let isAfter = cluster <= runOffsetCluster
-                    let isFirst = cluster < utf16Starts.count - 1 && utf16Index == utf16Starts[cluster]
+                    let isFirst = cluster < cellUTF16Starts.count - 1
+                        && utf16Index == cellUTF16Starts[cluster]
                     if isFirst && !isAfter {
                         cellOffsetCluster = cluster
                         cellOffsetX = runOffsetX

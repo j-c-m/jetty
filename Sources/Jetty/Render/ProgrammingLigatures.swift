@@ -102,7 +102,7 @@ enum ProgrammingLigatures {
         return false
     }
 
-    /// Bytes of `pat` at `x`, same bold/italic, no wide/grapheme.
+    /// Same comparable attrs as `scanOn`; no wide/grapheme.
     private static func match(
         row: UnsafePointer<Cell>,
         x: Int,
@@ -111,14 +111,16 @@ enum ProgrammingLigatures {
     ) -> Bool {
         let n = pat.count
         if n == 0 || x + n > cols { return false }
-        let style = UInt16(ATTR_BOLD | ATTR_ITALIC)
+        let style = UInt16(ATTR_BOLD | ATTR_ITALIC | ATTR_DIM | ATTR_UL_MASK)
         let a0 = row[x].attrs & style
+        let fg0 = row[x].fg
         var i = 0
         while i < n {
             let cell = row[x + i]
             let c = cell.content
             if (c & (CONTENT_KIND_MASK | CONTENT_WIDE_MASK)) != 0 { return false }
             if (c & CONTENT_PAYLOAD) != UInt32(pat[i]) { return false }
+            if cell.fg != fg0 { return false }
             if (cell.attrs & style) != a0 { return false }
             i += 1
         }
