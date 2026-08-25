@@ -8,5 +8,6 @@ DerivedData/
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
 *.swp
+.sw[omn]
 .font-fetch/
 /dist

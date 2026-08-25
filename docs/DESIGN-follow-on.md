@@ -6,14 +6,13 @@
 | Author | TBD |
 | Date | 2026-08-22 |
 | Status | Draft |
-| Project dir | `/Users/jmiller/dev/jetty` |
 | Bundle ID | `dev.jetty.app` |
-| Baseline | v1 DESIGN `/Users/jmiller/dev/jetty/DESIGN.md`; HEAD `573cf05` on `master` |
+| Baseline | v1 DESIGN `docs/DESIGN.md`; HEAD `573cf05` on `master` |
 | Audience | Senior engineers who already know v1 (16-byte `Cell`, C VT, linux16term Metal) |
 
 This is design only. It does not implement the emulator. v1 PR plan 1–17 is **done**. This document is the next plan.
 
-Ghostty (`/Users/jmiller/dev/ghostty`) is the **parity baseline** for xterm semantics and for “what a daily macOS terminal does.” It is not a library. Do not wrap `libghostty`, Zig, or `ghostty.h`.
+Ghostty (`https://github.com/ghostty-org/ghostty`) is the **parity baseline** for xterm semantics and for “what a daily macOS terminal does.” It is not a library. Do not wrap `libghostty`, Zig, or `ghostty.h`.
 
 ---
 

@@ -12,7 +12,7 @@ swift build -c release --disable-sandbox
 
 Targeted: `--filter ScreenTests.testScrollRegionParseCost` (always **release** for timings).
 
-vtebench: `/Users/jmiller/dev/vtebench` (`./target/release/vtebench`), run **inside** a jetty window.
+vtebench: run `./target/release/vtebench` **inside** a Jetty window.
 
 ## Performance (do not regress)
 

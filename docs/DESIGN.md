@@ -6,13 +6,12 @@
 | Author | TBD |
 | Date | 2026-08-21 |
 | Status | Draft |
-| Project dir | `/Users/jmiller/dev/jetty` |
 | Bundle ID | `dev.jetty.app` |
 | Audience | Senior engineers familiar with linux16term / Ghostty / ghosvt |
 
 This is design only. It does not implement the emulator.
 
-linux16term (`/Users/jmiller/dev/linux16term`) is frozen. Copy selected files into jetty; do not submodule it. Do not grow `linux16term/Sources/CVt/l16_vt.c`. Do not dual-path inside linux16term. Do not wrap Ghostty, link `libghostty-vt`, use Zig, or fork ghosvt.
+linux16term is frozen. Copy selected files into jetty; do not submodule it. Do not grow `linux16term/Sources/CVt/l16_vt.c`. Do not dual-path inside linux16term. Do not wrap Ghostty, link `libghostty-vt`, use Zig, or fork ghosvt.
 
 ---
 
@@ -153,7 +152,7 @@ Recorded 2026-08-21. Do not reopen.
 | Decision | Resolution |
 | --- | --- |
 | Display name | **Jetty** |
-| Repo | `/Users/jmiller/dev/jetty` |
+| Repo | this tree |
 | Bundle ID / `CFBundleName` | `dev.jetty.app` / `Jetty` |
 | `TERM` / `COLORTERM` / `TERM_PROGRAM` / version | `xterm-256color` / `truecolor` / `jetty` / `0.1.0` |
 | Config path | `~/.config/jetty/config` (`XDG_CONFIG_HOME`) |
@@ -182,7 +181,7 @@ Recorded 2026-08-21. Do not reopen.
 | Copy-on-select | On; off while mouse tracking is on |
 | Ligatures | Off now; do not paint the shaper into a corner |
 | Name vs Eclipse Jetty | Accept; bundle is `dev.jetty.app` |
-| maxterm | Ignore `/Users/jmiller/dev/maxterm` entirely |
+| maxterm | Ignore entirely |
 
 ### Locked here (not reopened; engineering choices)
 
@@ -964,7 +963,7 @@ Width 0 after a non-empty cell → grapheme store, cursor does not advance. Widt
 
 ```
 jetty/
-  DESIGN.md                  # this document lives at the scratch path; copy optional
+  docs/DESIGN.md             # this document
   THIRD_PARTY_LICENSES.md    # OFL-1.1 JetBrainsMono Nerd Font Mono; Hoehrmann DFA MIT
   Package.swift              # template: linux16term/Package.swift
   Sources/CPty/              # jt_pty_spawn.c/h, module.modulemap, libutil
