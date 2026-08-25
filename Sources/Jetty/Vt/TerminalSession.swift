@@ -316,7 +316,7 @@ public final class TerminalSession: @unchecked Sendable {
         handoff.unlock()
     }
 
-    private static let parseSliceBytes = 4096
+    private static let parseSliceBytes = 64 * 1024
     private static let parseBudgetNs: UInt64 = 1_000_000
 
     private func parseBatch(_ ptr: UnsafePointer<UInt8>, _ len: Int) {
@@ -330,6 +330,7 @@ public final class TerminalSession: @unchecked Sendable {
             if off >= len { break }
             let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
             let budget = now &- t0 >= Self.parseBudgetNs
+            let holding = screen.syncOutput && !screen.syncFlush
             if drawWaiting() {
                 scheduleRedraw()
                 lock.unlock()
@@ -337,7 +338,7 @@ public final class TerminalSession: @unchecked Sendable {
                 lock.lock()
                 t0 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
             } else if budget {
-                scheduleRedraw()
+                if !holding { scheduleRedraw() }
                 t0 = now
             }
         }

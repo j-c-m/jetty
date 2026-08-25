@@ -711,6 +711,39 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(a.contentPayload, b.contentPayload)
     }
 
+    func testGraphemeExclusiveAppendKeepsId() {
+        let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("e\u{0301}")
+        let id = s.row(0)[0].contentPayload
+        p.feed("\u{0302}\u{0303}")
+        let c = s.row(0)[0]
+        XCTAssertEqual(c.contentKind, CONTENT_GRAPHEME)
+        XCTAssertEqual(c.contentPayload, id)
+        var n: UInt16 = 0
+        let cps = jt_grapheme_get(s.implPtr, id, &n)
+        XCTAssertEqual(n, 4)
+        XCTAssertEqual(cps?[0], UInt32(UInt8(ascii: "e")))
+        XCTAssertEqual(cps?[1], 0x0301)
+        XCTAssertEqual(cps?[2], 0x0302)
+        XCTAssertEqual(cps?[3], 0x0303)
+    }
+
+    func testFastCSIPrivateQuestion() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?1h")
+        XCTAssertTrue(s.decckm)
+        p.feed("\u{1B}[?1l")
+        XCTAssertFalse(s.decckm)
+        p.feed("a\u{1B}[?1h\u{1B}[H")
+        XCTAssertTrue(s.decckm)
+        XCTAssertEqual(s.cursorX, 0)
+        XCTAssertEqual(s.cursorY, 0)
+    }
+
     func testCSICursorAliases() {
         let s = Screen(cols: 20, rows: 10, scrollbackCapRows: 0)
         let p = Parser()

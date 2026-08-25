@@ -89,6 +89,9 @@ void jt_scr_deinit(jt_scr *s);
 void jt_scr_resize(jt_scr *s, int32_t cols, int32_t rows);
 
 void jt_scr_print_scalar(jt_scr *s, uint32_t scalar);
+void jt_scr_print_wide_run(jt_scr *s, const uint32_t *cps, int n);
+void jt_scr_print_narrow_run(jt_scr *s, const uint32_t *cps, int n);
+void jt_scr_print_cluster(jt_scr *s, uint32_t base, const uint32_t *marks, int nmarks);
 void jt_scr_print_run(jt_scr *s, const uint8_t *p, size_t n);
 void jt_scr_set_mode_2027(jt_scr *s, int on);
 int jt_scr_mode_2027(const jt_scr *s);
@@ -162,6 +165,7 @@ static inline int jt_codepoint_width(uint32_t cp) {
     return (int)((b >> ((cp & 3u) * 2u)) & 3u);
 }
 uint32_t jt_grapheme_intern(jt_scr *s, const uint32_t *cps, uint16_t n);
+int jt_grapheme_append_exclusive(jt_scr *s, uint32_t id, uint32_t cp);
 const uint32_t *jt_grapheme_get(const jt_scr *s, uint32_t id, uint16_t *n);
 void jt_grapheme_retain(jt_scr *s, uint32_t id);
 void jt_grapheme_release(jt_scr *s, uint32_t id);

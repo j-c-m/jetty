@@ -176,6 +176,25 @@ uint32_t jt_grapheme_intern(jt_scr *s, const uint32_t *cps, uint16_t n) {
     return (uint32_t)(slot + 1);
 }
 
+int jt_grapheme_append_exclusive(jt_scr *s, uint32_t id, uint32_t cp) {
+    jt_gp *g = gp_of(s);
+    if (!g || id == 0 || id > g->used) return 0;
+    uint16_t slot = (uint16_t)(id - 1);
+    if (g->refs[slot] != 1) return 0;
+    uint16_t n = g->n[slot];
+    if (n >= JT_GP_MAX) return 0;
+    uint32_t tmp[JT_GP_MAX];
+    memcpy(tmp, g->cps[slot], (size_t)n * sizeof(uint32_t));
+    tmp[n] = cp;
+    if (gp_find(g, tmp, (uint16_t)(n + 1)) >= 0) return 0;
+    if (g->tombs > JT_GP_HASH / 4) gp_rehash(g);
+    gp_hash_del(g, slot);
+    g->cps[slot][n] = cp;
+    g->n[slot] = (uint16_t)(n + 1);
+    gp_hash_put(g, slot);
+    return 1;
+}
+
 const uint32_t *jt_grapheme_get(const jt_scr *s, uint32_t id, uint16_t *n) {
     const jt_gp *g = gp_of_c(s);
     if (!g || id == 0 || id > g->used) {

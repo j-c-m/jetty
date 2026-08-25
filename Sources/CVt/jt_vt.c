@@ -578,7 +578,17 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
         if (!scr->has_last_print) break;
         int n = pdef(p->params, p->np, 0, 1);
         uint32_t cp = scr->last_print;
-        for (int i = 0; i < n; i++) jt_scr_print_scalar(scr, cp);
+        if (cp >= 0x20 && cp < 0x7F && !scr->insert_mode) {
+            uint8_t buf[128];
+            memset(buf, (uint8_t)cp, sizeof buf);
+            while (n > 0) {
+                int chunk = n < (int)sizeof buf ? n : (int)sizeof buf;
+                jt_scr_print_run(scr, buf, (size_t)chunk);
+                n -= chunk;
+            }
+        } else {
+            for (int i = 0; i < n; i++) jt_scr_print_scalar(scr, cp);
+        }
         break;
     }
     case 'c':
@@ -726,9 +736,17 @@ static int try_fast_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h,
     size_t j = start + 1;
     if (j >= n) return 0;
     uint8_t first = bytes[j];
-    if ((first >= 0x3C && first <= 0x3F) || (first >= 0x20 && first <= 0x2F))
-        return 0;
     clear_seq(p);
+    if (first == '?') {
+        p->inter[0] = '?';
+        p->ni = 1;
+        j++;
+        if (j >= n) return 0;
+        first = bytes[j];
+        if ((first >= 0x3C && first <= 0x3F) || (first >= 0x20 && first <= 0x2F))
+            return 0;
+    } else if ((first >= 0x3C && first <= 0x3F) || (first >= 0x20 && first <= 0x2F))
+        return 0;
     int saw = 0;
     while (j < n) {
         uint8_t b = bytes[j];
@@ -798,6 +816,9 @@ static int try_neon_utf8_3(const uint8_t *p, uint32_t cps[5]) {
 }
 #endif
 
+static int decode_utf8(const uint8_t *p, size_t n, uint32_t *cp, size_t *adv);
+static size_t take_combining(const uint8_t *p, size_t n, uint32_t *marks, int max, int *nmarks);
+
 static void emit_utf8_run(jt_vt *p, jt_scr *scr, const uint8_t *src, size_t n) {
     if (!scr) return;
     size_t j = 0;
@@ -806,8 +827,24 @@ static void emit_utf8_run(jt_vt *p, jt_scr *scr, const uint8_t *src, size_t n) {
             uint8_t b0 = src[j];
             if (b0 < 0x80) {
                 if (b0 >= 0x20 && b0 != 0x7F) {
-                    jt_scr_print_scalar(scr, b0);
-                    j++;
+                    size_t ascii = jt_scan_printable_ascii(src + j, n - j);
+                    if (ascii == 0) ascii = 1;
+                    if (!(j + ascii < n && src[j + ascii] >= 0xC2)) {
+                        jt_scr_print_run(scr, src + j, ascii);
+                        j += ascii;
+                        continue;
+                    }
+                    uint32_t marks[15];
+                    int nmarks = 0;
+                    size_t extra = take_combining(src + j + ascii, n - (j + ascii), marks, 15, &nmarks);
+                    if (nmarks > 0) {
+                        if (ascii > 1) jt_scr_print_run(scr, src + j, ascii - 1);
+                        jt_scr_print_cluster(scr, src[j + ascii - 1], marks, nmarks);
+                        j += ascii + extra;
+                    } else {
+                        jt_scr_print_run(scr, src + j, ascii);
+                        j += ascii;
+                    }
                     continue;
                 }
                 break;
@@ -816,15 +853,46 @@ static void emit_utf8_run(jt_vt *p, jt_scr *scr, const uint8_t *src, size_t n) {
             if ((b0 & 0xF0) == 0xE0 && j + 16 <= n) {
                 uint32_t cps[5];
                 if (try_neon_utf8_3(src + j, cps)) {
+                    uint32_t widebuf[64];
+                    int nw = 0;
                     do {
-                        jt_scr_print_scalar(scr, cps[0]);
-                        jt_scr_print_scalar(scr, cps[1]);
-                        jt_scr_print_scalar(scr, cps[2]);
-                        jt_scr_print_scalar(scr, cps[3]);
-                        jt_scr_print_scalar(scr, cps[4]);
+                        int a = 0;
+                        while (a < 5) {
+                            if (jt_codepoint_width(cps[a]) == 2) {
+                                if (nw == 64) {
+                                    jt_scr_print_wide_run(scr, widebuf, nw);
+                                    nw = 0;
+                                }
+                                widebuf[nw++] = cps[a];
+                            } else {
+                                if (nw > 0) {
+                                    jt_scr_print_wide_run(scr, widebuf, nw);
+                                    nw = 0;
+                                }
+                                jt_scr_print_scalar(scr, cps[a]);
+                            }
+                            a++;
+                        }
                         j += 15;
                         if (j + 16 > n) break;
                     } while (try_neon_utf8_3(src + j, cps));
+                    while (j + 2 < n && (src[j] & 0xF0) == 0xE0
+                           && (src[j + 1] & 0xC0) == 0x80
+                           && (src[j + 2] & 0xC0) == 0x80) {
+                        uint32_t cp = ((uint32_t)(src[j] & 0x0F) << 12)
+                            | ((uint32_t)(src[j + 1] & 0x3F) << 6)
+                            | (src[j + 2] & 0x3F);
+                        int ok = (src[j] == 0xE0) ? (src[j + 1] >= 0xA0)
+                            : (src[j] == 0xED) ? (src[j + 1] < 0xA0) : 1;
+                        if (!ok || cp < 0x800 || jt_codepoint_width(cp) != 2) break;
+                        if (nw == 64) {
+                            jt_scr_print_wide_run(scr, widebuf, nw);
+                            nw = 0;
+                        }
+                        widebuf[nw++] = cp;
+                        j += 3;
+                    }
+                    if (nw > 0) jt_scr_print_wide_run(scr, widebuf, nw);
                     continue;
                 }
             }
@@ -832,6 +900,35 @@ static void emit_utf8_run(jt_vt *p, jt_scr *scr, const uint8_t *src, size_t n) {
             if ((b0 & 0xE0) == 0xC0 && b0 >= 0xC2 && j + 1 < n) {
                 uint8_t b1 = src[j + 1];
                 if ((b1 & 0xC0) == 0x80) {
+                    uint32_t buf[16];
+                    int nb = 0;
+                    size_t k = j;
+                    while (nb < 16 && k + 1 < n
+                           && (src[k] & 0xE0) == 0xC0 && src[k] >= 0xC2
+                           && (src[k + 1] & 0xC0) == 0x80) {
+                        uint32_t cp = ((uint32_t)(src[k] & 0x1F) << 6) | (src[k + 1] & 0x3F);
+                        if (jt_codepoint_width(cp) != 1) break;
+                        buf[nb++] = cp;
+                        k += 2;
+                    }
+                    if (nb >= 1) {
+                        uint32_t marks[15];
+                        int nmarks = 0;
+                        size_t extra = 0;
+                        if (k < n && src[k] >= 0xC2)
+                            extra = take_combining(src + k, n - k, marks, 15, &nmarks);
+                        if (nmarks > 0) {
+                            if (nb > 1) jt_scr_print_narrow_run(scr, buf, nb - 1);
+                            jt_scr_print_cluster(scr, buf[nb - 1], marks, nmarks);
+                            j = k + extra;
+                            continue;
+                        }
+                        if (nb > 1) {
+                            jt_scr_print_narrow_run(scr, buf, nb);
+                            j = k;
+                            continue;
+                        }
+                    }
                     jt_scr_print_scalar(scr, ((uint32_t)(b0 & 0x1F) << 6) | (b1 & 0x3F));
                     j += 2;
                     continue;
@@ -860,6 +957,31 @@ static void emit_utf8_run(jt_vt *p, jt_scr *scr, const uint8_t *src, size_t n) {
                         : (b0 == 0xF4) ? (b1 < 0x90)
                         : 1;
                     if (ok && cp >= 0x10000 && cp <= 0x10FFFF) {
+                        uint32_t buf[8];
+                        int nb = 0;
+                        size_t k = j;
+                        while (nb < 8 && k + 3 < n
+                               && (src[k] & 0xF8) == 0xF0 && src[k] <= 0xF4
+                               && (src[k + 1] & 0xC0) == 0x80
+                               && (src[k + 2] & 0xC0) == 0x80
+                               && (src[k + 3] & 0xC0) == 0x80) {
+                            uint32_t c4 = ((uint32_t)(src[k] & 0x07) << 18)
+                                | ((uint32_t)(src[k + 1] & 0x3F) << 12)
+                                | ((uint32_t)(src[k + 2] & 0x3F) << 6)
+                                | (src[k + 3] & 0x3F);
+                            int ok4 = (src[k] == 0xF0) ? (src[k + 1] >= 0x90)
+                                : (src[k] == 0xF4) ? (src[k + 1] < 0x90) : 1;
+                            if (!ok4 || c4 < 0x10000 || c4 > 0x10FFFF
+                                || jt_codepoint_width(c4) != 2)
+                                break;
+                            buf[nb++] = c4;
+                            k += 4;
+                        }
+                        if (nb > 1) {
+                            jt_scr_print_wide_run(scr, buf, nb);
+                            j = k;
+                            continue;
+                        }
                         jt_scr_print_scalar(scr, cp);
                         j += 4;
                         continue;
@@ -1092,6 +1214,56 @@ static void dispatch(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
     }
 }
 
+static int decode_utf8(const uint8_t *p, size_t n, uint32_t *cp, size_t *adv) {
+    if (n == 0) return 0;
+    uint8_t b0 = p[0];
+    if (b0 < 0x80) {
+        *cp = b0;
+        *adv = 1;
+        return 1;
+    }
+    if ((b0 & 0xE0) == 0xC0 && b0 >= 0xC2 && n >= 2 && (p[1] & 0xC0) == 0x80) {
+        *cp = ((uint32_t)(b0 & 0x1F) << 6) | (p[1] & 0x3F);
+        *adv = 2;
+        return 1;
+    }
+    if ((b0 & 0xF0) == 0xE0 && n >= 3 && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80) {
+        uint32_t c = ((uint32_t)(b0 & 0x0F) << 12) | ((uint32_t)(p[1] & 0x3F) << 6) | (p[2] & 0x3F);
+        int ok = (b0 == 0xE0) ? (p[1] >= 0xA0) : (b0 == 0xED) ? (p[1] < 0xA0) : 1;
+        if (ok && c >= 0x800) {
+            *cp = c;
+            *adv = 3;
+            return 1;
+        }
+    }
+    if ((b0 & 0xF8) == 0xF0 && b0 <= 0xF4 && n >= 4
+        && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80 && (p[3] & 0xC0) == 0x80) {
+        uint32_t c = ((uint32_t)(b0 & 0x07) << 18) | ((uint32_t)(p[1] & 0x3F) << 12)
+            | ((uint32_t)(p[2] & 0x3F) << 6) | (p[3] & 0x3F);
+        int ok = (b0 == 0xF0) ? (p[1] >= 0x90) : (b0 == 0xF4) ? (p[1] < 0x90) : 1;
+        if (ok && c >= 0x10000 && c <= 0x10FFFF) {
+            *cp = c;
+            *adv = 4;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static size_t take_combining(const uint8_t *p, size_t n, uint32_t *marks, int max, int *nmarks) {
+    size_t off = 0;
+    *nmarks = 0;
+    while (*nmarks < max) {
+        uint32_t cp;
+        size_t adv;
+        if (!decode_utf8(p + off, n - off, &cp, &adv)) break;
+        if (cp < 0x80 || jt_codepoint_width(cp) != 0) break;
+        marks[(*nmarks)++] = cp;
+        off += adv;
+    }
+    return off;
+}
+
 void jt_vt_feed(jt_vt *p, const uint8_t *bytes, size_t n,
                 jt_scr *scr, const jt_vt_host *host) {
     if (scr && n > 0 && __atomic_load_n(&scr->sync_output, __ATOMIC_RELAXED))
@@ -1120,8 +1292,22 @@ void jt_vt_feed(jt_vt *p, const uint8_t *bytes, size_t n,
             if (gl_is_ascii(scr)) {
                 size_t ascii = jt_scan_printable_ascii(sp, rest);
                 if (ascii > 0) {
-                    if (scr) jt_scr_print_run(scr, sp, ascii);
-                    i += ascii;
+                    if (!(scr && rest > ascii && sp[ascii] >= 0xC2)) {
+                        if (scr) jt_scr_print_run(scr, sp, ascii);
+                        i += ascii;
+                        continue;
+                    }
+                    uint32_t marks[15];
+                    int nmarks = 0;
+                    size_t extra = take_combining(sp + ascii, rest - ascii, marks, 15, &nmarks);
+                    if (nmarks > 0) {
+                        if (ascii > 1) jt_scr_print_run(scr, sp, ascii - 1);
+                        jt_scr_print_cluster(scr, sp[ascii - 1], marks, nmarks);
+                        i += ascii + extra;
+                    } else {
+                        jt_scr_print_run(scr, sp, ascii);
+                        i += ascii;
+                    }
                     continue;
                 }
                 size_t m = jt_scan_until_c0(sp, rest);
