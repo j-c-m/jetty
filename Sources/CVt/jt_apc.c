@@ -669,25 +669,31 @@ static int complete_transmit(
         return 0;
     }
 
+    uint32_t client_i = ld->image_id;
+    uint32_t client_I = ld->number;
     uint32_t id = ld->image_id;
-    if (id == 0 && ld->number == 0) id = 0;
     int rc = jt_img_add(scr, &id, ld->number, rgba, iw, ih);
     if (rc != 0) {
         jt_img_abort_loading(ld);
-        reply(h, echo_i ? echo_i : id, echo_I, echo_p, rc == -2 ? "ENOSPC" : "EINVAL", quiet, 0);
+        if (client_i || client_I)
+            reply(h, client_i ? client_i : id, client_I, echo_p,
+                  rc == -2 ? "ENOSPC" : "EINVAL", quiet, 0);
         return -1;
     }
     ld->image_id = id;
-    echo_i = id;
     if (ld->action == 'T') {
         if (jt_img_put(scr, ld) != 0) {
             jt_img_abort_loading(ld);
-            reply(h, echo_i, echo_I, echo_p, "EINVAL", quiet, 0);
+            if (client_i || client_I)
+                reply(h, id, client_I, echo_p, "EINVAL", quiet, 0);
             return -1;
         }
     }
     jt_img_abort_loading(ld);
-    reply(h, echo_i, echo_I, echo_p, "OK", quiet, 1);
+    /* Ghostty: implicit auto-id (no client i/I) does not generate a reply.
+     * icat omits i; echoing i=2147483647;OK leaks into the shell. */
+    if (client_i || client_I)
+        reply(h, id, client_I, echo_p, "OK", quiet, 1);
     return 0;
 }
 

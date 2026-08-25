@@ -107,6 +107,31 @@ final class KittyGraphicsTests: XCTestCase {
         XCTAssertEqual(s.imgLiveN, 1)
     }
 
+    func testImplicitIdDoesNotReply() {
+        let s = Screen(cols: 20, rows: 5, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 9, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,t=d,C=1;\(b64(rgb))"))
+        XCTAssertEqual(p.writes, [])
+        XCTAssertEqual(s.imgLiveN, 1)
+    }
+
+    func testImageNumberRepliesAssignedId() {
+        let s = Screen(cols: 20, rows: 5, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 9, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,I=13,t=d,C=1;\(b64(rgb))"))
+        let out = String(bytes: p.writes, encoding: .utf8) ?? ""
+        XCTAssertTrue(out.contains("I=13"), out)
+        XCTAssertTrue(out.contains("i="), out)
+        XCTAssertTrue(out.contains("OK"), out)
+        XCTAssertFalse(out.contains("i=13;"), out)
+    }
+
     func testRGBPutDoesNotFillCells() {
         let s = Screen(cols: 20, rows: 5, scrollbackCapRows: 0)
         s.setCellPx(width: 8, height: 16)
