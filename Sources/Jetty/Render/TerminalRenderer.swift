@@ -277,17 +277,23 @@ public final class TerminalRenderer {
             memcpy(uni.contents(), &u, FrameUniforms.stride)
         }
 
-        enc.setRenderPipelineState(pipeline)
-        enc.setVertexBuffer(instanceBuffers[instanceSlot], offset: 0, index: 0)
-        enc.setVertexBuffer(uniformBuffers[uniformSlot], offset: 0, index: 1)
-        enc.setFragmentTexture(atlas.texture, index: 0)
-        enc.setFragmentTexture(atlas.colorTexture, index: 1)
-        enc.setFragmentSamplerState(sampler, index: 0)
-        if instanceCount > 0 {
-            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: instanceCount)
-        }
         let imageTotal = imageBelowBgCount + imageBelowTextCount + imageOverCount
         let split = imageTotal > 0 && overlayCursorAt >= 0 && overlayCursorAt <= overlayCount
+        let underText = glyphCount > 0
+        func drawCells(offset: Int, count: Int, state: MTLRenderPipelineState) {
+            guard count > 0 else { return }
+            enc.setRenderPipelineState(state)
+            enc.setVertexBuffer(
+                instanceBuffers[instanceSlot],
+                offset: offset * CellInstance.stride,
+                index: 0
+            )
+            enc.setVertexBuffer(uniformBuffers[uniformSlot], offset: 0, index: 1)
+            enc.setFragmentTexture(atlas.texture, index: 0)
+            enc.setFragmentTexture(atlas.colorTexture, index: 1)
+            enc.setFragmentSamplerState(sampler, index: 0)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: count)
+        }
         func drawImageBand(start: Int, count: Int) {
             guard count > 0 else { return }
             let lo = start
@@ -315,7 +321,13 @@ public final class TerminalRenderer {
                 }
             }
         }
+        if !underText {
+            drawCells(offset: 0, count: instanceCount, state: pipeline)
+        }
         drawImageBand(start: 0, count: imageBelowBgCount)
+        if underText {
+            drawCells(offset: 0, count: instanceCount, state: pipeline)
+        }
         drawImageBand(start: imageBelowBgCount, count: imageBelowTextCount)
         if glyphCount > 0 {
             enc.setRenderPipelineState(inkPipeline)

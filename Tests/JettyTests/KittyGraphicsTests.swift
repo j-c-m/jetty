@@ -294,6 +294,24 @@ final class KittyGraphicsTests: XCTestCase {
         XCTAssertEqual(s.row(0)[0].contentKind, CONTENT_GRAPHEME)
     }
 
+    func testBelowBgSnapshotKeepsCellDestAndZ() {
+        let s = Screen(cols: 20, rows: 8, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 9, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,c=12,r=4,z=-1073741825,t=d,C=1;\(b64(rgb))"))
+        XCTAssertEqual(s.imgLiveN, 1)
+        var snaps = [jt_img_snap](repeating: jt_img_snap(), count: 4)
+        let n = snaps.withUnsafeMutableBufferPointer { buf in
+            jt_img_snapshot(s.implPtr, 0, 8, 8, 16, buf.baseAddress!, 4)
+        }
+        XCTAssertEqual(n, 1)
+        XCTAssertEqual(snaps[0].z, -1_073_741_825)
+        XCTAssertEqual(snaps[0].sx, 12 * 8)
+        XCTAssertEqual(snaps[0].sy, 4 * 16)
+    }
+
     func testVirtualIdleYnDoesNotInternGrapheme() {
         let s = Screen(cols: 8, rows: 4, scrollbackCapRows: 16)
         s.setCellPx(width: 8, height: 16)
