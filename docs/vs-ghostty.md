@@ -13,7 +13,7 @@ Observed on the same Mac, same font size, same `y\n` / neovim-tmux load: Jetty i
 | Layout | windows, tabs, splits | windows only |
 | Graphics | Kitty images, custom shaders, background images | cells, sprites, emoji atlas |
 | Chrome | inspector, command palette, quick terminal, settings | menus + `~/.config/jetty/config` |
-| Ligatures | font `liga` / `calt` on shaped runs | default `programming`: table hit only (`=>`, `!=`, …); letters stay cell-boxed |
+| Ligatures | font `liga` / `calt` on shaped runs | default `programming` (table hit); `on` shapes each run; letters stay cell-boxed |
 | SGR 1 | bold face | ExtraBold face |
 | Keyboard | full `Action` union, Kitty keyboard optional | host keybinds + xterm encode |
 
@@ -41,6 +41,8 @@ The cost: italic and over-wide Nerd icons **clip** to the box. Ghostty’s beari
 
 Jetty does not shape letters. `ligatures = off`: no run hash, no `CTLine` of a span. Default `programming`: longest-first ASCII table (`ProgrammingLigatures`, JetBrains Mono `calt` list). Only a table hit (`=>`, `!=`, `<!--`, …) goes through `ShaperCache` (512×8 buckets). `hello` stays two-path cell tiles. `ligatures = on` shapes each run, then still paints 1:1 / `xOffset≈0` cells with the letter atlas so `a` does not change.
 
+`on` is almost as fast as `programming`. Cache hits skip `CTLine`. Non-ligated cells stay the letter atlas. Only cmap-mismatch spans take coverage ink. Ghostty shapes every run as the letter path. Jetty with `on` is not slower than that.
+
 A ligature that actually merges glyphs (cmap mismatch, JetBrains spacer + liga at `xOffset≈0`) is one **N-cell** R8 coverage tile (`cells * cellW`) over per-cell backgrounds, blend-on. It is not a 2-cell mix tile (that would bake two backgrounds). The `y\n` canary never enters this path.
 
 ## Throughput (about 3–10%)
@@ -63,7 +65,7 @@ Jetty’s idle frame is small:
 
 1. **Dirty-row skip.** C `dirty[]` + `damage_gen`. A status-line change expands that row. The rest of the instance buffer is memcpy from the last presented slot. Follow-on math: 5K ~32k cells × 80 B × 60 Hz was ~150 MB/s of instance traffic before skip and compact. After: idle is about one row; a full `cat` at 32-byte stride is ~60 MB/s.
 2. **32-byte instances, blend-off glyphs.** The common letter pass is opaque nearest-filter R8 over a cell-sized atlas tile. Ghostty’s ink-bearing, blended, shaped glyphs cost more fragment time per cell (variable bbox, bearings, often alpha blend). Jetty only blends ligature overflow and emoji.
-3. **No shape on the letter path.** A neovim row is atlas lookups of cell-boxed tiles, not HarfBuzz. `programming` `CTLine`s only table spans. Ghostty shapes runs as the default.
+3. **No shape on the letter path.** A neovim row is atlas lookups of cell-boxed tiles, not HarfBuzz. `programming` `CTLine`s only table spans. `on` shapes each run then paints the same tiles; it is almost as fast as `programming`. Ghostty shapes runs as the default.
 4. **No style intern on idle.** The grid already holds paint-ready colors. OSC 4 / palette change invalidates GPU skip once; it does not hash styles every frame.
 5. **No extra compositor.** No Kitty image atlas, no shadertoy, no background image, no ImGui inspector. That work is not “optimized away”; it is not in the process.
 6. **macOS + Apple Silicon only.** One Metal path, NEON UTF-8, no GTK/Vulkan/Win32 tax on the hot threads.
@@ -72,6 +74,6 @@ Together that is why Activity Monitor / powermetrics show roughly half the CPU+G
 
 ## Honesty
 
-Jetty is slower or incomplete where Ghostty is a different product: Kitty graphics, tabs/splits layout, full ligature shaping, ink-bearing italic, Linux. Cell-boxed letters clip italic and some Nerd icons; Ghostty’s bearing + constraint path does not. Do not advertise `xterm-kitty`. Do not claim a smaller cell; Ghostty’s 8-byte cell is denser RAM and a more expensive mutate. Jetty pays 16 bytes to keep print and paint on one struct.
+Jetty is slower or incomplete where Ghostty is a different product: Kitty graphics, tabs/splits layout, ink-bearing italic, Linux. Full ligatures (`ligatures = on`) are not in that list: they are almost as fast as default `programming`, and not slower than Ghostty’s shaped runs. Cell-boxed letters clip italic and some Nerd icons; Ghostty’s bearing + constraint path does not. Do not advertise `xterm-kitty`. Do not claim a smaller cell; Ghostty’s 8-byte cell is denser RAM and a more expensive mutate. Jetty pays 16 bytes to keep print and paint on one struct.
 
 Sequence parity is “Ghostty as spec.” Paint and host chrome are Jetty’s.
