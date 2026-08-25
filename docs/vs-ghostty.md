@@ -23,7 +23,7 @@ Jetty is a lightweight xterm. Tabs, splits, Kitty graphics/keyboard, Sixel, ImGu
 
 **Cell.** Ghostty stores an 8-byte packed `Cell` (`page.zig`) plus a `style_id` into a per-page style table. Color, bold, underline, and reverse live in that table. A new SGR intern hashes and interned-inserts. Jetty stores a locked 16-byte inline `Cell`: codepoint, tagged `fg`/`bg`, attrs, rare id. Mixed SGR (`38;5;n` + `48;2;r;g;b`) is in the cell. Zero bits are the empty default. There is no style table.
 
-**Parser / grid.** Ghostty’s VT is Zig (`libghostty-vt`) over page-backed rows, grapheme maps, hyperlink sets, and Kitty placeholders. Jetty’s VT is C: NEON ASCII `print_run`, Hoehrmann UTF-8, `try_fast_csi`, circular live origin. Scrollback is a row ring, 16K-aligned slabs. History pages are not rewritten on live `index`.
+**Parser / grid.** Both SIMD-scan the VT stream. Ghostty’s `libghostty-vt` has NEON in the parse path, then writes page-backed rows, grapheme maps, hyperlink sets, and Kitty placeholders. Jetty’s VT is C: also NEON ASCII `print_run`, Hoehrmann UTF-8, `try_fast_csi`, circular live origin. Scrollback is a row ring, 16K-aligned slabs. History pages are not rewritten on live `index`. The few-percent win is not parse SIMD.
 
 **Graphemes.** Both intern multi-codepoint clusters. Jetty keeps `jt_scr.pool_cells`: the count of cells that hold a grapheme or rare `extra`. When it is 0 (the `y\n` path), `fill_row` does not scan, `store_ascii_cells` does not `release_cells`, and `stamp_cell` is a plain assign.
 
@@ -49,7 +49,7 @@ A ligature that actually merges glyphs (cmap mismatch, JetBrains spacer + liga a
 
 vtebench `scrolling` is `y\n`. That path never hits grapheme or rare pools.
 
-Ghostty still walks a page cell, a `style_id`, and page metadata on every print and scroll. Jetty’s ASCII `print_run` of one byte is the store path. `index` / `fill_row` do not memmove, hash, or retain when `pool_cells == 0`. The C scanner takes a fast CSI prong when the sequence is short. Parse yields to draw on a 1 ms budget so the GPU thread is not starved.
+Ghostty still walks a page cell, a `style_id`, and page metadata on every print and scroll. Jetty’s ASCII `print_run` of one byte is the store path. `index` / `fill_row` do not memmove, hash, or retain when `pool_cells == 0`. The C scanner takes a fast CSI prong when the sequence is short. Parse yields to draw on a 1 ms budget so the GPU thread is not starved. Parse NEON is on both sides.
 
 That is a small constant-factor win on a path that is already memory-bound. It shows up as a few percent on 1 MiB `y\n` and the region/fullscreen scroll benches, not as a different algorithm.
 
@@ -68,7 +68,7 @@ Jetty’s idle frame is small:
 3. **No shape on the letter path.** A neovim row is atlas lookups of cell-boxed tiles, not HarfBuzz. `programming` `CTLine`s only table spans. `on` shapes each run then paints the same tiles; it is almost as fast as `programming`. Ghostty shapes runs as the default.
 4. **No style intern on idle.** The grid already holds paint-ready colors. OSC 4 / palette change invalidates GPU skip once; it does not hash styles every frame.
 5. **No extra compositor.** No Kitty image atlas, no shadertoy, no background image, no ImGui inspector. That work is not “optimized away”; it is not in the process.
-6. **macOS + Apple Silicon only.** One Metal path, NEON UTF-8, no GTK/Vulkan/Win32 tax on the hot threads.
+6. **macOS + Apple Silicon only.** One Metal path, no GTK/Vulkan/Win32 tax on the hot threads.
 
 Together that is why Activity Monitor / powermetrics show roughly half the CPU+GPU for the same editor session, while vtebench only moves a few percent. The byte-eating path was already tight. The frame path was fat in Ghostty because the product is larger.
 
