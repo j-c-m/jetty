@@ -14,6 +14,7 @@ Observed on the same Mac, same font size, same `y\n` / neovim-tmux load: Jetty i
 | Graphics | Kitty images, custom shaders, background images | cells, sprites, emoji atlas |
 | Chrome | inspector, command palette, quick terminal, settings | menus + `~/.config/jetty/config` |
 | Ligatures | font `liga` / `calt` on shaped runs | default `programming` (table hit); `on` shapes each run; letters stay cell-boxed |
+| Glyphs | Core Text subpixel position, ink-bearing quads | pixel-aligned cell tiles, nearest |
 | SGR 1 | bold face | ExtraBold face |
 | Keyboard | full `Action` union, Kitty keyboard optional | host keybinds + xterm encode |
 
@@ -36,6 +37,8 @@ Jetty rasters **into the cell**. `GlyphAtlas.rasterizeGray` allocates `cellW × 
 Cache key for letters is `(scalar, bold, italic, wide)` plus a grapheme-cluster hash. One codepoint → one cell-sized tile. Zoom or font change rebuilds the atlas. Idle frames do not reshape and do not re-raster.
 
 The cost: italic and over-wide Nerd icons **clip** to the box. Ghostty’s bearing quads do not.
+
+**Pixel grid.** Jetty snaps letter quads to integer pixels. Instance `ox`/`oy` are `int16`. The atlas sampler is nearest. One grayscale `cellW × cellH` tile per (scalar, bold, italic, wide). Ghostty turns on Core Text **subpixel positioning** (`setShouldSubpixelPositionFonts`), not LCD RGB AA: it rasterizes the tight bbox at the fractional bearing (`frac_x` / `frac_y` in the CTM) and stores whole-pixel `offset_x` / `offset_y`. The GPU draws that ink at cell + bearing. Jetty does not. Nearest cell tiles are cheaper (blend off, no frac phase). Stems hit the pixel grid.
 
 **Shaping.** Ghostty shapes text runs (HarfBuzz / Core Text) as the normal letter path. `liga` / `calt` apply to whatever the font ligates. Every row of code is a shaping job unless a higher cache hits.
 
@@ -64,7 +67,7 @@ A neovim or tmux window at 60 Hz is mostly idle cells. Ghostty still has a heavy
 Jetty’s idle frame is small:
 
 1. **Dirty-row skip.** C `dirty[]` + `damage_gen`. A status-line change expands that row. The rest of the instance buffer is memcpy from the last presented slot. Follow-on math: 5K ~32k cells × 80 B × 60 Hz was ~150 MB/s of instance traffic before skip and compact. After: idle is about one row; a full `cat` at 32-byte stride is ~60 MB/s.
-2. **32-byte instances, blend-off glyphs.** The common letter pass is opaque nearest-filter R8 over a cell-sized atlas tile. Ghostty’s ink-bearing, blended, shaped glyphs cost more fragment time per cell (variable bbox, bearings, often alpha blend). Jetty only blends ligature overflow and emoji.
+2. **32-byte instances, blend-off glyphs.** The common letter pass is opaque nearest-filter R8 over a cell-sized atlas tile at an integer origin. Ghostty’s ink-bearing, blended, subpixel-positioned glyphs cost more fragment time per cell (variable bbox, bearings, often alpha blend). Jetty only blends ligature overflow and emoji.
 3. **No shape on the letter path.** A neovim row is atlas lookups of cell-boxed tiles, not HarfBuzz. `programming` `CTLine`s only table spans. `on` shapes each run then paints the same tiles; it is almost as fast as `programming`. Ghostty shapes runs as the default.
 4. **No style intern on idle.** The grid already holds paint-ready colors. OSC 4 / palette change invalidates GPU skip once; it does not hash styles every frame.
 5. **No extra compositor.** No Kitty image atlas, no shadertoy, no background image, no ImGui inspector. That work is not “optimized away”; it is not in the process.
