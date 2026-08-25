@@ -9,7 +9,9 @@ public final class TerminalRenderer {
     public let pipeline: MTLRenderPipelineState
     public let inkPipeline: MTLRenderPipelineState
     public let overlayPipeline: MTLRenderPipelineState
+    public let imagePipeline: MTLRenderPipelineState
     public let sampler: MTLSamplerState
+    public let linearSampler: MTLSamplerState
     public var atlas: GlyphAtlas
 
     private static let ringCount = 3
@@ -22,6 +24,13 @@ public final class TerminalRenderer {
     private var overlaySlot = 0
     private var uniformBuffers: [MTLBuffer?] = [nil, nil, nil]
     private var uniformSlot = 0
+    private var imageBuffers: [MTLBuffer?] = [nil, nil, nil]
+    private var imageCaps: [Int] = [0, 0, 0]
+    private var imageSlot = 0
+    private var imageUniformBuffers: [MTLBuffer?] = [nil, nil, nil]
+    private var imageUniformSlot = 0
+    private var imageTextures: [UInt32: (generation: UInt64, tex: MTLTexture)] = [:]
+    private var imageDraws: [(tex: MTLTexture, start: Int, count: Int, w: Int, h: Int)] = []
 
     public init?(device: MTLDevice, atlas: GlyphAtlas) {
         self.device = device
@@ -83,6 +92,23 @@ public final class TerminalRenderer {
             fputs("jetty: overlay pipeline: \(error)\n", stderr)
             return nil
         }
+        guard let ivfn = lib.makeFunction(name: "image_vertex"),
+              let iffn = lib.makeFunction(name: "image_fragment") else { return nil }
+        let imgd = MTLRenderPipelineDescriptor()
+        imgd.vertexFunction = ivfn
+        imgd.fragmentFunction = iffn
+        imgd.colorAttachments[0].pixelFormat = .bgra8Unorm
+        imgd.colorAttachments[0].isBlendingEnabled = true
+        imgd.colorAttachments[0].sourceRGBBlendFactor = .one
+        imgd.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        imgd.colorAttachments[0].sourceAlphaBlendFactor = .one
+        imgd.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        do {
+            self.imagePipeline = try device.makeRenderPipelineState(descriptor: imgd)
+        } catch {
+            fputs("jetty: image pipeline: \(error)\n", stderr)
+            return nil
+        }
         let s = MTLSamplerDescriptor()
         s.minFilter = .nearest
         s.magFilter = .nearest
@@ -90,9 +116,70 @@ public final class TerminalRenderer {
         s.tAddressMode = .clampToEdge
         guard let samp = device.makeSamplerState(descriptor: s) else { return nil }
         self.sampler = samp
+        let ls = MTLSamplerDescriptor()
+        ls.minFilter = .linear
+        ls.magFilter = .linear
+        ls.sAddressMode = .clampToEdge
+        ls.tAddressMode = .clampToEdge
+        guard let lin = device.makeSamplerState(descriptor: ls) else { return nil }
+        self.linearSampler = lin
         for i in 0..<Self.ringCount {
             uniformBuffers[i] = device.makeBuffer(length: FrameUniforms.stride, options: .storageModeShared)
+            imageUniformBuffers[i] = device.makeBuffer(length: ImageUniforms.stride, options: .storageModeShared)
         }
+    }
+
+    public func needsImageUpload(id: UInt32, generation: UInt64) -> Bool {
+        guard let e = imageTextures[id] else { return true }
+        return e.generation != generation
+    }
+
+    public func pruneImageTextures(keep: Set<UInt32>) {
+        imageTextures = imageTextures.filter { keep.contains($0.key) }
+    }
+
+    public func uploadImage(id: UInt32, generation: UInt64, width: Int, height: Int, rgba: UnsafeRawPointer) {
+        if let e = imageTextures[id], e.generation == generation { return }
+        let desc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .rgba8Unorm,
+            width: max(width, 1),
+            height: max(height, 1),
+            mipmapped: false
+        )
+        desc.usage = [.shaderRead]
+        desc.storageMode = .shared
+        guard let tex = device.makeTexture(descriptor: desc) else { return }
+        let bpr = width * 4
+        tex.replace(
+            region: MTLRegionMake2D(0, 0, width, height),
+            mipmapLevel: 0,
+            withBytes: rgba,
+            bytesPerRow: bpr
+        )
+        imageTextures[id] = (generation, tex)
+    }
+
+    public func texture(id: UInt32) -> MTLTexture? {
+        imageTextures[id]?.tex
+    }
+
+    public func prepareImages(count: Int) -> UnsafeMutablePointer<ImageInstance>? {
+        imageSlot = (imageSlot + 1) % Self.ringCount
+        let need = max(count, 1)
+        if imageBuffers[imageSlot] == nil || imageCaps[imageSlot] < need {
+            let cap = max(need, 8)
+            imageBuffers[imageSlot] = device.makeBuffer(
+                length: cap * ImageInstance.stride,
+                options: .storageModeShared
+            )
+            imageCaps[imageSlot] = cap
+        }
+        guard let buf = imageBuffers[imageSlot] else { return nil }
+        return buf.contents().assumingMemoryBound(to: ImageInstance.self)
+    }
+
+    public func setImageDraws(_ draws: [(tex: MTLTexture, start: Int, count: Int, w: Int, h: Int)]) {
+        imageDraws = draws
     }
 
     /// CPU pointer into the next ring slot. Fill `count` instances, then `draw`.
@@ -162,6 +249,8 @@ public final class TerminalRenderer {
         instanceCount: Int,
         inkCount: Int = 0,
         overlayCount: Int = 0,
+        overlayCursorAt: Int = -1,
+        imageOverCount: Int = 0,
         viewport: SIMD2<Float>,
         contentOffsetY: Float = 0
     ) -> Bool {
@@ -203,11 +292,45 @@ public final class TerminalRenderer {
             enc.setFragmentSamplerState(sampler, index: 0)
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: inkCount)
         }
+        let split = imageOverCount > 0 && overlayCursorAt >= 0 && overlayCursorAt <= overlayCount
         if overlayCount > 0, let obuf = overlayBuffers[overlaySlot] {
+            let decoN = split ? overlayCursorAt : overlayCount
+            if decoN > 0 {
+                enc.setRenderPipelineState(overlayPipeline)
+                enc.setVertexBuffer(obuf, offset: 0, index: 0)
+                enc.setVertexBuffer(uniformBuffers[uniformSlot], offset: 0, index: 1)
+                enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: decoN)
+            }
+        }
+        if imageOverCount > 0 {
+            enc.setRenderPipelineState(imagePipeline)
+            enc.setFragmentSamplerState(linearSampler, index: 0)
+            for d in imageDraws {
+                imageUniformSlot = (imageUniformSlot + 1) % Self.ringCount
+                if let uni = imageUniformBuffers[imageUniformSlot] {
+                    var u = ImageUniforms(
+                        viewportX: viewport.x,
+                        viewportY: viewport.y,
+                        contentOffsetY: contentOffsetY,
+                        texW: Float(d.w),
+                        texH: Float(d.h)
+                    )
+                    memcpy(uni.contents(), &u, ImageUniforms.stride)
+                    enc.setVertexBuffer(imageBuffers[imageSlot], offset: d.start * ImageInstance.stride, index: 0)
+                    enc.setVertexBuffer(uni, offset: 0, index: 1)
+                }
+                enc.setFragmentTexture(d.tex, index: 0)
+                if d.count > 0 {
+                    enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: d.count)
+                }
+            }
+        }
+        if split, overlayCount > overlayCursorAt, let obuf = overlayBuffers[overlaySlot] {
+            let curN = overlayCount - overlayCursorAt
             enc.setRenderPipelineState(overlayPipeline)
-            enc.setVertexBuffer(obuf, offset: 0, index: 0)
+            enc.setVertexBuffer(obuf, offset: overlayCursorAt * OverlayInstance.stride, index: 0)
             enc.setVertexBuffer(uniformBuffers[uniformSlot], offset: 0, index: 1)
-            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: overlayCount)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: curN)
         }
         enc.endEncoding()
         cmd.present(drawable)
@@ -355,6 +478,60 @@ public final class TerminalRenderer {
 
     fragment float4 overlay_fragment(OverlayOut in [[stage_in]]) {
         return in.color;
+    }
+
+    struct ImageInstance {
+        short ox;
+        short oy;
+        ushort sx;
+        ushort sy;
+        ushort u0;
+        ushort v0;
+        ushort u1;
+        ushort v1;
+        uint _pad[4];
+    };
+
+    struct ImageUniforms {
+        float2 viewport;
+        float contentOffsetY;
+        float _pad0;
+        float texW;
+        float texH;
+        float2 _pad1;
+    };
+
+    struct ImageOut {
+        float4 position [[position]];
+        float2 uv;
+    };
+
+    vertex ImageOut image_vertex(uint vid [[vertex_id]],
+                                 uint iid [[instance_id]],
+                                 const device ImageInstance *cells [[buffer(0)]],
+                                 constant ImageUniforms &uni [[buffer(1)]]) {
+        ImageInstance c = cells[iid];
+        float2 corner = corners[vid];
+        float2 origin = float2(float(c.ox), float(c.oy));
+        float2 size = float2(float(c.sx), float(c.sy));
+        float2 px = origin + corner * size;
+        px.y += uni.contentOffsetY;
+        float2 ndc;
+        ndc.x = (px.x / uni.viewport.x) * 2.0 - 1.0;
+        ndc.y = 1.0 - (px.y / uni.viewport.y) * 2.0;
+        ImageOut o;
+        o.position = float4(ndc, 0.0, 1.0);
+        float tw = uni.texW > 0.5 ? uni.texW : 1.0;
+        float th = uni.texH > 0.5 ? uni.texH : 1.0;
+        o.uv = float2(mix(float(c.u0), float(c.u1), corner.x) / tw,
+                      mix(float(c.v0), float(c.v1), corner.y) / th);
+        return o;
+    }
+
+    fragment float4 image_fragment(ImageOut in [[stage_in]],
+                                   texture2d<float> tex [[texture(0)]],
+                                   sampler samp [[sampler(0)]]) {
+        return tex.sample(samp, in.uv);
     }
     """
 }

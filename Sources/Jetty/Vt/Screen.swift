@@ -105,6 +105,17 @@ public final class Screen {
         jt_scr_init(p, Int32(max(2, cols)), Int32(max(1, rows)), Int32(self.scrollbackCapRows))
     }
 
+    public func setCellPx(width: UInt32, height: UInt32) {
+        jt_scr_set_cell_px(implPtr, width, height)
+    }
+
+    public func setKittyGraphics(_ on: Bool) {
+        jt_scr_set_kitty_graphics(implPtr, on ? 1 : 0)
+    }
+
+    public var imgLiveN: Int { Int(jt_img_live_n(implPtr)) }
+    public var imgHistN: Int { Int(jt_img_hist_n(implPtr)) }
+
     deinit {
         jt_scr_deinit(implPtr)
         implPtr.deinitialize(count: 1)

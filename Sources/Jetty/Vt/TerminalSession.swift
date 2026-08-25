@@ -55,6 +55,7 @@ public final class TerminalSession: @unchecked Sendable {
         self.screen = Screen(cols: cols, rows: rows, scrollbackCapRows: scrollbackCapRows)
         self.cellWidthPx = cellWidthPx
         self.cellHeightPx = cellHeightPx
+        screen.setCellPx(width: cellWidthPx, height: cellHeightPx)
         parser.screen = screen
         parser.ptyWriter = { [weak self] bytes in
             self?.writeToPty(bytes)
@@ -338,6 +339,8 @@ public final class TerminalSession: @unchecked Sendable {
         var off = 0
         var needRedraw = false
         lock.lock()
+        parser.unlockForIO = { [unowned self] in self.lock.unlock() }
+        parser.relock = { [unowned self] in self.lock.lock() }
         var t0 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
         while off < len {
             let n = min(Self.parseSliceBytes, len - off)
@@ -360,6 +363,8 @@ public final class TerminalSession: @unchecked Sendable {
                 t0 = now
             }
         }
+        parser.unlockForIO = nil
+        parser.relock = nil
         lock.unlock()
         if needRedraw { scheduleRedraw() }
     }

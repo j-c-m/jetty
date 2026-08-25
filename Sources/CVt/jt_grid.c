@@ -485,11 +485,13 @@ static void scroll_up(jt_scr *s) {
             }
             b->rowmap[bot] = incoming;
             fill_row(s, bot);
+            if (s->img_live_n > 0) jt_img_shift_region(s, top, bot, -1, 1);
             return;
         }
     }
     if (bot > top) rotate_up(s, b, top, bot);
     fill_row(s, bot);
+    if (s->img_live_n > 0) jt_img_shift_region(s, top, bot, -1, 0);
 }
 
 static void scroll_down(jt_scr *s) {
@@ -497,6 +499,7 @@ static void scroll_down(jt_scr *s) {
     int32_t top = b->scroll_top, bot = b->scroll_bottom;
     if (bot > top) rotate_down(s, b, top, bot);
     fill_row(s, top);
+    if (s->img_live_n > 0) jt_img_shift_region(s, top, bot, 1, 0);
 }
 
 void jt_scr_index(jt_scr *s) {
@@ -1095,6 +1098,7 @@ void jt_scr_il(jt_scr *s, int n) {
     for (int k = 0; k < nn; k++) {
         if (bot > top) rotate_down(s, b, top, bot);
         fill_row(s, top);
+        if (s->img_live_n > 0) jt_img_shift_region(s, top, bot, 1, 0);
     }
 }
 
@@ -1106,6 +1110,7 @@ void jt_scr_dl(jt_scr *s, int n) {
     for (int k = 0; k < nn; k++) {
         if (bot > top) rotate_up(s, b, top, bot);
         fill_row(s, bot);
+        if (s->img_live_n > 0) jt_img_shift_region(s, top, bot, -1, 0);
     }
 }
 
@@ -1154,6 +1159,7 @@ void jt_scr_ed(jt_scr *s, int mode) {
         break;
     case 2:
         for (int y = 0; y < s->rows; y++) fill_row(s, y);
+        jt_img_clear_visible(s);
         break;
     case 3:
         jt_scr_clear_history(s);
@@ -1268,6 +1274,7 @@ void jt_scr_switch_screen_mode(jt_scr *s, int mode, int enabled) {
             jt_scr_cursor_copy(s->active, old);
             clamp_cursor(s->active, s->cols, s->rows);
         }
+        jt_img_sync_live(s);
         return;
     }
 
@@ -1281,9 +1288,11 @@ void jt_scr_switch_screen_mode(jt_scr *s, int mode, int enabled) {
     } else {
         jt_scr_decrc(s);
     }
+    jt_img_sync_live(s);
 }
 
 void jt_scr_clear_history(jt_scr *s) {
+    jt_img_clear_history_pins(s);
     if (s->sb_idx && s->sb_free) {
         for (int32_t i = 0; i < s->sb_len; i++) {
             int32_t phys = sb_phys(s, i);
@@ -1533,6 +1542,7 @@ void jt_scr_resize(jt_scr *s, int32_t nc, int32_t nr) {
 
     s->cols = nc;
     s->rows = nr;
+    jt_img_on_resize(s, oc, orows, nc, nr);
     mark_all(s);
 }
 
@@ -1556,6 +1566,14 @@ void jt_scr_init(jt_scr *s, int32_t cols, int32_t rows, int32_t sb_cap) {
     if (!buf_init(&s->primary, cols, rows, cap, blank_cell(s))) return;
     s->active = &s->primary;
     sb_alloc(s, cap, cols, rows);
+    s->kitty_graphics = 1;
+    s->cell_w_px = 12;
+    s->cell_h_px = 24;
+    s->img_primary = (jt_img_store *)calloc(1, sizeof(jt_img_store));
+    s->img_alt = (jt_img_store *)calloc(1, sizeof(jt_img_store));
+    if (s->img_primary) jt_img_store_init(s->img_primary);
+    if (s->img_alt) jt_img_store_init(s->img_alt);
+    s->img_live_n = 0;
 }
 
 void jt_scr_deinit(jt_scr *s) {
@@ -1568,6 +1586,17 @@ void jt_scr_deinit(jt_scr *s) {
     s->sb_free = NULL;
     s->sb_wrap = NULL;
     s->active = NULL;
+    if (s->img_primary) {
+        jt_img_store_deinit(s->img_primary);
+        free(s->img_primary);
+        s->img_primary = NULL;
+    }
+    if (s->img_alt) {
+        jt_img_store_deinit(s->img_alt);
+        free(s->img_alt);
+        s->img_alt = NULL;
+    }
+    s->img_live_n = 0;
     jt_pools_deinit(s);
 }
 
@@ -1618,6 +1647,9 @@ void jt_scr_ris(jt_scr *s) {
     s->primary.pending_wrap = 0;
     jt_defaults_reset(s);
     s->saved.valid = 0;
+    if (s->img_primary) jt_img_store_reset(s->img_primary);
+    if (s->img_alt) jt_img_store_reset(s->img_alt);
+    s->img_live_n = 0;
     jt_scr_ed(s, 2);
     jt_scr_clear_history(s);
 }

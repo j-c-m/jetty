@@ -93,6 +93,51 @@ public struct OverlayInstance {
     }
 }
 
+@frozen
+public struct ImageInstance {
+    public var ox: Int16
+    public var oy: Int16
+    public var sx: UInt16
+    public var sy: UInt16
+    public var u0: UInt16
+    public var v0: UInt16
+    public var u1: UInt16
+    public var v1: UInt16
+    public var _pad0: UInt32
+    public var _pad1: UInt32
+    public var _pad2: UInt32
+    public var _pad3: UInt32
+
+    public static var stride: Int { MemoryLayout<ImageInstance>.stride }
+
+    public init(ox: Int16, oy: Int16, sx: UInt16, sy: UInt16, u0: UInt16, v0: UInt16, u1: UInt16, v1: UInt16) {
+        self.ox = ox
+        self.oy = oy
+        self.sx = sx
+        self.sy = sy
+        self.u0 = u0
+        self.v0 = v0
+        self.u1 = u1
+        self.v1 = v1
+        _pad0 = 0
+        _pad1 = 0
+        _pad2 = 0
+        _pad3 = 0
+    }
+}
+
+public struct ImageUniforms {
+    public var viewportX: Float
+    public var viewportY: Float
+    public var contentOffsetY: Float
+    public var _pad0: Float = 0
+    public var texW: Float
+    public var texH: Float
+    public var _pad1: Float = 0
+    public var _pad2: Float = 0
+    public static var stride: Int { MemoryLayout<ImageUniforms>.stride }
+}
+
 public struct FrameUniforms {
     public var viewportX: Float
     public var viewportY: Float

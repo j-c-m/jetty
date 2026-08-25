@@ -93,3 +93,30 @@ func jtHostProgress(_ ctx: UnsafeMutableRawPointer?, _ state: UInt8, _ percent: 
     guard let ctx else { return }
     Unmanaged<ParserGlue>.fromOpaque(ctx).takeUnretainedValue().parser.handleProgress(state, percent)
 }
+
+func jtHostUnlockForIO(_ ctx: UnsafeMutableRawPointer?) {
+    guard let ctx else { return }
+    Unmanaged<ParserGlue>.fromOpaque(ctx).takeUnretainedValue().parser.unlockForIO?()
+}
+
+func jtHostRelock(_ ctx: UnsafeMutableRawPointer?) {
+    guard let ctx else { return }
+    Unmanaged<ParserGlue>.fromOpaque(ctx).takeUnretainedValue().parser.relock?()
+}
+
+func jtHostPngDecode(
+    _ ctx: UnsafeMutableRawPointer?,
+    _ png: UnsafePointer<UInt8>?,
+    _ n: Int,
+    _ outRGBA: UnsafeMutablePointer<UnsafeMutablePointer<UInt8>?>?,
+    _ outW: UnsafeMutablePointer<UInt32>?,
+    _ outH: UnsafeMutablePointer<UInt32>?
+) -> Int32 {
+    _ = ctx
+    guard let png, n > 0, let outRGBA, let outW, let outH else { return -1 }
+    guard let decoded = pngDecodeRGBA(png, count: n) else { return -1 }
+    outRGBA.pointee = decoded.rgba
+    outW.pointee = decoded.w
+    outH.pointee = decoded.h
+    return 0
+}

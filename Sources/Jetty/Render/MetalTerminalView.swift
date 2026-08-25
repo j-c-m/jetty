@@ -93,6 +93,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         }
         session.cellWidthPx = UInt32(metrics.cellWidthPx)
         session.cellHeightPx = UInt32(metrics.cellHeightPx)
+        session.screen.setCellPx(width: session.cellWidthPx, height: session.cellHeightPx)
+        session.screen.setKittyGraphics(config.kittyGraphics)
         session.onRedraw = { @Sendable [weak self] in
             MainActor.assumeIsolated {
                 self?.needsDisplay = true
@@ -276,6 +278,34 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 if jt_rare_get(session.screen.implPtr, cell.extra, &rare) == 1 {
                     ulColors[cell.extra] = rare.ul_color
                 }
+            }
+        }
+        var snaps = [jt_img_snap](repeating: jt_img_snap(), count: 1024)
+        var snapN: Int32 = 0
+        var rgbaCopy: [UInt32: Data] = [:]
+        snaps.withUnsafeMutableBufferPointer { buf in
+            guard let p = buf.baseAddress else { return }
+            snapN = jt_img_snapshot(
+                session.screen.implPtr,
+                Int32(start),
+                Int32(paintRows),
+                UInt32(cellWPx),
+                UInt32(cellHPx),
+                p,
+                1024
+            )
+        }
+        if snapN > 0 {
+            var i = 0
+            while i < Int(snapN) {
+                let s = snaps[i]
+                if renderer.needsImageUpload(id: s.image_id, generation: s.generation),
+                   let rgba = s.rgba, s.width > 0, s.height > 0
+                {
+                    let n = Int(s.width) * Int(s.height) * 4
+                    rgbaCopy[s.image_id] = Data(bytes: rgba, count: n)
+                }
+                i += 1
             }
         }
         session.unlockDemand()
@@ -522,18 +552,20 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             }
         }
         var overlayN = 0
+        var overlayCursorAt = -1
         let ulNeed = underlineOverlayCount(cols: cols, paintRows: paintRows)
         let preNeed = preeditUnderlineCount(preedit, cols: cols, cursorX: cx)
         let curNeed = (vis && preedit.isEmpty && curY >= 0 && curY < paintRows && (blinkOn || !focused)) ? 4 : 0
         let linkNeed = autoURLOverlayCount(liveOrigin: liveOrigin, paintRows: paintRows)
         let dfg = SIMD3(Float(defFG.r) / 255, Float(defFG.g) / 255, Float(defFG.b) / 255)
         let dbg = SIMD3(Float(defBG.r) / 255, Float(defBG.g) / 255, Float(defBG.b) / 255)
+        let imagesOn = snapN > 0
         if ulNeed + curNeed + preNeed + linkNeed > 0,
            let ov = renderer.prepareOverlays(
             count: ulNeed + curNeed + preNeed + linkNeed
            )
         {
-            if curNeed > 0 {
+            if !imagesOn, curNeed > 0 {
                 overlayN += writeCursorOverlay(
                     dest: ov,
                     at: overlayN,
@@ -582,6 +614,84 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                     rgb: dfg
                 )
             }
+            if imagesOn {
+                overlayCursorAt = overlayN
+                if curNeed > 0 {
+                    overlayN += writeCursorOverlay(
+                        dest: ov,
+                        at: overlayN,
+                        style: curStyle,
+                        focused: focused,
+                        ox: insetLeftPx + Float(cx) * cw,
+                        oy: insetTopPx + Float(curY) * ch,
+                        cw: cw,
+                        ch: ch,
+                        rgb: curRGB
+                    )
+                }
+            }
+        }
+        var imageOverCount = 0
+        if imagesOn {
+            var keep = Set<UInt32>()
+            var i = 0
+            while i < Int(snapN) {
+                keep.insert(snaps[i].image_id)
+                i += 1
+            }
+            renderer.pruneImageTextures(keep: keep)
+            for (id, data) in rgbaCopy {
+                let s = snaps.first { $0.image_id == id }
+                guard let s else { continue }
+                data.withUnsafeBytes { raw in
+                    guard let p = raw.baseAddress else { return }
+                    renderer.uploadImage(
+                        id: id,
+                        generation: s.generation,
+                        width: Int(s.width),
+                        height: Int(s.height),
+                        rgba: p
+                    )
+                }
+            }
+            if let inst = renderer.prepareImages(count: Int(snapN)) {
+                var draws: [(tex: MTLTexture, start: Int, count: Int, w: Int, h: Int)] = []
+                var di = 0
+                while di < Int(snapN) {
+                    let s = snaps[di]
+                    inst[di] = ImageInstance(
+                        ox: CellInstance.i16(insetLeftPx + Float(s.ox)),
+                        oy: CellInstance.i16(insetTopPx + Float(s.oy)),
+                        sx: CellInstance.u16(Float(s.sx)),
+                        sy: CellInstance.u16(Float(s.sy)),
+                        u0: s.u0,
+                        v0: s.v0,
+                        u1: s.u1,
+                        v1: s.v1
+                    )
+                    di += 1
+                }
+                var runStart = 0
+                while runStart < Int(snapN) {
+                    let id = snaps[runStart].image_id
+                    var runEnd = runStart + 1
+                    while runEnd < Int(snapN), snaps[runEnd].image_id == id { runEnd += 1 }
+                    if let tex = renderer.texture(id: id) {
+                        draws.append((
+                            tex,
+                            runStart,
+                            runEnd - runStart,
+                            Int(snaps[runStart].width),
+                            Int(snaps[runStart].height)
+                        ))
+                    }
+                    runStart = runEnd
+                }
+                renderer.setImageDraws(draws)
+                imageOverCount = Int(snapN)
+            }
+        } else {
+            renderer.setImageDraws([])
         }
         skipKey.packGeneration = renderer.atlas.packGeneration
         let presented = renderer.draw(
@@ -589,6 +699,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             instanceCount: n,
             inkCount: wantInk ? n : 0,
             overlayCount: overlayN,
+            overlayCursorAt: overlayCursorAt,
+            imageOverCount: imageOverCount,
             viewport: SIMD2(Float(dw), Float(dh)),
             contentOffsetY: Float(visRows) * ch
         )
@@ -1166,6 +1278,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         }
         session.lock.lock()
         session.screen.setPaletteOverlay(next.paletteOverlay, mask: next.paletteOverlayMask)
+        session.screen.setKittyGraphics(next.kittyGraphics)
         session.lock.unlock()
         let bs = max(window?.backingScaleFactor ?? lastBackingScale, 1)
         lastBackingScale = bs
@@ -1210,6 +1323,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         forceFullRebuild = true
         session.cellWidthPx = UInt32(cellWPx)
         session.cellHeightPx = UInt32(cellHPx)
+        session.screen.setCellPx(width: session.cellWidthPx, height: session.cellHeightPx)
         relayout()
         session.lock.lock()
         let c = session.screen.cols

@@ -1,4 +1,4 @@
-#include "jt_vt.h"
+#include "jt_vt_int.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,30 +8,11 @@
 #include <arm_neon.h>
 #endif
 
-#define JT_MAX_PARAMS 24
-
 #define JT_SYNC_BUF 0x200000
 #define JT_SYNC_ESC 8
 
 static const uint8_t JT_BSU[JT_SYNC_ESC] = {0x1B, '[', '?', '2', '0', '2', '6', 'h'};
 static const uint8_t JT_ESU[JT_SYNC_ESC] = {0x1B, '[', '?', '2', '0', '2', '6', 'l'};
-
-struct jt_vt {
-    int state;
-    uint16_t params[JT_MAX_PARAMS];
-    uint32_t seps;
-    int np, param_empty;
-    uint32_t param_acc;
-    uint8_t inter[4];
-    int ni;
-    uint8_t osc[4096];
-    int osc_n;
-    uint32_t utf8_acc;
-    uint8_t utf8_st;
-    uint8_t *sync_buf;
-    size_t sync_n, sync_cap;
-    uint8_t syncing, sync_applying;
-};
 
 void jt_sync_set(jt_scr *s, int on) {
     if (!s) return;
@@ -64,6 +45,7 @@ jt_vt *jt_vt_create(void) {
 
 void jt_vt_destroy(jt_vt *p) {
     if (!p) return;
+    jt_apc_reset(p);
     free(p->sync_buf);
     free(p);
 }
@@ -85,6 +67,10 @@ void jt_vt_reset(jt_vt *p) {
     p->sync_applying = 0;
     clear_seq(p);
     p->osc_n = 0;
+    p->apc_n = 0;
+    p->apc_ignore = 0;
+    p->apc_expect_g = 0;
+    jt_img_abort_loading(&p->load);
 }
 
 int jt_vt_state(const jt_vt *p) { return p->state; }
@@ -686,6 +672,7 @@ static void handle_esc(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
         switch (final) {
         case 'c':
             utf8_reset(p);
+            jt_img_abort_loading(&p->load);
             jt_scr_ris(scr);
             if (h && h->history_cleared) h->history_cleared(h->ctx);
             break;
@@ -1009,8 +996,10 @@ static void execute_c0(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
     if (b == 0x07) {
         if (p->state == JT_ST_OSC_STRING) finish_osc(p, scr, h);
         if (p->state == JT_ST_DCS_IGNORE) finish_dcs(p, scr, h);
+        if (p->state == JT_ST_APC_G) jt_apc_finish(p, scr, h);
         if (p->state == JT_ST_OSC_STRING || p->state == JT_ST_OSC_IGNORE
-            || p->state == JT_ST_DCS_IGNORE) {
+            || p->state == JT_ST_DCS_IGNORE || p->state == JT_ST_APC_G
+            || p->state == JT_ST_APC_IGNORE) {
             enter_ground(p);
             return;
         }
@@ -1020,6 +1009,7 @@ static void execute_c0(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
     if (b == 0x1B) {
         if (p->state == JT_ST_OSC_STRING) finish_osc(p, scr, h);
         if (p->state == JT_ST_DCS_IGNORE) finish_dcs(p, scr, h);
+        if (p->state == JT_ST_APC_G) jt_apc_finish(p, scr, h);
         utf8_reset(p);
         enter_escape(p);
         return;
@@ -1069,8 +1059,13 @@ static void escape_byte(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
         break;
     case 'X':
     case '^':
+        p->osc_n = 0;
+        p->apc_expect_g = 0;
+        p->state = JT_ST_SOS_PM_APC;
+        break;
     case '_':
         p->osc_n = 0;
+        p->apc_expect_g = 1;
         p->state = JT_ST_SOS_PM_APC;
         break;
     default:
@@ -1162,12 +1157,14 @@ static void dispatch(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
     if (b == 0x1B) {
         if (p->state == JT_ST_OSC_STRING) finish_osc(p, scr, h);
         if (p->state == JT_ST_DCS_IGNORE) finish_dcs(p, scr, h);
+        if (p->state == JT_ST_APC_G) jt_apc_finish(p, scr, h);
         utf8_reset(p);
         enter_escape(p);
         return;
     }
     int in_string = p->state == JT_ST_OSC_STRING || p->state == JT_ST_OSC_IGNORE
-        || p->state == JT_ST_SOS_PM_APC || p->state == JT_ST_DCS_IGNORE;
+        || p->state == JT_ST_SOS_PM_APC || p->state == JT_ST_DCS_IGNORE
+        || p->state == JT_ST_APC_G || p->state == JT_ST_APC_IGNORE;
     if (b < 0x20 && !in_string) {
         execute_c0(p, scr, h, b);
         return;
@@ -1208,7 +1205,34 @@ static void dispatch(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
         if (b == 0x07) enter_ground(p);
         break;
     case JT_ST_SOS_PM_APC:
+        if (p->apc_expect_g) {
+            p->apc_expect_g = 0;
+            if (b == 'G') {
+                jt_apc_begin(p);
+                p->state = JT_ST_APC_G;
+                break;
+            }
+        }
         if (b == 0x07) enter_ground(p);
+        break;
+    case JT_ST_APC_G:
+        if (b == 0x07) {
+            jt_apc_finish(p, scr, h);
+            enter_ground(p);
+        } else if (p->apc_ignore || p->apc_n >= JT_IMG_MAX_APC) {
+            p->apc_ignore = 1;
+            p->state = JT_ST_APC_IGNORE;
+        } else {
+            jt_apc_feed(p, &b, 1);
+            if (p->apc_ignore) p->state = JT_ST_APC_IGNORE;
+        }
+        break;
+    case JT_ST_APC_IGNORE:
+        if (b == 0x07) {
+            p->apc_ignore = 0;
+            p->apc_n = 0;
+            enter_ground(p);
+        }
         break;
     case JT_ST_DCS_IGNORE:
         if (b == 0x07) {
@@ -1377,6 +1401,27 @@ void jt_vt_feed(jt_vt *p, const uint8_t *bytes, size_t n,
     }
     size_t i = 0;
     while (i < n) {
+        if (p->state == JT_ST_APC_G) {
+            size_t j = i;
+            while (j < n && bytes[j] != 0x07 && bytes[j] != 0x1B && bytes[j] != 0x18
+                   && bytes[j] != 0x1A)
+                j++;
+            if (j > i) jt_apc_feed(p, bytes + i, j - i);
+            i = j;
+            if (i >= n) return;
+            dispatch(p, scr, host, bytes[i]);
+            i++;
+            continue;
+        }
+        if (p->state == JT_ST_APC_IGNORE) {
+            size_t j = i;
+            while (j < n && bytes[j] != 0x07 && bytes[j] != 0x1B) j++;
+            i = j;
+            if (i >= n) return;
+            dispatch(p, scr, host, bytes[i]);
+            i++;
+            continue;
+        }
         if (p->state == JT_ST_GROUND) {
             uint8_t b = bytes[i];
             if (b == 0x1B) {

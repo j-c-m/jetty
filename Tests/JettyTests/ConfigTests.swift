@@ -47,6 +47,10 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(c.osc52Write, .deny)
         XCTAssertEqual(c.osc52Read, .deny)
         XCTAssertEqual(c.keybinds, ["cmd+shift+up=jump_to_prompt:-1"])
+        XCTAssertTrue(AppConfig.parse("").kittyGraphics)
+        XCTAssertFalse(AppConfig.parse("kitty-graphics = off").kittyGraphics)
+        XCTAssertFalse(AppConfig.parse("kitty-graphics = no").kittyGraphics)
+        XCTAssertTrue(AppConfig.parse("kitty-graphics = on").kittyGraphics)
     }
 
     func testEmptyFamilyIsOmitted() {

@@ -22,6 +22,7 @@ public struct AppConfig: Sendable {
     public var osc52Write: Osc52Write = .allow
     public var osc52Read: Osc52Read = .ask
     public var keybinds: [String] = []
+    public var kittyGraphics: Bool = true
 
     public enum Ligatures: Sendable, Equatable {
         /// Cell-boxed letters. No run `CTLine`.
@@ -97,6 +98,8 @@ public struct AppConfig: Sendable {
                 } else if !val.isEmpty {
                     c.keybinds.append(val)
                 }
+            case "kitty-graphics":
+                c.kittyGraphics = parseOnOff(val)
             default:
                 if key.hasPrefix("palette-"),
                    let idx = Int(key.dropFirst("palette-".count)),
@@ -119,6 +122,13 @@ public struct AppConfig: Sendable {
 
     public static func parseBool(_ s: String) -> Bool {
         ["true", "1", "yes"].contains(s.lowercased())
+    }
+
+    public static func parseOnOff(_ s: String) -> Bool {
+        let v = s.lowercased()
+        if ["false", "0", "no", "off"].contains(v) { return false }
+        if ["true", "1", "yes", "on"].contains(v) { return true }
+        return true
     }
 
     public static func parseLigatures(_ s: String) -> Ligatures? {

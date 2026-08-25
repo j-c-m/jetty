@@ -2,6 +2,7 @@
 #define JT_VT_H
 
 #include "jt_cell.h"
+#include "jt_img.h"
 #include "jt_version.h"
 
 #include <stddef.h>
@@ -76,6 +77,11 @@ typedef struct jt_scr {
     uint32_t sync_epoch;
     uint32_t last_print;
     uint8_t has_last_print;
+    jt_img_store *img_primary;
+    jt_img_store *img_alt;
+    int32_t img_live_n;
+    uint8_t kitty_graphics;
+    uint32_t cell_w_px, cell_h_px;
 } jt_scr;
 
 typedef struct jt_rare {
@@ -189,6 +195,8 @@ enum {
     JT_ST_OSC_IGNORE,
     JT_ST_SOS_PM_APC,
     JT_ST_DCS_IGNORE,
+    JT_ST_APC_G,
+    JT_ST_APC_IGNORE,
 };
 
 typedef struct jt_vt_host {
@@ -207,6 +215,11 @@ typedef struct jt_vt_host {
                    const uint8_t *body, size_t nb);
     /* percent 255 = omitted. */
     void (*progress)(void *ctx, uint8_t state, uint8_t percent);
+    void (*unlock_for_io)(void *ctx);
+    void (*relock)(void *ctx);
+    /* malloc RGBA8; return 0 on success. */
+    int (*png_decode)(void *ctx, const uint8_t *png, size_t n,
+                      uint8_t **out_rgba, uint32_t *w, uint32_t *h);
 } jt_vt_host;
 
 void jt_osc_dispatch(jt_scr *s, const jt_vt_host *h, const uint8_t *p, int n);

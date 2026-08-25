@@ -26,6 +26,8 @@ public final class Parser {
     public var onOsc52Write: ((UInt8, [UInt8]) -> Void)?
     public var onOsc52Read: ((UInt8) -> Void)?
     public var onPaletteChanged: (() -> Void)?
+    public var unlockForIO: (() -> Void)?
+    public var relock: (() -> Void)?
 
     public var state: Int { Int(jt_vt_state(vt)) }
     public var syncBytes: Int { Int(jt_vt_sync_bytes(vt)) }
@@ -51,6 +53,9 @@ public final class Parser {
         host.history_cleared = jtHostHistoryCleared
         host.notify = jtHostNotify
         host.progress = jtHostProgress
+        host.unlock_for_io = jtHostUnlockForIO
+        host.relock = jtHostRelock
+        host.png_decode = jtHostPngDecode
     }
 
     deinit {
