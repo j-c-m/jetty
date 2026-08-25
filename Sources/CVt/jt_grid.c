@@ -299,6 +299,8 @@ static void materialize_row(jt_scr *s, int32_t y) {
 static void mark_row(jt_scr *s, int32_t y) {
     if (y < 0 || y >= s->rows) return;
     *dirty_at(s, y) = 1;
+    if (s->sync_flush && s->sync_output)
+        __atomic_store_n(&s->sync_flush, 0, __ATOMIC_RELEASE);
 }
 
 static void mark_all(jt_scr *s) {

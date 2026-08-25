@@ -5,6 +5,10 @@
 #include <string.h>
 
 #define JT_GP_CAP 4096
+#define JT_GP_HASH 8192
+#define JT_GP_HASH_MASK (JT_GP_HASH - 1)
+#define JT_GP_EMPTY 0
+#define JT_GP_TOMB 0xFFFF
 #define JT_GP_MAX 16
 #define JT_RARE_CAP 1024
 
@@ -12,7 +16,11 @@ typedef struct jt_gp {
     uint32_t cps[JT_GP_CAP][JT_GP_MAX];
     uint16_t n[JT_GP_CAP];
     uint16_t refs[JT_GP_CAP];
+    uint16_t hash[JT_GP_HASH];
+    uint16_t free_stack[JT_GP_CAP];
     uint16_t used;
+    uint16_t free_n;
+    uint16_t tombs;
     uint8_t overflow;
 } jt_gp;
 
@@ -69,22 +77,89 @@ static int cps_eq(const uint32_t *a, uint16_t na, const uint32_t *b, uint16_t nb
     return memcmp(a, b, (size_t)na * sizeof(uint32_t)) == 0;
 }
 
+static uint32_t gp_hash(const uint32_t *cps, uint16_t n) {
+    uint32_t h = 2166136261u;
+    h ^= (uint32_t)n;
+    h *= 16777619u;
+    for (uint16_t i = 0; i < n; i++) {
+        h ^= cps[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+static int gp_find(const jt_gp *g, const uint32_t *cps, uint16_t n) {
+    uint32_t h = gp_hash(cps, n);
+    for (uint32_t p = 0; p < JT_GP_HASH; p++) {
+        uint16_t i = (uint16_t)((h + p) & JT_GP_HASH_MASK);
+        uint16_t v = g->hash[i];
+        if (v == JT_GP_EMPTY) return -1;
+        if (v == JT_GP_TOMB) continue;
+        uint16_t slot = (uint16_t)(v - 1);
+        if (cps_eq(g->cps[slot], g->n[slot], cps, n)) return (int)slot;
+    }
+    return -1;
+}
+
+static void gp_hash_put(jt_gp *g, uint16_t slot) {
+    uint32_t h = gp_hash(g->cps[slot], g->n[slot]);
+    int tomb = -1;
+    for (uint32_t p = 0; p < JT_GP_HASH; p++) {
+        uint16_t i = (uint16_t)((h + p) & JT_GP_HASH_MASK);
+        uint16_t v = g->hash[i];
+        if (v == JT_GP_EMPTY) {
+            if (tomb >= 0) {
+                g->hash[tomb] = (uint16_t)(slot + 1);
+                if (g->tombs) g->tombs--;
+            } else {
+                g->hash[i] = (uint16_t)(slot + 1);
+            }
+            return;
+        }
+        if (v == JT_GP_TOMB && tomb < 0) tomb = (int)i;
+    }
+    if (tomb >= 0) {
+        g->hash[tomb] = (uint16_t)(slot + 1);
+        if (g->tombs) g->tombs--;
+    }
+}
+
+static void gp_hash_del(jt_gp *g, uint16_t slot) {
+    uint32_t h = gp_hash(g->cps[slot], g->n[slot]);
+    for (uint32_t p = 0; p < JT_GP_HASH; p++) {
+        uint16_t i = (uint16_t)((h + p) & JT_GP_HASH_MASK);
+        uint16_t v = g->hash[i];
+        if (v == JT_GP_EMPTY) return;
+        if (v == (uint16_t)(slot + 1)) {
+            g->hash[i] = JT_GP_TOMB;
+            g->tombs++;
+            return;
+        }
+    }
+}
+
+static void gp_rehash(jt_gp *g) {
+    uint8_t on_free[JT_GP_CAP];
+    memset(g->hash, 0, sizeof g->hash);
+    g->tombs = 0;
+    memset(on_free, 0, sizeof on_free);
+    for (uint16_t i = 0; i < g->free_n; i++) on_free[g->free_stack[i]] = 1;
+    for (uint16_t s = 0; s < g->used; s++) {
+        if (!on_free[s]) gp_hash_put(g, s);
+    }
+}
+
 uint32_t jt_grapheme_intern(jt_scr *s, const uint32_t *cps, uint16_t n) {
     jt_gp *g = gp_of(s);
     if (!g || !cps || n == 0 || n > JT_GP_MAX) return 0;
-    for (uint16_t i = 0; i < g->used; i++) {
-        if (cps_eq(g->cps[i], g->n[i], cps, n)) return (uint32_t)(i + 1);
-    }
+    if (g->tombs > JT_GP_HASH / 4) gp_rehash(g);
+    int found = gp_find(g, cps, n);
+    if (found >= 0) return (uint32_t)(found + 1);
     int slot = -1;
     if (g->used < JT_GP_CAP) {
         slot = (int)g->used++;
-    } else {
-        for (uint16_t i = 0; i < g->used; i++) {
-            if (g->refs[i] == 0) {
-                slot = (int)i;
-                break;
-            }
-        }
+    } else if (g->free_n > 0) {
+        slot = (int)g->free_stack[--g->free_n];
     }
     if (slot < 0) {
         if (!g->overflow) {
@@ -97,6 +172,7 @@ uint32_t jt_grapheme_intern(jt_scr *s, const uint32_t *cps, uint16_t n) {
     if (n < JT_GP_MAX) memset(g->cps[slot] + n, 0, (size_t)(JT_GP_MAX - n) * sizeof(uint32_t));
     g->n[slot] = n;
     g->refs[slot] = 0;
+    gp_hash_put(g, (uint16_t)slot);
     return (uint32_t)(slot + 1);
 }
 
@@ -119,7 +195,12 @@ void jt_grapheme_retain(jt_scr *s, uint32_t id) {
 void jt_grapheme_release(jt_scr *s, uint32_t id) {
     jt_gp *g = gp_of(s);
     if (!g || id == 0 || id > g->used) return;
-    if (g->refs[id - 1] > 0) g->refs[id - 1]--;
+    if (g->refs[id - 1] == 0) return;
+    g->refs[id - 1]--;
+    if (g->refs[id - 1] != 0) return;
+    uint16_t slot = (uint16_t)(id - 1);
+    gp_hash_del(g, slot);
+    if (g->free_n < JT_GP_CAP) g->free_stack[g->free_n++] = slot;
 }
 
 static int str_eq(const char *a, const char *b) {

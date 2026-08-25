@@ -73,6 +73,7 @@ typedef struct jt_scr {
     char *osc8_uri;
     int32_t pool_cells;
     uint32_t damage_gen;
+    uint32_t sync_hold_gen;
     uint32_t last_print;
     uint8_t has_last_print;
 } jt_scr;
@@ -144,6 +145,7 @@ void jt_scr_ris(jt_scr *s);
 void jt_sync_set(jt_scr *s, int on);
 int jt_sync_on(const jt_scr *s);
 int jt_sync_flush(const jt_scr *s);
+uint32_t jt_sync_hold_gen(const jt_scr *s);
 void jt_sync_clear_flush(jt_scr *s);
 void jt_sync_timeout_clear(jt_scr *s);
 void jt_scr_set_palette_overlay(jt_scr *s, const uint32_t rgb16[16], uint16_t mask);

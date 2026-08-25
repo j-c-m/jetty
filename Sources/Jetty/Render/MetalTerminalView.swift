@@ -39,6 +39,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var markedText = NSMutableAttributedString()
     private var imeInsert = false
     private var syncHoldStart: UInt64 = 0
+    private var syncHoldGen: UInt32 = 0
     private var syncTimeoutWork: DispatchWorkItem?
     private var cursorBlinkWork: DispatchWorkItem?
     private var liveDirty = ContiguousArray<UInt8>()
@@ -772,6 +773,13 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     /// does not stall parse.
     private func skipSyncPresent(locked: Bool) -> Bool {
         let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        let gen = Dec2026.holdGen(session.screen.implPtr)
+        if gen != syncHoldGen {
+            syncHoldGen = gen
+            syncHoldStart = 0
+            syncTimeoutWork?.cancel()
+            syncTimeoutWork = nil
+        }
         if !locked {
             if Dec2026.peekSkip(session.screen.implPtr, holdStart: syncHoldStart, now: now) {
                 if syncHoldStart == 0 { syncHoldStart = now }

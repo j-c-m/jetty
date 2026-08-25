@@ -5,7 +5,8 @@ public enum Dec2026 {
     public static let timeoutNs: UInt64 = 1_000_000_000
 
     /// True while synchronized output holds the GPU present.
-    /// `flush` is set on `2026l` so a following `2026h` still presents that frame.
+    /// `flush` is set on `2026l` so a following `2026h` still presents that
+    /// frame, unless the grid mutated after `2026h`.
     public static func skipPresent(
         sync: Bool,
         flush: Bool,
@@ -30,5 +31,9 @@ public enum Dec2026 {
             holdStart: holdStart,
             now: now
         )
+    }
+
+    public static func holdGen(_ scr: UnsafeMutablePointer<jt_scr>) -> UInt32 {
+        jt_sync_hold_gen(scr)
     }
 }

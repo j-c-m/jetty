@@ -729,6 +729,42 @@ final class ScreenTests: XCTestCase {
         XCTAssertLessThan(isolated, 500)
     }
 
+    func testUniqueCombiningInternCost() {
+        func utf8(_ cp: UInt32) -> [UInt8] {
+            if cp < 0x80 { return [UInt8(cp)] }
+            if cp < 0x800 {
+                return [UInt8(0xC0 | (cp >> 6)), UInt8(0x80 | (cp & 0x3F))]
+            }
+            return [
+                UInt8(0xE0 | (cp >> 12)),
+                UInt8(0x80 | ((cp >> 6) & 0x3F)),
+                UInt8(0x80 | (cp & 0x3F)),
+            ]
+        }
+        var bytes = [UInt8]()
+        bytes.reserveCapacity(80_000)
+        for i in 0..<20_000 {
+            bytes.append(UInt8(ascii: "a"))
+            var q = i
+            for _ in 0..<3 {
+                bytes.append(contentsOf: utf8(UInt32(0x300 + q % 0x70)))
+                q /= 0x70
+            }
+        }
+        var best = Double.greatestFiniteMagnitude
+        for _ in 0..<3 {
+            let s = Screen(cols: 80, rows: 24, scrollbackCapRows: 0)
+            let p = Parser()
+            p.screen = s
+            let t0 = ProcessInfo.processInfo.systemUptime
+            p.feed(bytes)
+            best = min(best, (ProcessInfo.processInfo.systemUptime - t0) * 1000)
+        }
+        fputs(String(format: "unique combining intern ms=%.2f\n", best), stderr)
+        fflush(stderr)
+        XCTAssertLessThan(best, 80, "grapheme intern must not linear-scan the pool")
+    }
+
     func testSyncHoldParseCost() {
         func minMs(_ trials: Int, _ body: () -> Void) -> Double {
             var best = Double.greatestFiniteMagnitude

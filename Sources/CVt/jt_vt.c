@@ -26,8 +26,13 @@ struct jt_vt {
 
 void jt_sync_set(jt_scr *s, int on) {
     if (!s) return;
-    __atomic_store_n(&s->sync_output, (uint8_t)(on ? 1 : 0), __ATOMIC_RELEASE);
-    if (!on) __atomic_store_n(&s->sync_flush, 1, __ATOMIC_RELEASE);
+    if (on) {
+        __atomic_store_n(&s->sync_output, 1, __ATOMIC_RELEASE);
+        __atomic_fetch_add(&s->sync_hold_gen, 1, __ATOMIC_RELEASE);
+    } else {
+        __atomic_store_n(&s->sync_output, 0, __ATOMIC_RELEASE);
+        __atomic_store_n(&s->sync_flush, 1, __ATOMIC_RELEASE);
+    }
 }
 
 int jt_sync_on(const jt_scr *s) {
@@ -36,6 +41,10 @@ int jt_sync_on(const jt_scr *s) {
 
 int jt_sync_flush(const jt_scr *s) {
     return s && __atomic_load_n(&s->sync_flush, __ATOMIC_ACQUIRE);
+}
+
+uint32_t jt_sync_hold_gen(const jt_scr *s) {
+    return s ? __atomic_load_n(&s->sync_hold_gen, __ATOMIC_ACQUIRE) : 0;
 }
 
 void jt_sync_clear_flush(jt_scr *s) {
@@ -1085,6 +1094,8 @@ static void dispatch(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
 
 void jt_vt_feed(jt_vt *p, const uint8_t *bytes, size_t n,
                 jt_scr *scr, const jt_vt_host *host) {
+    if (scr && n > 0 && __atomic_load_n(&scr->sync_output, __ATOMIC_RELAXED))
+        __atomic_fetch_add(&scr->sync_hold_gen, 1, __ATOMIC_RELAXED);
     size_t i = 0;
     while (i < n) {
         if (p->state == JT_ST_GROUND) {

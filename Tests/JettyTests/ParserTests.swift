@@ -141,6 +141,39 @@ final class ParserTests: XCTestCase {
         XCTAssertFalse(Dec2026.peekSkip(s.implPtr, holdStart: 0, now: 1))
     }
 
+    func testDec2026LThenHThenPrintDropsFlush() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?2026h")
+        let gen = Dec2026.holdGen(s.implPtr)
+        p.feed("\u{1B}[?2026l\u{1B}[?2026h")
+        XCTAssertGreaterThan(Dec2026.holdGen(s.implPtr), gen)
+        XCTAssertTrue(s.syncFlush)
+        p.feed("payload")
+        XCTAssertTrue(s.syncOutput)
+        XCTAssertFalse(s.syncFlush)
+        XCTAssertTrue(Dec2026.skipPresent(
+            sync: s.syncOutput, flush: s.syncFlush, holdStart: 0, now: 1))
+        XCTAssertTrue(Dec2026.peekSkip(s.implPtr, holdStart: 0, now: 1))
+        p.feed("\u{1B}[?2026l\u{1B}[?2026h")
+        XCTAssertTrue(s.syncFlush)
+        p.feed("a\u{0300}\u{0301}\u{0302}")
+        XCTAssertFalse(s.syncFlush)
+        XCTAssertTrue(Dec2026.peekSkip(s.implPtr, holdStart: 0, now: 1))
+    }
+
+    func testDec2026ParseRestartsHoldGen() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?2026h")
+        let gen = Dec2026.holdGen(s.implPtr)
+        p.feed(String(repeating: "a", count: 64))
+        XCTAssertGreaterThan(Dec2026.holdGen(s.implPtr), gen)
+        XCTAssertTrue(s.syncOutput)
+    }
+
     func testSyncPeekDoesNotBlockOnHeldLock() {
         let session = TerminalSession(cols: 8, rows: 2, scrollbackCapRows: 0)
         session.parser.feed("\u{1B}[?2026h")
@@ -664,6 +697,18 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(n, 2)
         XCTAssertEqual(cps?[0], UInt32(UInt8(ascii: "e")))
         XCTAssertEqual(cps?[1], 0x0301)
+    }
+
+    func testGraphemeInternSharesId() {
+        let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("e\u{0301}e\u{0301}")
+        let a = s.row(0)[0]
+        let b = s.row(0)[1]
+        XCTAssertEqual(a.contentKind, CONTENT_GRAPHEME)
+        XCTAssertEqual(b.contentKind, CONTENT_GRAPHEME)
+        XCTAssertEqual(a.contentPayload, b.contentPayload)
     }
 
     func testCSICursorAliases() {
