@@ -414,12 +414,25 @@ int jt_img_put(jt_scr *s, const jt_img_loading *ld) {
     jt_img_sync_live(s);
 
     if (!ld->no_cursor) {
-        b->cx = x + (int32_t)cols;
-        b->cy = y + (int32_t)rows;
+        /* Kitty: x += cols, y += rows-1, then the screen keeps the
+         * cursor in bounds (IND / wrap). Ghostty: index (rows-1) times,
+         * plus once if x+cols hits the right edge, cap extra scrolls
+         * at one screen. Then set x to start+cols, or 0 on wrap. */
+        int32_t target_x = x + (int32_t)cols;
+        int wraps = target_x >= s->cols;
+        int32_t requested = (int32_t)rows - 1 + (wraps ? 1 : 0);
+        if (requested < 0) requested = 0;
+        int32_t top = b->scroll_top;
+        int32_t bot = b->scroll_bottom;
+        int32_t before = 0;
+        if (b->cy >= top && b->cy <= bot) before = bot - b->cy;
+        int32_t cap = before + s->rows;
+        int32_t nmove = requested < cap ? requested : cap;
+        for (int32_t i = 0; i < nmove; i++) jt_scr_index(s);
+        b->pending_wrap = 0;
+        b->cx = wraps ? 0 : target_x;
         if (b->cx >= s->cols) b->cx = s->cols - 1;
-        if (b->cy >= s->rows) b->cy = s->rows - 1;
         if (b->cx < 0) b->cx = 0;
-        if (b->cy < 0) b->cy = 0;
     }
     return 0;
 }

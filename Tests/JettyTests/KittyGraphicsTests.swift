@@ -55,6 +55,58 @@ final class KittyGraphicsTests: XCTestCase {
         XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?1;2c")
     }
 
+    func testCursorMovesToRightOfLastRow() {
+        let s = Screen(cols: 20, rows: 8, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 3, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,i=1,c=3,r=4,t=d;\(b64(rgb))"))
+        XCTAssertEqual(s.cursorX, 3)
+        XCTAssertEqual(s.cursorY, 3)
+        XCTAssertFalse(s.pendingWrap)
+    }
+
+    func testFullWidthPutWrapsToLineAfterImage() {
+        let s = Screen(cols: 10, rows: 8, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 4, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,i=1,c=10,r=3,t=d;\(b64(rgb))"))
+        XCTAssertEqual(s.cursorX, 0)
+        XCTAssertEqual(s.cursorY, 3)
+    }
+
+    func testTallPutAtBottomScrollsPromptBelow() {
+        let s = Screen(cols: 10, rows: 5, scrollbackCapRows: 32)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[5;1H")
+        XCTAssertEqual(s.cursorY, 4)
+        let rgb = [UInt8](repeating: 5, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,i=1,c=10,r=8,t=d;\(b64(rgb))"))
+        XCTAssertEqual(s.cursorX, 0)
+        XCTAssertEqual(s.cursorY, 4)
+        XCTAssertGreaterThan(s.scrollbackCount, 0)
+        XCTAssertEqual(s.imgLiveN, 0)
+        XCTAssertEqual(s.imgHistN, 1)
+    }
+
+    func testC1LeavesCursor() {
+        let s = Screen(cols: 20, rows: 5, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[3;5H")
+        let rgb = [UInt8](repeating: 6, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,i=1,c=4,r=3,t=d,C=1;\(b64(rgb))"))
+        XCTAssertEqual(s.cursorX, 4)
+        XCTAssertEqual(s.cursorY, 2)
+        XCTAssertEqual(s.imgLiveN, 1)
+    }
+
     func testRGBPutDoesNotFillCells() {
         let s = Screen(cols: 20, rows: 5, scrollbackCapRows: 0)
         s.setCellPx(width: 8, height: 16)
