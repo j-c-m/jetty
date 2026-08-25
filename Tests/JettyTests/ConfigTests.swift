@@ -19,6 +19,7 @@ final class ConfigTests: XCTestCase {
             desktop-notifications = 0
             progress-style = false
             macos-auto-secure-input = yes
+            macos-applescript = 0
             scrollback-lines = 100
             copy-on-select = no
             osc52-write = deny
@@ -40,6 +41,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertFalse(c.desktopNotifications)
         XCTAssertFalse(c.progressStyle)
         XCTAssertTrue(c.macosAutoSecureInput)
+        XCTAssertFalse(c.macosAppleScript)
         XCTAssertEqual(c.scrollbackLines, 100)
         XCTAssertFalse(c.copyOnSelect)
         XCTAssertEqual(c.osc52Write, .deny)
@@ -64,6 +66,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertTrue(c.linkURL)
         XCTAssertTrue(c.desktopNotifications)
         XCTAssertTrue(c.progressStyle)
+        XCTAssertTrue(c.macosAppleScript)
     }
 
     func testLigaturesAliases() {

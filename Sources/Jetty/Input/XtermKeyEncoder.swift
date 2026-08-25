@@ -38,6 +38,150 @@ public enum XtermKeyEncoder {
         return nil
     }
 
+    /// Encode an AppleScript / Ghostty `send key` name. `command` is not representable.
+    public static func bytes(
+        named raw: String,
+        shift: Bool,
+        option: Bool,
+        control: Bool,
+        applicationCursor: Bool
+    ) -> [UInt8]? {
+        let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return nil }
+        if key.lowercased() == "insert" {
+            return [0x1B, 0x5B, 0x32, 0x7E]
+        }
+        guard let parts = namedParts(key, shift: shift) else { return nil }
+        var flags = NSEvent.ModifierFlags()
+        if shift { flags.insert(.shift) }
+        if option { flags.insert(.option) }
+        if control { flags.insert(.control) }
+        guard let event = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: flags,
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: parts.chars,
+            charactersIgnoringModifiers: parts.ignoring,
+            isARepeat: false,
+            keyCode: parts.keyCode
+        ) else { return nil }
+        return bytes(for: event, applicationCursor: applicationCursor)
+    }
+
+    private static func namedParts(_ raw: String, shift: Bool) -> (keyCode: UInt16, chars: String, ignoring: String)? {
+        let key = raw.lowercased()
+        switch key {
+        case "enter", "return":
+            return (UInt16(kVK_Return), "\r", "\r")
+        case "escape", "esc":
+            return (UInt16(kVK_Escape), "\u{1B}", "\u{1B}")
+        case "tab":
+            return (UInt16(kVK_Tab), "\t", "\t")
+        case "space":
+            return (UInt16(kVK_Space), " ", " ")
+        case "backspace":
+            return (UInt16(kVK_Delete), "\u{08}", "\u{08}")
+        case "delete":
+            return (UInt16(kVK_ForwardDelete), "", "")
+        case "up", "arrowup":
+            return (UInt16(kVK_UpArrow), "", "")
+        case "down", "arrowdown":
+            return (UInt16(kVK_DownArrow), "", "")
+        case "left", "arrowleft":
+            return (UInt16(kVK_LeftArrow), "", "")
+        case "right", "arrowright":
+            return (UInt16(kVK_RightArrow), "", "")
+        case "home":
+            return (UInt16(kVK_Home), "", "")
+        case "end":
+            return (UInt16(kVK_End), "", "")
+        case "pageup":
+            return (UInt16(kVK_PageUp), "", "")
+        case "pagedown":
+            return (UInt16(kVK_PageDown), "", "")
+        case "f1": return (UInt16(kVK_F1), "", "")
+        case "f2": return (UInt16(kVK_F2), "", "")
+        case "f3": return (UInt16(kVK_F3), "", "")
+        case "f4": return (UInt16(kVK_F4), "", "")
+        case "f5": return (UInt16(kVK_F5), "", "")
+        case "f6": return (UInt16(kVK_F6), "", "")
+        case "f7": return (UInt16(kVK_F7), "", "")
+        case "f8": return (UInt16(kVK_F8), "", "")
+        case "f9": return (UInt16(kVK_F9), "", "")
+        case "f10": return (UInt16(kVK_F10), "", "")
+        case "f11": return (UInt16(kVK_F11), "", "")
+        case "f12": return (UInt16(kVK_F12), "", "")
+        case "digit0": return namedParts("0", shift: shift)
+        case "digit1": return namedParts("1", shift: shift)
+        case "digit2": return namedParts("2", shift: shift)
+        case "digit3": return namedParts("3", shift: shift)
+        case "digit4": return namedParts("4", shift: shift)
+        case "digit5": return namedParts("5", shift: shift)
+        case "digit6": return namedParts("6", shift: shift)
+        case "digit7": return namedParts("7", shift: shift)
+        case "digit8": return namedParts("8", shift: shift)
+        case "digit9": return namedParts("9", shift: shift)
+        default:
+            break
+        }
+        guard key.utf8.count == 1, let ch = key.unicodeScalars.first, ch.isASCII,
+              ch.value >= 0x20, ch.value < 0x7F
+        else { return nil }
+        let ignoring = String(ch)
+        let chars: String
+        if ch.value >= 0x61, ch.value <= 0x7A, shift {
+            chars = ignoring.uppercased()
+        } else {
+            chars = ignoring
+        }
+        return (ansiKeyCode(ch.value) ?? 0, chars, ignoring)
+    }
+
+    private static func ansiKeyCode(_ ascii: UInt32) -> UInt16? {
+        switch ascii {
+        case 0x61: return UInt16(kVK_ANSI_A)
+        case 0x62: return UInt16(kVK_ANSI_B)
+        case 0x63: return UInt16(kVK_ANSI_C)
+        case 0x64: return UInt16(kVK_ANSI_D)
+        case 0x65: return UInt16(kVK_ANSI_E)
+        case 0x66: return UInt16(kVK_ANSI_F)
+        case 0x67: return UInt16(kVK_ANSI_G)
+        case 0x68: return UInt16(kVK_ANSI_H)
+        case 0x69: return UInt16(kVK_ANSI_I)
+        case 0x6A: return UInt16(kVK_ANSI_J)
+        case 0x6B: return UInt16(kVK_ANSI_K)
+        case 0x6C: return UInt16(kVK_ANSI_L)
+        case 0x6D: return UInt16(kVK_ANSI_M)
+        case 0x6E: return UInt16(kVK_ANSI_N)
+        case 0x6F: return UInt16(kVK_ANSI_O)
+        case 0x70: return UInt16(kVK_ANSI_P)
+        case 0x71: return UInt16(kVK_ANSI_Q)
+        case 0x72: return UInt16(kVK_ANSI_R)
+        case 0x73: return UInt16(kVK_ANSI_S)
+        case 0x74: return UInt16(kVK_ANSI_T)
+        case 0x75: return UInt16(kVK_ANSI_U)
+        case 0x76: return UInt16(kVK_ANSI_V)
+        case 0x77: return UInt16(kVK_ANSI_W)
+        case 0x78: return UInt16(kVK_ANSI_X)
+        case 0x79: return UInt16(kVK_ANSI_Y)
+        case 0x7A: return UInt16(kVK_ANSI_Z)
+        case 0x30: return UInt16(kVK_ANSI_0)
+        case 0x31: return UInt16(kVK_ANSI_1)
+        case 0x32: return UInt16(kVK_ANSI_2)
+        case 0x33: return UInt16(kVK_ANSI_3)
+        case 0x34: return UInt16(kVK_ANSI_4)
+        case 0x35: return UInt16(kVK_ANSI_5)
+        case 0x36: return UInt16(kVK_ANSI_6)
+        case 0x37: return UInt16(kVK_ANSI_7)
+        case 0x38: return UInt16(kVK_ANSI_8)
+        case 0x39: return UInt16(kVK_ANSI_9)
+        default: return nil
+        }
+    }
+
     /// `interpretKeyEvents` owns the key while composing or after insertText.
     public static func shouldEncodeKeyDown(
         hasMarkedText: Bool,

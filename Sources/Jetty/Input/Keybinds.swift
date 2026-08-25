@@ -79,7 +79,7 @@ public struct Keybinds: Sendable {
             return (codes.map { Trigger(keyCode: $0, mods: mods) }, action)
         }
 
-        private static func parseAction(_ raw: String) -> Action? {
+        public static func parseAction(_ raw: String) -> Action? {
             if raw.hasPrefix("jump_to_prompt:") {
                 let n = raw.dropFirst("jump_to_prompt:".count)
                 guard let dir = Int(n) else { return nil }

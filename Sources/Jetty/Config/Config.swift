@@ -14,6 +14,7 @@ public struct AppConfig: Sendable {
     public var desktopNotifications: Bool = true
     public var progressStyle: Bool = true
     public var macosAutoSecureInput: Bool = true
+    public var macosAppleScript: Bool = true
     public var scrollbackLines: Int = 50_000
     public var copyOnSelect: Bool = true
     public var launchCols: Int = 105
@@ -80,6 +81,8 @@ public struct AppConfig: Sendable {
                 c.progressStyle = parseBool(val)
             case "macos-auto-secure-input":
                 c.macosAutoSecureInput = parseBool(val)
+            case "macos-applescript":
+                c.macosAppleScript = parseBool(val)
             case "scrollback-lines":
                 if let n = Int(val), n >= 0 { c.scrollbackLines = n }
             case "copy-on-select":

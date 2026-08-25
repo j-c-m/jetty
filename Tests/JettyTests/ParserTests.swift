@@ -285,8 +285,23 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(s.row(0)[1].extra, 0)
         p.feed("\u{1B}]7;file://host/tmp\u{07}")
         XCTAssertEqual(p.osc7.last, "file://host/tmp")
+        XCTAssertEqual(TerminalSession.pathFromOSC7("file:///Users/me/src"), "/Users/me/src")
+        XCTAssertEqual(TerminalSession.pathFromOSC7("file://localhost/tmp"), "/tmp")
+        XCTAssertEqual(TerminalSession.pathFromOSC7("http://example.com"), "")
         p.feed("\u{1B}]133;A\u{07}")
         XCTAssertEqual(p.osc133.last?.0, UInt8(ascii: "A"))
+    }
+
+    func testTitleAndWorkingDirectoryCopyUnderLock() {
+        let session = TerminalSession(cols: 10, rows: 2, cellWidthPx: 8, cellHeightPx: 16, scrollbackCapRows: 0)
+        XCTAssertEqual(session.title, "Jetty")
+        XCTAssertEqual(session.workingDirectory, "")
+        session.lock.lock()
+        session.parser.feed("\u{1B}]0;hello\u{07}")
+        session.parser.feed("\u{1B}]7;file:///Users/me/src\u{07}")
+        session.lock.unlock()
+        XCTAssertEqual(session.title, "hello")
+        XCTAssertEqual(session.workingDirectory, "/Users/me/src")
     }
 
     func testOSC9NotifyAndProgress() {

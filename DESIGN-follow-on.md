@@ -120,7 +120,7 @@ Ghostty is a multi-OS product with tabs, splits, Kitty graphics, an ImGui inspec
 | Quick terminal (Quake / drop-down) | Extra window product; restoration; global hotkey. Not needed to daily-drive neovim. |
 | Inspector (ImGui) | Ghostty debug tool. Not a daily feature. |
 | Custom shaders, background images, Kitty OSC 21 | Paint toys |
-| Auto-update, AppleScript, icon theming | Distribution extras |
+| Auto-update, icon theming | Distribution extras |
 | `modifyOtherKeys` / full Ghostty `Action` union | Keep host keybinds small |
 | Partial-row BCE | AGENTS.md lock |
 
@@ -982,7 +982,7 @@ Status: **now** = v1 HEAD `573cf05`. **follow-on** = this document. **out** = wi
 | xcodeproj | no | optional | not a gate |
 | Notarization | no | follow-on | scripts |
 | Auto-update | no | **out** | |
-| AppleScript | no | **out** | |
+| AppleScript | yes | Ghostty command names for windows/terminals; no tabs/splits | |
 | Sandbox | off | off | lock |
 
 ---

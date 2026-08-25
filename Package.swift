@@ -50,6 +50,9 @@ let package = Package(
             name: "JettyApp",
             dependencies: ["Jetty"],
             path: "Sources/JettyApp",
+            swiftSettings: [
+                .unsafeFlags(["-parse-as-library"]),
+            ],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("Metal"),

@@ -24,8 +24,16 @@ public final class TerminalSession: @unchecked Sendable {
     public var isNotifyFocused: (@Sendable () -> Bool)?
     public var onProgress: (@Sendable (UInt8, UInt8) -> Void)?
     public private(set) var osc7: String = ""
+    public var title: String {
+        lock.lock()
+        let t = windowTitle
+        lock.unlock()
+        return t
+    }
     private var windowTitle = "Jetty"
     private var titleStack: [String] = []
+    /// Process cwd at spawn; used until OSC 7 reports a path.
+    private var spawnDirectory = ""
     public private(set) var osc133: [(line: UInt64, action: UInt8, opts: [UInt8])] = []
 
     private let redrawLock = NSLock()
@@ -97,16 +105,68 @@ public final class TerminalSession: @unchecked Sendable {
         }
     }
 
+    public var workingDirectory: String {
+        lock.lock()
+        let uri = osc7
+        let spawn = spawnDirectory
+        lock.unlock()
+        let fromOsc = Self.pathFromOSC7(uri)
+        return fromOsc.isEmpty ? spawn : fromOsc
+    }
+
+    public var ttyName: String {
+        lock.lock()
+        let fd = masterFD
+        lock.unlock()
+        var buf = [CChar](repeating: 0, count: 128)
+        guard jt_pty_ttyname(fd, &buf, buf.count) == 0 else { return "" }
+        let n = buf.firstIndex(of: 0) ?? buf.count
+        return String(decoding: buf.prefix(n).map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
+
+    public static func pathFromOSC7(_ uri: String) -> String {
+        guard uri.hasPrefix("file:"), let url = URL(string: uri), url.isFileURL else { return "" }
+        return url.path
+    }
+
+    private static func defaultSpawnDirectory() -> String {
+        let cwd = FileManager.default.currentDirectoryPath
+        if cwd != "/" { return cwd }
+        if let home = ProcessInfo.processInfo.environment["HOME"], !home.isEmpty {
+            return home
+        }
+        return FileManager.default.homeDirectoryForCurrentUser.path
+    }
+
     @discardableResult
-    public func spawn() -> Bool {
+    public func spawn(workingDirectory: String? = nil) -> Bool {
         var pid: pid_t = 0
-        let fd = jt_pty_spawn(
-            UInt16(screen.cols), UInt16(screen.rows),
-            cellWidthPx, cellHeightPx, &pid
-        )
+        let fd: Int32
+        if let workingDirectory, !workingDirectory.isEmpty {
+            fd = workingDirectory.withCString { cwd in
+                jt_pty_spawn_ex(
+                    UInt16(screen.cols), UInt16(screen.rows),
+                    cellWidthPx, cellHeightPx, cwd, &pid
+                )
+            }
+        } else {
+            fd = jt_pty_spawn_ex(
+                UInt16(screen.cols), UInt16(screen.rows),
+                cellWidthPx, cellHeightPx, nil, &pid
+            )
+        }
         guard fd >= 0 else { return false }
+        let remembered: String
+        if let workingDirectory, !workingDirectory.isEmpty {
+            remembered = workingDirectory
+        } else {
+            remembered = Self.defaultSpawnDirectory()
+        }
+        lock.lock()
         masterFD = fd
         childPID = pid
+        spawnDirectory = remembered
+        lock.unlock()
         let pipe = PtyPipeline(masterFD: fd, onParse: { [weak self] ptr, len in
             self?.parseBatch(ptr, len)
         }, onDeath: { [weak self] in

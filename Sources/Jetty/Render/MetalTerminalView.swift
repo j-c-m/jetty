@@ -1159,7 +1159,18 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         return true
     }
 
-    private func applyHostAction(_ action: Keybinds.Action) {
+    public func performHostAction(_ raw: String) -> Bool {
+        let name = raw.trimmingCharacters(in: .whitespaces).lowercased()
+        if name == "toggle_fullscreen" {
+            window?.toggleFullScreen(nil)
+            return true
+        }
+        guard let action = Keybinds.Table.parseAction(name) else { return false }
+        applyHostAction(action)
+        return true
+    }
+
+    func applyHostAction(_ action: Keybinds.Action) {
         switch action {
         case .copy: copy(nil)
         case .paste: paste(nil)

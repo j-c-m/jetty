@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/ttycom.h>
 #include <unistd.h>
 
 #if defined(__APPLE__)
@@ -93,6 +94,13 @@ static void exec_login_shell(void) {
 int jt_pty_spawn(uint16_t cols, uint16_t rows,
                  uint32_t cell_width_px, uint32_t cell_height_px,
                  pid_t *child_out) {
+    return jt_pty_spawn_ex(cols, rows, cell_width_px, cell_height_px, NULL, child_out);
+}
+
+int jt_pty_spawn_ex(uint16_t cols, uint16_t rows,
+                    uint32_t cell_width_px, uint32_t cell_height_px,
+                    const char *cwd,
+                    pid_t *child_out) {
     if (!child_out) {
         return -1;
     }
@@ -111,7 +119,14 @@ int jt_pty_spawn(uint16_t cols, uint16_t rows,
     }
 
     if (child == 0) {
-        chdir_home_if_root();
+        if (cwd && cwd[0]) {
+            if (chdir(cwd) != 0) {
+                dprintf(STDERR_FILENO, "jetty: chdir %s: %s\n", cwd, strerror(errno));
+                _exit(127);
+            }
+        } else {
+            chdir_home_if_root();
+        }
         exec_login_shell();
     }
 
@@ -123,6 +138,22 @@ int jt_pty_spawn(uint16_t cols, uint16_t rows,
 
     *child_out = child;
     return master;
+}
+
+int jt_pty_ttyname(int master_fd, char *out, size_t cap) {
+    if (master_fd < 0 || !out || cap == 0) return -1;
+#if defined(__APPLE__)
+    char name[128];
+    if (ioctl(master_fd, TIOCPTYGNAME, name) != 0) return -1;
+    name[sizeof name - 1] = '\0';
+    size_t n = strlen(name);
+    if (n + 1 > cap) return -1;
+    memcpy(out, name, n + 1);
+    return 0;
+#else
+    (void)master_fd;
+    return -1;
+#endif
 }
 
 int jt_pty_set_winsize(int master_fd, uint16_t cols, uint16_t rows,

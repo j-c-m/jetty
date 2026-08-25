@@ -17,6 +17,7 @@ enum JettyMain {
 
 @MainActor
 final class TermWindow: NSObject, NSWindowDelegate {
+    let id = UUID()
     let session: TerminalSession
     let view: MetalTerminalView
     let window: NSWindow
@@ -54,8 +55,8 @@ final class TermWindow: NSObject, NSWindowDelegate {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var device: MTLDevice?
-    private var config: AppConfig?
-    private var terms: [TermWindow] = []
+    var config: AppConfig?
+    var terms: [TermWindow] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let device = MTLCreateSystemDefaultDevice() else {
@@ -205,8 +206,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @discardableResult
-    private func openWindow() -> TermWindow? {
-        guard let device, let config else { return nil }
+    func openWindow(
+        workingDirectory: String = "",
+        fontSize: Double = 0,
+        initialInput: String = ""
+    ) -> TermWindow? {
+        guard let device, var config else { return nil }
+        if fontSize > 0 {
+            config.fontSize = CGFloat(min(72, max(8, fontSize)))
+        }
+        let cwd: String?
+        if workingDirectory.isEmpty {
+            cwd = nil
+        } else {
+            let path = (workingDirectory as NSString).expandingTildeInPath
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else {
+                return nil
+            }
+            cwd = path
+        }
         let screen = NSScreen.main ?? NSScreen.screens[0]
         let backing = screen.backingScaleFactor
         let metrics = CellMetrics.measure(
@@ -292,9 +311,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 window?.close()
             }
         }
-        guard session.spawn() else {
+        guard session.spawn(workingDirectory: cwd) else {
             session.stop()
             return nil
+        }
+        if !initialInput.isEmpty {
+            session.writeToPty(Array(initialInput.utf8))
         }
         terms.append(term)
         window.makeKeyAndOrderFront(nil)

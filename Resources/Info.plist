@@ -30,5 +30,9 @@
 	<string>NSApplication</string>
 	<key>NSUserNotificationsUsageDescription</key>
 	<string>OSC 9 and OSC 777 notifications.</string>
+	<key>NSAppleScriptEnabled</key>
+	<true/>
+	<key>OSAScriptingDefinition</key>
+	<string>Jetty.sdef</string>
 </dict>
 </plist>

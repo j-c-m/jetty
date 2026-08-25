@@ -26,6 +26,12 @@ fi
 rm -rf "$APP" "$ROOT/dist/jetty.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$PLIST" "$APP/Contents/Info.plist"
+SDEF="$ROOT/Resources/Jetty.sdef"
+if [ ! -f "$SDEF" ]; then
+	echo "jetty: missing $SDEF" >&2
+	exit 1
+fi
+cp "$SDEF" "$APP/Contents/Resources/Jetty.sdef"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 cp "$BIN" "$APP/Contents/MacOS/jetty"
 chmod 755 "$APP/Contents/MacOS/jetty"

@@ -14,6 +14,13 @@ int jt_pty_spawn(uint16_t cols, uint16_t rows,
                  uint32_t cell_width_px, uint32_t cell_height_px,
                  pid_t *child_out);
 
+int jt_pty_spawn_ex(uint16_t cols, uint16_t rows,
+                    uint32_t cell_width_px, uint32_t cell_height_px,
+                    const char *cwd,
+                    pid_t *child_out);
+
+int jt_pty_ttyname(int master_fd, char *out, size_t cap);
+
 int jt_pty_set_winsize(int master_fd, uint16_t cols, uint16_t rows,
                        uint32_t cell_width_px, uint32_t cell_height_px);
 
