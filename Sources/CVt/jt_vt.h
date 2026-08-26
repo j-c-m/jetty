@@ -76,6 +76,11 @@ typedef struct jt_scr {
     uint32_t sync_hold_gen;
     uint32_t last_print;
     uint8_t has_last_print;
+    Cell *sync_snap;
+    int32_t sync_snap_cols, sync_snap_rows;
+    int32_t sync_snap_cx, sync_snap_cy;
+    uint8_t sync_snap_valid;
+    uint8_t sync_pin;
 } jt_scr;
 
 typedef struct jt_rare {
@@ -151,6 +156,13 @@ int jt_sync_flush(const jt_scr *s);
 uint32_t jt_sync_hold_gen(const jt_scr *s);
 void jt_sync_clear_flush(jt_scr *s);
 void jt_sync_timeout_clear(jt_scr *s);
+void jt_sync_capture(jt_scr *s);
+void jt_sync_drop_snap(jt_scr *s);
+void jt_sync_presented(jt_scr *s);
+int jt_sync_snap_valid(const jt_scr *s);
+void jt_sync_snap_cursor(const jt_scr *s, int32_t *cx, int32_t *cy);
+void jt_scr_copy_sync_row(const jt_scr *s, int32_t y, Cell *dst, int32_t dst_cols, Cell blank);
+void jt_pools_reclaim(jt_scr *s);
 void jt_scr_set_palette_overlay(jt_scr *s, const uint32_t rgb16[16], uint16_t mask);
 void jt_scr_palette_reset(jt_scr *s);
 void jt_scr_palette_reset_index(jt_scr *s, int idx);

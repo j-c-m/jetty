@@ -308,6 +308,13 @@ public final class TerminalSession: @unchecked Sendable {
         lock.lock()
     }
 
+    /// Present path. If parse holds the lock, skip this vsync instead of hanging.
+    public func tryLockDemand() -> Bool {
+        guard lock.`try`() else { return false }
+        withUnsafeMutablePointer(to: &drawDemand) { _ = jt_atomic_i32_add($0, 1) }
+        return true
+    }
+
     public func unlockDemand() {
         lock.unlock()
         withUnsafeMutablePointer(to: &drawDemand) { _ = jt_atomic_i32_add($0, -1) }
@@ -330,8 +337,8 @@ public final class TerminalSession: @unchecked Sendable {
             if off >= len { break }
             let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
             let budget = now &- t0 >= Self.parseBudgetNs
-            let holding = screen.syncOutput && !screen.syncFlush
-            if drawWaiting() {
+            let holding = screen.syncOutput
+            if drawWaiting() && !holding {
                 scheduleRedraw()
                 lock.unlock()
                 yieldToDemand()

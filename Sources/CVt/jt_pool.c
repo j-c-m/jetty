@@ -217,9 +217,23 @@ void jt_grapheme_release(jt_scr *s, uint32_t id) {
     if (g->refs[id - 1] == 0) return;
     g->refs[id - 1]--;
     if (g->refs[id - 1] != 0) return;
+    if (s->sync_pin) return;
     uint16_t slot = (uint16_t)(id - 1);
     gp_hash_del(g, slot);
     if (g->free_n < JT_GP_CAP) g->free_stack[g->free_n++] = slot;
+}
+
+void jt_pools_reclaim(jt_scr *s) {
+    jt_gp *g = gp_of(s);
+    if (!g || g->used == 0) return;
+    uint8_t on_free[JT_GP_CAP];
+    memset(on_free, 0, sizeof on_free);
+    for (uint16_t i = 0; i < g->free_n; i++) on_free[g->free_stack[i]] = 1;
+    for (uint16_t slot = 0; slot < g->used; slot++) {
+        if (g->refs[slot] != 0 || on_free[slot]) continue;
+        gp_hash_del(g, slot);
+        if (g->free_n < JT_GP_CAP) g->free_stack[g->free_n++] = slot;
+    }
 }
 
 static int str_eq(const char *a, const char *b) {
@@ -240,7 +254,7 @@ uint16_t jt_rare_intern(jt_scr *s, const char *osc8_id, const char *uri, uint32_
         slot = (int)r->used++;
     } else {
         for (uint16_t i = 0; i < r->used; i++) {
-            if (r->refs[i] == 0) {
+            if (r->refs[i] == 0 && !s->sync_pin) {
                 slot = (int)i;
                 break;
             }

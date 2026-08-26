@@ -30,6 +30,9 @@ void jt_sync_set(jt_scr *s, int on) {
         __atomic_store_n(&s->sync_output, 1, __ATOMIC_RELEASE);
         __atomic_fetch_add(&s->sync_hold_gen, 1, __ATOMIC_RELEASE);
     } else {
+        /* One freeze per present. Recapture after the GPU drops it so a
+         * packed 2026l burst does not memcpy the grid on every keystroke. */
+        if (!jt_sync_snap_valid(s)) jt_sync_capture(s);
         __atomic_store_n(&s->sync_output, 0, __ATOMIC_RELEASE);
         __atomic_store_n(&s->sync_flush, 1, __ATOMIC_RELEASE);
     }
@@ -53,6 +56,7 @@ void jt_sync_clear_flush(jt_scr *s) {
 
 void jt_sync_timeout_clear(jt_scr *s) {
     if (!s) return;
+    jt_sync_drop_snap(s);
     __atomic_store_n(&s->sync_output, 0, __ATOMIC_RELEASE);
     __atomic_store_n(&s->sync_flush, 0, __ATOMIC_RELEASE);
 }

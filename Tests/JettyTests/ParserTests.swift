@@ -116,17 +116,17 @@ final class ParserTests: XCTestCase {
     }
 
     func testDec2026HoldTimeout() {
-        XCTAssertTrue(Dec2026.skipPresent(sync: true, flush: false, holdStart: 0, now: 1))
-        XCTAssertTrue(Dec2026.skipPresent(sync: true, flush: false, holdStart: 10, now: 10))
+        XCTAssertTrue(Dec2026.skipPresent(sync: true, holdStart: 0, now: 1))
+        XCTAssertTrue(Dec2026.skipPresent(sync: true, holdStart: 10, now: 10))
         XCTAssertTrue(Dec2026.skipPresent(
-            sync: true, flush: false, holdStart: 10, now: 10 + Dec2026.timeoutNs - 1))
+            sync: true, holdStart: 10, now: 10 + Dec2026.timeoutNs - 1))
         XCTAssertFalse(Dec2026.skipPresent(
-            sync: true, flush: false, holdStart: 10, now: 10 + Dec2026.timeoutNs))
-        XCTAssertFalse(Dec2026.skipPresent(sync: false, flush: false, holdStart: 10, now: 10))
-        XCTAssertFalse(Dec2026.skipPresent(sync: true, flush: true, holdStart: 0, now: 1))
+            sync: true, holdStart: 10, now: 10 + Dec2026.timeoutNs))
+        XCTAssertFalse(Dec2026.skipPresent(sync: false, holdStart: 10, now: 10))
+        XCTAssertFalse(Dec2026.skipPresent(sync: true, holdStart: 0, now: 1, snap: true))
     }
 
-    func testDec2026LThenHStillFlushes() {
+    func testDec2026LThenHKeepsHold() {
         let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
         let p = Parser()
         p.screen = s
@@ -136,31 +136,108 @@ final class ParserTests: XCTestCase {
         p.feed("\u{1B}[?2026l\u{1B}[?2026h")
         XCTAssertTrue(s.syncOutput)
         XCTAssertTrue(s.syncFlush)
+        XCTAssertTrue(s.syncSnapValid)
         XCTAssertFalse(Dec2026.skipPresent(
-            sync: s.syncOutput, flush: s.syncFlush, holdStart: 0, now: 1))
+            sync: s.syncOutput, holdStart: 0, now: 1, snap: s.syncSnapValid))
         XCTAssertFalse(Dec2026.peekSkip(s.implPtr, holdStart: 0, now: 1))
     }
 
-    func testDec2026LThenHThenPrintDropsFlush() {
+    func testDec2026LThenHHidesNextFrame() {
         let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
         let p = Parser()
         p.screen = s
         p.feed("\u{1B}[?2026h")
+        p.feed("\u{1B}[H\u{1B}[2JRunning")
         let gen = Dec2026.holdGen(s.implPtr)
         p.feed("\u{1B}[?2026l\u{1B}[?2026h")
         XCTAssertGreaterThan(Dec2026.holdGen(s.implPtr), gen)
-        XCTAssertTrue(s.syncFlush)
-        p.feed("payload")
+        p.feed("\u{1B}[H\u{1B}[2JPAYLOAD")
         XCTAssertTrue(s.syncOutput)
-        XCTAssertFalse(s.syncFlush)
-        XCTAssertTrue(Dec2026.skipPresent(
-            sync: s.syncOutput, flush: s.syncFlush, holdStart: 0, now: 1))
-        XCTAssertTrue(Dec2026.peekSkip(s.implPtr, holdStart: 0, now: 1))
-        p.feed("\u{1B}[?2026l\u{1B}[?2026h")
         XCTAssertTrue(s.syncFlush)
-        p.feed("a\u{0300}\u{0301}\u{0302}")
-        XCTAssertFalse(s.syncFlush)
-        XCTAssertTrue(Dec2026.peekSkip(s.implPtr, holdStart: 0, now: 1))
+        XCTAssertTrue(s.syncSnapValid)
+        XCTAssertFalse(Dec2026.peekSkip(s.implPtr, holdStart: 0, now: 1))
+        XCTAssertEqual(s.plainString(), "PAYLOAD")
+        XCTAssertEqual(s.syncRow(0)[0].contentPayload, UInt32(UInt8(ascii: "R")))
+        p.feed("\u{1B}[?2026l")
+        XCTAssertFalse(s.syncOutput)
+        XCTAssertFalse(Dec2026.peekSkip(s.implPtr, holdStart: 0, now: 1))
+        XCTAssertEqual(s.plainString(), "PAYLOAD")
+    }
+
+    func testDec2026ClearThenPaintPresentsPaint() {
+        let s = Screen(cols: 8, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?2026h\u{1B}[H\u{1B}[2J\u{1B}[?2026l\u{1B}[?2026h\u{1B}[HHELLO\u{1B}[?2026l")
+        XCTAssertFalse(s.syncOutput)
+        XCTAssertTrue(s.syncFlush)
+        XCTAssertFalse(Dec2026.peekSkip(s.implPtr, holdStart: 0, now: 1))
+        XCTAssertEqual(s.plainString(), "HELLO")
+    }
+
+    func testDec2026LaterESUReplacesFilenameFrame() {
+        let s = Screen(cols: 12, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?2026h\u{1B}[H\u{1B}[2JREADME.md\u{1B}[?2026l")
+        XCTAssertEqual(s.syncRow(0)[0].contentPayload, UInt32(UInt8(ascii: "R")))
+        p.feed("\u{1B}[?2026h\u{1B}[H\u{1B}[2Jline one\r\nline two\u{1B}[?2026l")
+        XCTAssertFalse(s.syncOutput)
+        XCTAssertEqual(s.plainString(), "line one\nline two")
+        XCTAssertEqual(s.syncRow(0)[0].contentPayload, UInt32(UInt8(ascii: "R")))
+        s.syncPresented()
+        p.feed("\u{1B}[?2026h\u{1B}[H\u{1B}[2Jnext\u{1B}[?2026l")
+        XCTAssertEqual(s.plainString(), "next")
+        XCTAssertEqual(s.syncRow(0)[0].contentPayload, UInt32(UInt8(ascii: "n")))
+    }
+
+    func testDec2026HoldDoesNotPresentED2() {
+        let s = Screen(cols: 8, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?2026hFULL\u{1B}[?2026l")
+        XCTAssertFalse(Dec2026.peekSkip(s.implPtr, holdStart: 0, now: 1))
+        p.feed("\u{1B}[?2026h\u{1B}[H\u{1B}[2J")
+        XCTAssertTrue(s.syncOutput)
+        XCTAssertTrue(s.syncSnapValid)
+        XCTAssertEqual(s.syncRow(0)[0].contentPayload, UInt32(UInt8(ascii: "F")))
+        XCTAssertFalse(Dec2026.peekSkip(s.implPtr, holdStart: 0, now: 1))
+        p.feed("HELLO\u{1B}[?2026l")
+        XCTAssertFalse(s.syncOutput)
+        XCTAssertFalse(Dec2026.peekSkip(s.implPtr, holdStart: 0, now: 1))
+        XCTAssertEqual(s.plainString(), "HELLO")
+    }
+
+    func testDec2026ManyESULeavesLive() {
+        let s = Screen(cols: 8, rows: 2, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        for i in 0..<462 {
+            p.feed("\u{1B}[?2026h\u{1B}[H\u{1B}[2J\(i)\u{1B}[?2026l")
+        }
+        XCTAssertFalse(s.syncOutput)
+        XCTAssertFalse(Dec2026.peekSkip(s.implPtr, holdStart: 0, now: 1))
+        XCTAssertEqual(s.plainString(), "461")
+        XCTAssertEqual(s.syncRow(0)[0].contentPayload, UInt32(UInt8(ascii: "0")))
+        p.feed("\u{1B}[?2026h\u{1B}[H\u{1B}[2Jx")
+        XCTAssertTrue(s.syncSnapValid)
+        XCTAssertFalse(Dec2026.peekSkip(s.implPtr, holdStart: 0, now: 1))
+        XCTAssertEqual(s.syncRow(0)[0].contentPayload, UInt32(UInt8(ascii: "0")))
+        XCTAssertEqual(s.plainString(), "x")
+    }
+
+    func testDec2026SnapKeepsRareAfterLiveErase() {
+        let s = Screen(cols: 8, rows: 2, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[58:2::1:2:3m\u{1B}[?2026hA\u{1B}[?2026l")
+        let extra = s.syncRow(0)[0].extra
+        XCTAssertNotEqual(extra, 0)
+        p.feed("\u{1B}[?2026h\u{1B}[H\u{1B}[2J")
+        XCTAssertEqual(s.syncRow(0)[0].extra, extra)
+        var rare = jt_rare()
+        XCTAssertEqual(jt_rare_get(s.implPtr, extra, &rare), 1)
+        XCTAssertEqual(rare.ul_color, PackedColor.rgb(r: 1, g: 2, b: 3))
     }
 
     func testDec2026ParseRestartsHoldGen() {
@@ -182,6 +259,18 @@ final class ParserTests: XCTestCase {
         let exp = expectation(description: "peekSkip")
         DispatchQueue.global(qos: .userInitiated).async {
             XCTAssertTrue(Dec2026.peekSkip(session.screen.implPtr, holdStart: 0, now: 1))
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 0.25)
+        session.lock.unlock()
+    }
+
+    func testTryLockDemandDoesNotBlockOnHeldLock() {
+        let session = TerminalSession(cols: 8, rows: 2, scrollbackCapRows: 0)
+        session.lock.lock()
+        let exp = expectation(description: "tryLockDemand")
+        DispatchQueue.global(qos: .userInitiated).async {
+            XCTAssertFalse(session.tryLockDemand())
             exp.fulfill()
         }
         wait(for: [exp], timeout: 0.25)

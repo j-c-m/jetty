@@ -4,16 +4,15 @@ import Foundation
 public enum Dec2026 {
     public static let timeoutNs: UInt64 = 1_000_000_000
 
-    /// True while synchronized output holds the GPU present.
-    /// `flush` is set on `2026l` so a following `2026h` still presents that
-    /// frame, unless the grid mutated after `2026h`.
+    /// Skip GPU presents while `2026h` holds, unless an ESU freeze is
+    /// ready. Timeout forces a present so a stuck hold cannot freeze the GPU.
     public static func skipPresent(
         sync: Bool,
-        flush: Bool,
         holdStart: UInt64,
-        now: UInt64
+        now: UInt64,
+        snap: Bool = false
     ) -> Bool {
-        if flush { return false }
+        if snap { return false }
         guard sync else { return false }
         if holdStart == 0 { return true }
         return now &- holdStart < timeoutNs
@@ -27,9 +26,9 @@ public enum Dec2026 {
     ) -> Bool {
         skipPresent(
             sync: jt_sync_on(scr) != 0,
-            flush: jt_sync_flush(scr) != 0,
             holdStart: holdStart,
-            now: now
+            now: now,
+            snap: jt_sync_snap_valid(scr) != 0
         )
     }
 
