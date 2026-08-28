@@ -70,21 +70,6 @@ public final class Screen {
         get { jt_sync_on(implPtr) != 0 }
         set { jt_sync_set(implPtr, newValue ? 1 : 0) }
     }
-    public var syncFlush: Bool { jt_sync_flush(implPtr) != 0 }
-    public var syncSnapValid: Bool { jt_sync_snap_valid(implPtr) != 0 }
-    public func syncPresented() { jt_sync_presented(implPtr) }
-    public var syncSnapCursorX: Int {
-        var x: Int32 = 0
-        var y: Int32 = 0
-        jt_sync_snap_cursor(implPtr, &x, &y)
-        return Int(x)
-    }
-    public var syncSnapCursorY: Int {
-        var x: Int32 = 0
-        var y: Int32 = 0
-        jt_sync_snap_cursor(implPtr, &x, &y)
-        return Int(y)
-    }
     public var cursorStyle: UInt8 {
         get { implPtr.pointee.cursor_style }
         set { implPtr.pointee.cursor_style = newValue }
@@ -320,24 +305,6 @@ public final class Screen {
         for y in 0..<rows {
             jt_scr_copy_row(implPtr, Int32(y), dest + y * c, Int32(c), blank)
         }
-    }
-
-    public func blitSyncGrid(to dest: UnsafeMutablePointer<Cell>) {
-        let blank = spaceBlank
-        let c = cols
-        for y in 0..<rows {
-            jt_scr_copy_sync_row(implPtr, Int32(y), dest + y * c, Int32(c), blank)
-        }
-    }
-
-    public func syncRow(_ y: Int) -> [Cell] {
-        var out = [Cell](repeating: .empty, count: cols)
-        let blank = spaceBlank
-        out.withUnsafeMutableBufferPointer { dest in
-            guard let d = dest.baseAddress else { return }
-            jt_scr_copy_sync_row(implPtr, Int32(y), d, Int32(cols), blank)
-        }
-        return out
     }
 
     public func blitDocumentRow(

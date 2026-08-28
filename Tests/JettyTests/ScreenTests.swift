@@ -1,5 +1,4 @@
 import CVt
-import os
 import XCTest
 @testable import Jetty
 
@@ -41,21 +40,28 @@ final class ScreenTests: XCTestCase {
     }
 
     func testScrollRegionParseCost() {
+        func minMs(_ trials: Int, _ body: () -> Double) -> Double {
+            var best = Double.greatestFiniteMagnitude
+            for _ in 0..<trials { best = min(best, body()) }
+            return best
+        }
         func ms(cols: Int, rows: Int, top: Int, bot: Int, alt: Bool, cap: Int = 8, n: Int = 200_000) -> Double {
-            let s = Screen(cols: cols, rows: rows, scrollbackCapRows: cap)
-            if alt { s.switchScreenMode(1049, enabled: true) }
-            s.decstbm(top: top, bot: bot)
-            let p = Parser()
-            p.screen = s
-            var bytes = [UInt8]()
-            bytes.reserveCapacity(n * 2)
-            for _ in 0..<n {
-                bytes.append(UInt8(ascii: "y"))
-                bytes.append(0x0A)
+            minMs(3) {
+                let s = Screen(cols: cols, rows: rows, scrollbackCapRows: cap)
+                if alt { s.switchScreenMode(1049, enabled: true) }
+                s.decstbm(top: top, bot: bot)
+                let p = Parser()
+                p.screen = s
+                var bytes = [UInt8]()
+                bytes.reserveCapacity(n * 2)
+                for _ in 0..<n {
+                    bytes.append(UInt8(ascii: "y"))
+                    bytes.append(0x0A)
+                }
+                let t0 = ProcessInfo.processInfo.systemUptime
+                p.feed(bytes)
+                return (ProcessInfo.processInfo.systemUptime - t0) * 1000
             }
-            let t0 = ProcessInfo.processInfo.systemUptime
-            p.feed(bytes)
-            return (ProcessInfo.processInfo.systemUptime - t0) * 1000
         }
         let rows = 40
         let full = ms(cols: 80, rows: rows, top: 0, bot: rows - 1, alt: true)
@@ -64,18 +70,20 @@ final class ScreenTests: XCTestCase {
         let small = ms(cols: 80, rows: rows, top: rows / 2, bot: rows - 1, alt: true)
         let primary = ms(cols: 105, rows: 35, top: 0, bot: 34, alt: false, cap: 50_000)
         func fullWidthMs() -> Double {
-            let cols = 105, rows = 35, n = 10_000
-            let s = Screen(cols: cols, rows: rows, scrollbackCapRows: 50_000)
-            let p = Parser()
-            p.screen = s
-            var line = [UInt8](repeating: UInt8(ascii: "A"), count: cols)
-            line.append(0x0A)
-            var bytes = [UInt8]()
-            bytes.reserveCapacity(n * line.count)
-            for _ in 0..<n { bytes.append(contentsOf: line) }
-            let t0 = ProcessInfo.processInfo.systemUptime
-            p.feed(bytes)
-            return (ProcessInfo.processInfo.systemUptime - t0) * 1000
+            minMs(3) {
+                let cols = 105, rows = 35, n = 10_000
+                let s = Screen(cols: cols, rows: rows, scrollbackCapRows: 50_000)
+                let p = Parser()
+                p.screen = s
+                var line = [UInt8](repeating: UInt8(ascii: "A"), count: cols)
+                line.append(0x0A)
+                var bytes = [UInt8]()
+                bytes.reserveCapacity(n * line.count)
+                for _ in 0..<n { bytes.append(contentsOf: line) }
+                let t0 = ProcessInfo.processInfo.systemUptime
+                p.feed(bytes)
+                return (ProcessInfo.processInfo.systemUptime - t0) * 1000
+            }
         }
         let wide = fullWidthMs()
         fputs(String(format: "scroll parse ms full=%.1f bottom=%.1f top=%.1f small=%.1f primary=%.1f wide=%.1f\n",
@@ -781,39 +789,34 @@ final class ScreenTests: XCTestCase {
             yn.append(UInt8(ascii: "y"))
             yn.append(0x0A)
         }
-        func ms(wrap: Bool, peek: Bool) -> Double {
+        func ms(wrap: Bool) -> Double {
             minMs(3) {
                 let session = TerminalSession(cols: 105, rows: 35, scrollbackCapRows: 8)
                 let p = Parser()
                 p.screen = session.screen
-                let stop = OSAllocatedUnfairLock(initialState: false)
-                let group = DispatchGroup()
-                if peek {
-                    group.enter()
-                    DispatchQueue.global(qos: .userInitiated).async {
-                        while !stop.withLock({ $0 }) {
-                            _ = Dec2026.peekSkip(session.screen.implPtr, holdStart: 0, now: 1)
-                        }
-                        group.leave()
-                    }
-                }
                 session.lock.lock()
                 if wrap { p.feed("\u{1B}[?2026h") }
                 p.feed(yn)
                 if wrap { p.feed("\u{1B}[?2026l") }
                 session.lock.unlock()
-                stop.withLock { $0 = true }
-                if peek { group.wait() }
             }
         }
-        let plain = ms(wrap: false, peek: false)
-        let wrap = ms(wrap: true, peek: false)
-        let peek = ms(wrap: true, peek: true)
-        fputs(String(format: "sync hold parse ms plain=%.1f wrap=%.1f peek=%.1f\n",
-                     plain, wrap, peek), stderr)
+        let plain = ms(wrap: false)
+        let wrap = ms(wrap: true)
+        fputs(String(format: "sync hold parse ms plain=%.1f wrap=%.1f\n",
+                     plain, wrap), stderr)
         fflush(stderr)
-        XCTAssertLessThan(wrap / max(plain, 0.1), 2.0, "2026 wrap should stay near plain parse")
-        XCTAssertLessThan(peek / max(plain, 0.1), 2.0, "2026 skip peek must not stall parse")
+        let held = TerminalSession(cols: 105, rows: 35, scrollbackCapRows: 8)
+        let hp = Parser()
+        hp.screen = held.screen
+        hp.feed("\u{1B}[?2026h")
+        hp.feed(yn)
+        XCTAssertTrue(held.screen.syncOutput)
+        XCTAssertGreaterThan(hp.syncBytes, 0)
+        XCTAssertFalse(held.screen.plainString().contains("y"))
+        hp.feed("\u{1B}[?2026l")
+        XCTAssertFalse(held.screen.syncOutput)
+        XCTAssertTrue(held.screen.plainString().contains("y"))
     }
 
     func testTakeDirtyPrintSetsOnlyThatLogicalRow() {

@@ -38,10 +38,6 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var mouseHostSelect = false
     private var markedText = NSMutableAttributedString()
     private var imeInsert = false
-    private var syncHoldStart: UInt64 = 0
-    private var syncHoldGen: UInt32 = 0
-    private var syncTimeoutWork: DispatchWorkItem?
-    private var syncDisplayLink: CADisplayLink?
     private var cursorBlinkWork: DispatchWorkItem?
     private var liveDirty = ContiguousArray<UInt8>()
     private var skipLast: DirtySkip.Key?
@@ -148,12 +144,6 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         if !syncBackingScale() {
             relayout()
         }
-        if window == nil {
-            stopSyncDisplayLink()
-        } else if syncDisplayLink != nil {
-            stopSyncDisplayLink()
-            startSyncDisplayLink()
-        }
     }
 
     public override func viewDidChangeBackingProperties() {
@@ -178,24 +168,14 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
 
     public func draw(in view: MTKView) {
         guard let renderer, let device else { return }
-        paceSyncDisplay()
-        if skipSyncPresent(locked: false) { return }
         guard session.tryLockDemand() else { return }
-        let holding = session.screen.syncOutput
-        let presentSnap = session.screen.syncSnapValid && holding
-        let snapCX = presentSnap ? session.screen.syncSnapCursorX : 0
-        let snapCY = presentSnap ? session.screen.syncSnapCursorY : 0
-        if skipSyncPresent(locked: true) {
-            session.unlockDemand()
-            return
-        }
         let cols = session.screen.cols
         let rows = session.screen.rows
         session.screen.copyPalette256(&palPacked)
         let defFG = session.screen.defaultFgRGB
         let defBG = session.screen.defaultBgRGB
-        let cx = presentSnap ? snapCX : session.screen.cursorX
-        let cy = presentSnap ? snapCY : session.screen.cursorY
+        let cx = session.screen.cursorX
+        let cy = session.screen.cursorY
         let vis = session.screen.cursorVisible
         let curStyle = session.screen.cursorStyle
         let curRGB = session.screen.cursorRGB
@@ -256,21 +236,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         }
         paint.withUnsafeMutableBufferPointer { dest in
             guard let dp = dest.baseAddress, cols > 0, paintRows > 0 else { return }
-            if presentSnap {
-                session.screen.blitSyncGrid(to: dp)
-                if extra > 0 {
-                    var y = rows
-                    while y < paintRows {
-                        let rowp = dp + y * cols
-                        var x = 0
-                        while x < cols {
-                            rowp[x] = blank
-                            x += 1
-                        }
-                        y += 1
-                    }
-                }
-            } else if extra == 0 && (inAlt || start == sbCount) {
+            if extra == 0 && (inAlt || start == sbCount) {
                 session.screen.blitLiveGrid(to: dp)
             } else {
                 var row = 0
@@ -289,14 +255,9 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         if liveDirty.count != rows {
             liveDirty = ContiguousArray(repeating: 0, count: max(rows, 0))
         }
-        let damageGen: UInt32
-        if presentSnap {
-            damageGen = lastDamageGen
-        } else {
-            damageGen = liveDirty.withUnsafeMutableBufferPointer { buf -> UInt32 in
-                guard let p = buf.baseAddress, rows > 0 else { return 0 }
-                return session.screen.takeDirty(into: p, count: rows)
-            }
+        let damageGen: UInt32 = liveDirty.withUnsafeMutableBufferPointer { buf -> UInt32 in
+            guard let p = buf.baseAddress, rows > 0 else { return 0 }
+            return session.screen.takeDirty(into: p, count: rows)
         }
         var graphemes: [UInt32: [UInt32]] = [:]
         var ulColors: [UInt16: UInt32] = [:]
@@ -317,7 +278,6 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 }
             }
         }
-        jt_sync_presented(session.screen.implPtr)
         session.unlockDemand()
         applyChrome(defBG, reverse: rev)
 
@@ -801,87 +761,6 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         return super.resignFirstResponder()
     }
 
-    private func paceSyncDisplay() {
-        let scr = session.screen.implPtr
-        let syncing = jt_sync_on(scr) != 0 || jt_sync_flush(scr) != 0
-        if syncing {
-            startSyncDisplayLink()
-        } else {
-            stopSyncDisplayLink()
-        }
-    }
-
-    private func startSyncDisplayLink() {
-        if syncDisplayLink != nil { return }
-        let link = displayLink(target: self, selector: #selector(onSyncDisplayLink(_:)))
-        applySyncDisplayLinkRate(link)
-        link.add(to: .main, forMode: .common)
-        syncDisplayLink = link
-    }
-
-    private func applySyncDisplayLinkRate(_ link: CADisplayLink) {
-        let fps = window?.screen?.maximumFramesPerSecond
-            ?? NSScreen.main?.maximumFramesPerSecond
-            ?? 60
-        let hz = max(Float(fps), 1)
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: hz, maximum: hz, preferred: hz)
-    }
-
-    @objc private func onSyncDisplayLink(_ link: CADisplayLink) {
-        needsDisplay = true
-    }
-
-    private func stopSyncDisplayLink() {
-        syncDisplayLink?.invalidate()
-        syncDisplayLink = nil
-    }
-
-    /// `locked` is true under `tryLockDemand`. Peek without the lock so a 2026
-    /// hold does not stall parse.
-    private func skipSyncPresent(locked: Bool) -> Bool {
-        let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
-        let gen = Dec2026.holdGen(session.screen.implPtr)
-        if gen != syncHoldGen {
-            syncHoldGen = gen
-            syncHoldStart = 0
-            syncTimeoutWork?.cancel()
-            syncTimeoutWork = nil
-        }
-        if !locked {
-            if Dec2026.peekSkip(session.screen.implPtr, holdStart: syncHoldStart, now: now) {
-                if syncHoldStart == 0 { syncHoldStart = now }
-                armSyncTimeout()
-                return true
-            }
-            return false
-        }
-        let sync = session.screen.syncOutput
-        let flush = session.screen.syncFlush
-        if Dec2026.skipPresent(
-            sync: sync,
-            holdStart: syncHoldStart,
-            now: now,
-            snap: session.screen.syncSnapValid
-        ) {
-            if syncHoldStart == 0 { syncHoldStart = now }
-            armSyncTimeout()
-            return true
-        }
-        if locked {
-            if flush {
-                jt_sync_clear_flush(session.screen.implPtr)
-                forceFullRebuild = true
-            } else if sync {
-                jt_sync_timeout_clear(session.screen.implPtr)
-                forceFullRebuild = true
-            }
-        }
-        syncHoldStart = 0
-        syncTimeoutWork?.cancel()
-        syncTimeoutWork = nil
-        return false
-    }
-
     private func armCursorBlink() {
         if cursorBlinkWork != nil { return }
         let work = DispatchWorkItem { [weak self] in
@@ -1131,19 +1010,6 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             progressFillLayer.frame = CGRect(x: 0, y: 0, width: sx, height: h)
             CATransaction.commit()
         }
-    }
-
-    private func armSyncTimeout() {
-        if syncTimeoutWork != nil { return }
-        let work = DispatchWorkItem { [weak self] in
-            self?.syncTimeoutWork = nil
-            self?.needsDisplay = true
-        }
-        syncTimeoutWork = work
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + .milliseconds(Int(Dec2026.timeoutNs / 1_000_000) + 50),
-            execute: work
-        )
     }
 
     private func pinLiveBottom() {

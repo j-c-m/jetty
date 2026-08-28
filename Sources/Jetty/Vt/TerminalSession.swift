@@ -1,5 +1,6 @@
 import AppKit
 import CPty
+import CVt
 import CoreFoundation
 import Darwin
 import Foundation
@@ -40,6 +41,9 @@ public final class TerminalSession: @unchecked Sendable {
     private var redrawPending = false
     private var drawDemand: Int32 = 0
     private let handoff = NSCondition()
+    private var syncTimeoutWork: DispatchWorkItem?
+    private var lastSyncEpoch: UInt32 = 0
+    private var lastSyncOn = false
 
     public init(
         cols: Int = 105,
@@ -195,7 +199,11 @@ public final class TerminalSession: @unchecked Sendable {
 
     public func setWinsize(cols: Int, rows: Int) {
         lock.lock()
+        parser.syncDrop()
         screen.resize(cols: cols, rows: rows)
+        lastSyncOn = false
+        lastSyncEpoch = 0
+        cancelSyncTimeout()
         let fd = masterFD
         let cw = cellWidthPx
         let ch = cellHeightPx
@@ -328,29 +336,75 @@ public final class TerminalSession: @unchecked Sendable {
 
     private func parseBatch(_ ptr: UnsafePointer<UInt8>, _ len: Int) {
         var off = 0
+        var needRedraw = false
         lock.lock()
         var t0 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
         while off < len {
             let n = min(Self.parseSliceBytes, len - off)
             parser.feed(ptr.advanced(by: off), count: n)
             off += n
+            syncAfterFeed()
+            if parser.syncBytes < n { needRedraw = true }
             if off >= len { break }
             let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
             let budget = now &- t0 >= Self.parseBudgetNs
-            let holding = screen.syncOutput
-            if drawWaiting() && !holding {
-                scheduleRedraw()
+            if drawWaiting() {
+                if needRedraw { scheduleRedraw() }
                 lock.unlock()
                 yieldToDemand()
                 lock.lock()
+                needRedraw = false
                 t0 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
             } else if budget {
-                if !holding { scheduleRedraw() }
+                if needRedraw { scheduleRedraw() }
                 t0 = now
             }
         }
         lock.unlock()
-        scheduleRedraw()
+        if needRedraw { scheduleRedraw() }
+    }
+
+    private func syncAfterFeed() {
+        let on = screen.syncOutput
+        let ep = jt_sync_epoch(screen.implPtr)
+        if on {
+            if ep != lastSyncEpoch {
+                lastSyncEpoch = ep
+                armSyncTimeout(epoch: ep)
+            }
+        } else if lastSyncOn {
+            cancelSyncTimeout()
+        }
+        lastSyncOn = on
+    }
+
+    private func armSyncTimeout(epoch: UInt32) {
+        cancelSyncTimeout()
+        let work = DispatchWorkItem { [weak self] in
+            self?.syncTimeoutFired(epoch: epoch)
+        }
+        syncTimeoutWork = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(Int(Dec2026.timeoutNs / 1_000_000)),
+            execute: work
+        )
+    }
+
+    private func cancelSyncTimeout() {
+        syncTimeoutWork?.cancel()
+        syncTimeoutWork = nil
+    }
+
+    private func syncTimeoutFired(epoch: UInt32) {
+        lock.lock()
+        let fire = jt_sync_epoch(screen.implPtr) == epoch && screen.syncOutput
+        if fire {
+            parser.syncTimeout()
+            lastSyncOn = false
+            syncTimeoutWork = nil
+        }
+        lock.unlock()
+        if fire { scheduleRedraw() }
     }
 
     private func drawWaiting() -> Bool {

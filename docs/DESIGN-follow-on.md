@@ -32,7 +32,7 @@ It does **not** become Ghostty. Tabs, splits, Kitty graphics/keyboard, Sixel, in
 
 Shipped and locked. Treat these as present:
 
-IME (`NSTextInputClient`), mouse 9/1000/1002/1003/1006/1007, 2004/1004, OSC 0/2/4/10/11/12/52/8/7/133, DEC 2026 hold present 1 s, CSI 14/18 t, DECSCUSR overlay, selection + copy wrap-join including history, Shift+Enter LF, NEON UTF-8 3-byte + fused wide print, BGRA emoji atlas, ExtraBold SGR 1, sprites (box/block/braille/geometric/powerline/branch) draw **before** the font when `SpriteFace.covers` (`573cf05`).
+IME (`NSTextInputClient`), mouse 9/1000/1002/1003/1006/1007, 2004/1004, OSC 0/2/4/10/11/12/52/8/7/133, DEC 2026 Alacritty hold-parse 150 ms (no grid snapshot, GPU paints committed frames), CSI 14/18 t, DECSCUSR overlay, selection + copy wrap-join including history, Shift+Enter LF, NEON UTF-8 3-byte + fused wide print, BGRA emoji atlas, ExtraBold SGR 1, sprites (box/block/braille/geometric/powerline/branch) draw **before** the font when `SpriteFace.covers` (`573cf05`).
 
 Performance canaries (do not regress; release, 105×35). Source: `AGENTS.md`. Do not invent extra benches:
 
@@ -458,7 +458,7 @@ flowchart LR
 
 v1: mutate sets `dirty[phys_y]` via `rowmap`. Draw never reads it. Dirty is never cleared. `dirty[]` length is `grid_rows` (visible + sb-steal extras), indexed physically.
 
-**Chosen skip method (KD 6):** keep the 3-slot shared ring. `prepareInstances` rotates `instanceSlot` to the next buffer (write target). `TerminalRenderer` stores `presentedSlot` only after a successful `present`+`commit`. For a skipped paint row, **memcpy** that row’s instance bytes from `instanceBuffers[presentedSlot]` into the current slot, then expand dirty rows into the current slot. If `presentedSlot` is nil (first frames) or the presented buffer’s cap/stride differs from the current slot, expand all — do not memcpy across a grow. DEC 2026 `skipSyncPresent` returns before prepare; `presentedSlot` stays the last successful present. Do not memcpy from the last *prepared* slot (a failed drawable or a 2026 skip after prepare would be wrong). The GPU reads the current slot at commit.
+**Chosen skip method (KD 6):** keep the 3-slot shared ring. `prepareInstances` rotates `instanceSlot` to the next buffer (write target). `TerminalRenderer` stores `presentedSlot` only after a successful `present`+`commit`. For a skipped paint row, **memcpy** that row’s instance bytes from `instanceBuffers[presentedSlot]` into the current slot, then expand dirty rows into the current slot. If `presentedSlot` is nil (first frames) or the presented buffer’s cap/stride differs from the current slot, expand all — do not memcpy across a grow. DEC 2026 hold-parse never skips present: the live grid is already the last ESU. `presentedSlot` stays the last successful present. Do not memcpy from the last *prepared* slot (a failed drawable after prepare would be wrong). The GPU reads the current slot at commit.
 
 ```c
 /* Gather logical dirty, then clear the physical plane.

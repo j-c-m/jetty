@@ -217,7 +217,6 @@ void jt_grapheme_release(jt_scr *s, uint32_t id) {
     if (g->refs[id - 1] == 0) return;
     g->refs[id - 1]--;
     if (g->refs[id - 1] != 0) return;
-    if (s->sync_pin) return;
     uint16_t slot = (uint16_t)(id - 1);
     gp_hash_del(g, slot);
     if (g->free_n < JT_GP_CAP) g->free_stack[g->free_n++] = slot;
@@ -254,7 +253,7 @@ uint16_t jt_rare_intern(jt_scr *s, const char *osc8_id, const char *uri, uint32_
         slot = (int)r->used++;
     } else {
         for (uint16_t i = 0; i < r->used; i++) {
-            if (r->refs[i] == 0 && !s->sync_pin) {
+            if (r->refs[i] == 0) {
                 slot = (int)i;
                 break;
             }

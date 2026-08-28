@@ -1326,73 +1326,6 @@ int jt_scr_sb_wrapped(const jt_scr *s, int32_t i) {
     return s->sb_wrap[sb_phys(s, i)] != 0;
 }
 
-void jt_sync_drop_snap(jt_scr *s) {
-    if (!s) return;
-    __atomic_store_n(&s->sync_snap_valid, 0, __ATOMIC_RELEASE);
-    if (s->sync_pin) {
-        s->sync_pin = 0;
-        jt_pools_reclaim(s);
-    }
-}
-
-void jt_sync_presented(jt_scr *s) {
-    jt_sync_drop_snap(s);
-}
-
-static void sync_snap_free(jt_scr *s) {
-    jt_sync_drop_snap(s);
-    free(s->sync_snap);
-    s->sync_snap = NULL;
-    s->sync_snap_cols = 0;
-    s->sync_snap_rows = 0;
-    s->sync_snap_cx = 0;
-    s->sync_snap_cy = 0;
-}
-
-void jt_sync_capture(jt_scr *s) {
-    if (!s || s->cols <= 0 || s->rows <= 0) return;
-    int32_t cols = s->cols, rows = s->rows;
-    if (!s->sync_snap || s->sync_snap_cols != cols || s->sync_snap_rows != rows) {
-        sync_snap_free(s);
-        s->sync_snap = (Cell *)malloc((size_t)cols * (size_t)rows * sizeof(Cell));
-        if (!s->sync_snap) return;
-        s->sync_snap_cols = cols;
-        s->sync_snap_rows = rows;
-    }
-    Cell blank = blank_cell(s);
-    for (int32_t y = 0; y < rows; y++)
-        jt_scr_copy_row(s, y, s->sync_snap + (size_t)y * (size_t)cols, cols, blank);
-    if (s->pool_cells) s->sync_pin = 1;
-    s->sync_snap_cx = s->active ? s->active->cx : 0;
-    s->sync_snap_cy = s->active ? s->active->cy : 0;
-    __atomic_store_n(&s->sync_snap_valid, 1, __ATOMIC_RELEASE);
-}
-
-int jt_sync_snap_valid(const jt_scr *s) {
-    return s && s->sync_snap && __atomic_load_n(&s->sync_snap_valid, __ATOMIC_ACQUIRE);
-}
-
-void jt_sync_snap_cursor(const jt_scr *s, int32_t *cx, int32_t *cy) {
-    int32_t x = 0, y = 0;
-    if (jt_sync_snap_valid(s)) {
-        x = s->sync_snap_cx;
-        y = s->sync_snap_cy;
-    }
-    if (cx) *cx = x;
-    if (cy) *cy = y;
-}
-
-void jt_scr_copy_sync_row(const jt_scr *s, int32_t y, Cell *dst, int32_t dst_cols, Cell blank) {
-    if (!dst || dst_cols <= 0) return;
-    if (!jt_sync_snap_valid(s) || !s->sync_snap || y < 0 || y >= s->sync_snap_rows) {
-        for (int32_t x = 0; x < dst_cols; x++) dst[x] = blank;
-        return;
-    }
-    int32_t n = s->sync_snap_cols < dst_cols ? s->sync_snap_cols : dst_cols;
-    memcpy(dst, s->sync_snap + (size_t)y * (size_t)s->sync_snap_cols, (size_t)n * sizeof(Cell));
-    for (int32_t x = n; x < dst_cols; x++) dst[x] = blank;
-}
-
 void jt_scr_copy_sb_row(const jt_scr *s, int32_t i, Cell *dst, int32_t dst_cols, Cell blank) {
     if (!dst || dst_cols <= 0) return;
     if (!s || !s->sb_idx || i < 0 || i >= s->sb_len) {
@@ -1528,8 +1461,8 @@ static int buf_resize(jt_buf *b, int32_t oc, int32_t orows, int32_t nc, int32_t 
 void jt_scr_resize(jt_scr *s, int32_t nc, int32_t nr) {
     if (nc < 2) nc = 2;
     if (nr < 1) nr = 1;
+    jt_sync_timeout_clear(s);
     if (nc == s->cols && nr == s->rows) return;
-    sync_snap_free(s);
     Cell blank = blank_cell(s);
     int32_t oc = s->cols, orows = s->rows;
     int32_t cap = s->scrollback_cap;
@@ -1626,7 +1559,6 @@ void jt_scr_init(jt_scr *s, int32_t cols, int32_t rows, int32_t sb_cap) {
 }
 
 void jt_scr_deinit(jt_scr *s) {
-    sync_snap_free(s);
     buf_free(&s->primary);
     buf_free(&s->alt);
     free(s->sb_idx);
@@ -1676,9 +1608,7 @@ void jt_scr_ris(jt_scr *s) {
     s->mouse_alt_scroll = 1;
     s->focus_event = 0;
     s->bracketed_paste = 0;
-    s->sync_output = 0;
-    s->sync_flush = 0;
-    jt_sync_drop_snap(s);
+    jt_sync_timeout_clear(s);
     s->reverse_video = 0;
     s->primary.scroll_top = 0;
     s->primary.scroll_bottom = s->rows - 1;

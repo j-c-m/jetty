@@ -173,7 +173,7 @@ Recorded 2026-08-21. Do not reopen.
 | Truecolor | SGR 38;2 / 48;2 semicolon **and** ISO colon; `COLORTERM=truecolor` |
 | Mouse | Tracking 9/1000/1002/1003; reports SGR 1006 if enabled else X10; skip 1005/1016; 1007 default **on** |
 | Bracketed paste / focus | 2004 and 1004 in v1 |
-| DEC 2026 | In v1; hold GPU present; parse still runs |
+| DEC 2026 | In v1; Alacritty hold-parse until ESU; GPU paints committed frames |
 | OSC 8 / Smulx / Setulc / OSC 7 / 133 | In v1 |
 | CSI 14 t / 18 t | Size reports only; other window-ops ignored |
 | OSC 52 | Write allow (config may deny); read asks |
@@ -189,7 +189,7 @@ Recorded 2026-08-21. Do not reopen.
 | --- | --- |
 | C ABI prefix | `jt_` (`jt_vt_feed`, `jt_pty_spawn`, …) |
 | CSI `MAX_PARAMS` | 24 (Ghostty; Kakoune) |
-| DEC 2026 timeout | 1000 ms (Ghostty `termio/Thread.zig` `sync_reset_ms`) |
+| DEC 2026 timeout | 150 ms (Alacritty `vte` `SYNC_UPDATE_TIMEOUT`) |
 | Live-grid scroll | Circular origin like `l16_vt.c` `phys_y` / `origin` |
 | Default 0–15 | VGA-like 00/80/C0/FF cube corners, **not** Ghostty `color.Name.default` and **not** xterm `*colorN` (`cd0000` / `0000ee` / `e5e5e5`) |
 | OSC 8 underline | Do not auto-underline; TUIs send SGR 4. Hover: pointing-hand cursor when the cell has a URI and tracking is off (or Cmd held) |
@@ -635,7 +635,7 @@ From Ghostty `modes.zig` `entries` plus terminfo. Last-set mouse event mode wins
 
 `rmm=\E[?1034l` / `smm=\E[?1034h` exist in terminfo; implementing 8-bit meta would corrupt UTF-8. No-op is the honest UTF-8 choice.
 
-**DEC 2026:** `CSI ? 2026 h` sets `sync_output`. `MetalTerminalView.draw` still snapshots if needed but **does not** `present`/`commit` a new drawable until `l` or a 1000 ms timeout (Ghostty `sync_reset_ms`). Parse / gather **keep running**. Timeout clears the mode so a stuck TUI cannot freeze the GPU. `scheduleRedraw` on exit. Discovery is DECRQM, not terminfo.
+**DEC 2026:** Alacritty hold-parse (`vte` 0.15 `Processor`). `CSI ? 2026 h` sets `sync_output` and **buffers** following bytes on `jt_vt` (cap 2 MiB). The live grid does not mutate until exact `ESC[?2026l` (or timeout). Reverse-scan of each chunk commits everything before the last following `ESC[?2026h`; the tail stays buffered. `MetalTerminalView.draw` always gathers the live grid — that grid is the last committed frame. 150 ms from each BSU applies the remainder if the client never sends `l`. Packed `l` then `h` in one slice presents the ESU frame (vtebench `sync_medium_cells`). Resize drops the buffer without applying. A DECRQM `$p` sent after BSU is itself buffered. Idle `CSI ? 2026 $ p` → `;2$y`. Discovery is DECRQM, not terminfo.
 
 #### DECRQM / DECRPM
 
@@ -1068,7 +1068,7 @@ Do **not** require ghostty-bench in v1. A later `infocmp`/`tput` driven pass ove
 | `\033[[A` | **prints** `A` (anti-linux swallow) |
 | `smacs` + `q` / `rmacs` + `q` | U+2500 / `q` |
 | SO + `x` (default G1 DEC) | U+2502 |
-| `CSI ? 2026 $ p` after h / l | DECRPM `;1$y` / `;2$y` |
+| `CSI ? 2026 $ p` idle / after l | DECRPM `;2$y` (a `$p` after BSU is buffered until ESU) |
 | `CSI > c` | `CSI > 0 ; 0 ; 0 c` (not DA1) |
 | `CSI c` | `CSI ? 1 ; 2 c` |
 | `CSI 14 ; 1 t` / `CSI 18 ; 1 t` | **no** reply (extra params) |
@@ -1080,7 +1080,7 @@ Do **not** require ghostty-bench in v1. A later `infocmp`/`tput` driven pass ove
 | OSC 52 read callback | returns without blocking; reply from main |
 | Mouse 1007 wheel on alt, tracking off | `CSI A/B` (or SS3) not host scroll |
 | Mouse 1007 wheel on primary, tracking off | host `ScrollPhysics` |
-| DEC 2026 set/reset | hold flag |
+| DEC 2026 set/reset | hold-parse until ESU |
 
 ### PTY / app
 
@@ -1120,7 +1120,7 @@ Do **not** require ghostty-bench in v1. A later `infocmp`/`tput` driven pass ove
 | Nerd Font + liga off still ships the patched font | Low | Disable `liga`/`calt` only; icons remain. |
 | Name collision with Eclipse Jetty | Low | Accept. Bundle `dev.jetty.app`. |
 | OSC 52 over ssh writes the local clipboard | **High** | Default write allow (Ghostty); document; `osc52-write = deny`. Read always asks. |
-| DEC 2026 stuck | Medium | 1 s timeout forces present. |
+| DEC 2026 stuck | Medium | 150 ms timeout applies the buffer and presents. |
 | Width table vs wcwidth / 2027 emoji ZWJ | Low | Document terminal-typical; no 2027. |
 | Kakoune long SGR | Low | `MAX_PARAMS=24`. |
 | Mixing linux16term SGR by accident | **High** | New C files; tests that SGR 21 is double underline, SGR 1 does not OR 8 into the index. |

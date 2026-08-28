@@ -28,6 +28,7 @@ public final class Parser {
     public var onPaletteChanged: (() -> Void)?
 
     public var state: Int { Int(jt_vt_state(vt)) }
+    public var syncBytes: Int { Int(jt_vt_sync_bytes(vt)) }
 
     public init() {
         guard let created = jt_vt_create() else {
@@ -88,6 +89,16 @@ public final class Parser {
 
     public func feed(_ s: String) {
         feed(Array(s.utf8))
+    }
+
+    public func syncTimeout() {
+        withUnsafePointer(to: &host) { h in
+            jt_vt_sync_timeout(vt, screen?.implPtr, h)
+        }
+    }
+
+    public func syncDrop() {
+        jt_vt_sync_drop(vt, screen?.implPtr)
     }
 
     func onWritePty(_ buf: UnsafeBufferPointer<UInt8>) {

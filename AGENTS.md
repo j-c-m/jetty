@@ -37,7 +37,7 @@ Do not put new per-cell retain, hash, width, or memmove on `jt_scr_index` / `fil
 | scrolling_fullscreen | ~16ms |
 | dense_cells / medium_cells | ~7 / ~5ms |
 
-In-process: `ScreenTests.testScrollRegionParseCost` / `testPrintRunCost` / `testSyncHoldParseCost` stderr. Release `y\n` 200k alt should stay ~5ms; 1 MiB `y\n` ~16ms; 10k full-width lines ~1ms. 2026 hold + skip peek on 1 MiB `y\n` must stay near plain parse. A 2× jump on those is a regression — fix before commit.
+In-process: `ScreenTests.testScrollRegionParseCost` / `testPrintRunCost` / `testSyncHoldParseCost` stderr. Release `y\n` 200k alt should stay ~5ms; 1 MiB `y\n` ~16ms; 10k full-width lines ~1ms. A 2× jump on those is a regression — fix before commit. DEC 2026 hold-parse of 1 MiB `y\n` is not a ship canary (body waits for ESU).
 
 Further `y\n` wins that skip BCE-filling unread cells on a new row are a design change (partial erase). Do not sneak them in.
 
