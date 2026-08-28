@@ -14,22 +14,18 @@ final class ScrollPhysicsTests: XCTestCase {
 
     func testPageImpulseCoastsAboutOneViewportAtLowFriction() {
         let p = ScrollPhysics()
-        p.friction = 2
-        p.impulseScale = 4
-        p.maxRowsPerFrame = 1_000
         p.pinBottom(maxOffset: 400)
         p.applyPageImpulse(direction: 1, viewportRows: 20)
         var n = 0
         while n < 300, p.step(dt: 1.0 / 60.0, maxOffset: 400, viewportRows: 20) {
             n += 1
         }
-        XCTAssertEqual(400 - p.position, 19, accuracy: 5)
+        XCTAssertEqual(p.position, 381)
+        XCTAssertEqual(p.integerRow(maxOffset: 400), 381)
     }
 
     func testPageImpulseRepeatAddsAnotherViewportKick() {
         let p = ScrollPhysics()
-        p.friction = 2
-        p.maxRowsPerFrame = 1_000
         p.pinBottom(maxOffset: 400)
         p.applyPageImpulse(direction: 1, viewportRows: 20)
         _ = p.step(dt: 1.0 / 60.0, maxOffset: 400, viewportRows: 20)
@@ -38,7 +34,42 @@ final class ScrollPhysicsTests: XCTestCase {
         while n < 120, p.step(dt: 1.0 / 60.0, maxOffset: 400, viewportRows: 20) {
             n += 1
         }
-        XCTAssertEqual(400 - p.position, 38, accuracy: 6)
+        XCTAssertEqual(p.position, 362)
+    }
+
+    func testPageImpulseSurvivesZeroDt() {
+        let p = ScrollPhysics()
+        p.pinBottom(maxOffset: 400)
+        p.applyPageImpulse(direction: 1, viewportRows: 20)
+        XCTAssertTrue(p.step(dt: 0, maxOffset: 400, viewportRows: 20))
+        XCTAssertFalse(p.pinnedToBottom)
+        XCTAssertNotEqual(p.velocity, 0)
+        XCTAssertEqual(p.position, 400)
+    }
+
+    func testPageImpulseSurvivesSubMsFromBottom() {
+        let p = ScrollPhysics()
+        p.pinBottom(maxOffset: 400)
+        p.applyPageImpulse(direction: 1, viewportRows: 20)
+        XCTAssertTrue(p.step(dt: 0.0001, maxOffset: 400, viewportRows: 20))
+        XCTAssertFalse(p.pinnedToBottom)
+        XCTAssertNotEqual(p.velocity, 0)
+    }
+
+    func testTrimTopShiftsSeekTarget() {
+        let p = ScrollPhysics()
+        p.pinBottom(maxOffset: 100)
+        p.applyPreciseDelta(deltaRows: 20, timestamp: 1, began: true, ended: true)
+        XCTAssertEqual(p.position, 80, accuracy: 1e-9)
+        p.smoothTo(offset: 50, maxOffset: 100)
+        p.trimTop(10)
+        XCTAssertEqual(p.position, 70, accuracy: 1e-9)
+        var n = 0
+        while n < 240, p.step(dt: 1.0 / 60.0, maxOffset: 90, viewportRows: 20) {
+            n += 1
+        }
+        XCTAssertEqual(p.position, 40, accuracy: 0.25)
+        XCTAssertFalse(p.pinnedToBottom)
     }
 
     func testCmdEndSeeksBottom() {

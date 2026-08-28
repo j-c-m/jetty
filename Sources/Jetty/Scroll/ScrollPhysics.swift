@@ -17,6 +17,8 @@ public final class ScrollPhysics {
     var impulseScale: Double = 4
     /// Decay for the active coast. Trackpad uses `friction`; page uses 3×.
     private var coastFriction: Double = 2
+    /// Page-key coast. Settle snaps to a whole row so floor() is not 1 off.
+    private var pageCoast = false
     /// Starting visual cap (rows/frame). Grows with `runTime` until unrestricted.
     var maxRowsPerFrame: Double = 1.0
     /// Seconds for the cap to double. ~1.4s to pass 64 rows/frame.
@@ -68,6 +70,7 @@ public final class ScrollPhysics {
         seekFollowsBottom = false
         seekFollowsTop = false
         pinnedToBottom = false
+        pageCoast = false
         coastFriction = max(friction, 0.05)
         // +impulse → older history → lower position → negative velocity.
         velocity -= deltaRows * impulseScale
@@ -81,6 +84,7 @@ public final class ScrollPhysics {
         seekFollowsBottom = false
         seekFollowsTop = false
         pinnedToBottom = false
+        pageCoast = false
         coastFriction = max(friction, 0.05)
         runTime = max(runTime, 1.5)
         if began {
@@ -111,6 +115,7 @@ public final class ScrollPhysics {
         seekTarget = nil
         seekFollowsBottom = false
         seekFollowsTop = false
+        pageCoast = false
         clearFingerTracking()
         clearAccel()
     }
@@ -124,6 +129,7 @@ public final class ScrollPhysics {
         seekFollowsBottom = false
         seekFollowsTop = false
         pinnedToBottom = false
+        pageCoast = true
         coastFriction = max(friction, 0.05) * 3
         let vp = max(1, viewportRows - 1)
         velocity -= direction * vp * coastFriction
@@ -143,6 +149,7 @@ public final class ScrollPhysics {
         seekTarget = nil
         let maxO = max(0, maxOffset)
         pinnedToBottom = false
+        pageCoast = false
         seekFollowsTop = direction > 0
         seekFollowsBottom = direction < 0
         _ = holdCount
@@ -156,6 +163,7 @@ public final class ScrollPhysics {
         seekTarget = nil
         seekFollowsBottom = false
         seekFollowsTop = false
+        pageCoast = false
         clearFingerTracking()
         clearAccel()
         position = 0
@@ -169,6 +177,7 @@ public final class ScrollPhysics {
         seekTarget = nil
         seekFollowsBottom = false
         seekFollowsTop = false
+        pageCoast = false
         clearFingerTracking()
         clearAccel()
         position = maxO
@@ -184,6 +193,7 @@ public final class ScrollPhysics {
         pinnedToBottom = false
         seekFollowsBottom = false
         seekFollowsTop = false
+        pageCoast = false
         let err = goal - position
         if abs(err) < 0.35 {
             seekTarget = nil
@@ -211,6 +221,9 @@ public final class ScrollPhysics {
     func trimTop(_ n: Double) {
         if n <= 0 { return }
         position = max(0, position - n)
+        if let target = seekTarget {
+            seekTarget = max(0, target - n)
+        }
     }
 
     /// When pinned, live output sticks to the bottom with no speed cap.
@@ -266,19 +279,22 @@ public final class ScrollPhysics {
             return stepSeek(dt: dt, target: target, maxOffset: maxO, viewportRows: viewportRows)
         }
 
-        let maxDelta = visualCap()
         let seeking = seekFollowsBottom || seekFollowsTop
-        let delta = min(max(velocity * dt, -maxDelta), maxDelta)
-        if !seeking, abs(delta) < 0.02 {
-            velocity = 0
-            clearAccel()
-            clampToRange(maxO)
+        // A coalesced wakeup can tick with dt ≈ 0. Do not treat that as settled.
+        if dt <= 0 { return stillMoving() }
+
+        if !seeking, abs(velocity) < settleVel {
+            finishCoast(maxO, towardHistory: velocity < 0)
             return false
         }
+        let uncapped = seeking ? velocity * dt : coastDisplacement(dt: dt)
+        let maxDelta = visualCap()
+        let delta = min(max(uncapped, -maxDelta), maxDelta)
         runTime += dt
         position += delta
         if clampToRange(maxO) {
             velocity = 0
+            pageCoast = false
             seekFollowsTop = false
             if pinnedToBottom {
                 clearAccel()
@@ -287,16 +303,42 @@ public final class ScrollPhysics {
         } else if !seeking {
             velocity *= exp(-coastFriction * dt)
             if abs(velocity) < settleVel {
-                velocity = 0
+                finishCoast(maxO, towardHistory: velocity < 0)
             }
         }
 
-        let moving = abs(velocity) > settleVel
-            || seekFollowsBottom
-            || seekFollowsTop
-        if moving { return true }
+        if stillMoving() { return true }
         clearAccel()
         return false
+    }
+
+    /// Exact ∫ v e^{-μt} dt over this frame (exponential coast, not Euler).
+    private func coastDisplacement(dt: Double) -> Double {
+        let mu = coastFriction
+        if mu <= 1e-12 { return velocity * dt }
+        let decay = exp(-mu * dt)
+        return velocity * (1 - decay) / mu
+    }
+
+    private func finishCoast(_ maxO: Double, towardHistory: Bool) {
+        if pageCoast {
+            position = position.rounded()
+            pageCoast = false
+        }
+        velocity = 0
+        clearAccel()
+        if position <= 0 {
+            position = 0
+        } else if position >= maxO - settlePos, !towardHistory {
+            pinBottom(maxOffset: maxO)
+        }
+    }
+
+    private func stillMoving() -> Bool {
+        abs(velocity) > settleVel
+            || seekFollowsBottom
+            || seekFollowsTop
+            || seekTarget != nil
     }
 
     /// Returns true if an edge was hit.
@@ -306,10 +348,12 @@ public final class ScrollPhysics {
             position = 0
             return true
         }
-        if position >= maxO - settlePos {
+        // A short first frame from the prompt must not re-pin a history fling.
+        if position >= maxO - settlePos, velocity >= 0 {
             pinBottom(maxOffset: maxO)
             return true
         }
+        if position > maxO { position = maxO }
         return false
     }
 
