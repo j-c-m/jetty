@@ -13,9 +13,7 @@ public final class ScrollPhysics {
     private(set) var pinnedToBottom: Bool = true
 
     var friction: Double = 2
-    /// Wheel tick → velocity scale. Trackpad uses `applyPreciseDelta` instead.
-    var impulseScale: Double = 4
-    /// Decay for the active coast. Trackpad uses `friction`; page uses 3×.
+    /// Decay for the active coast. Trackpad uses `friction`; wheel and page use 3×.
     private var coastFriction: Double = 2
     /// Page-key coast. Settle snaps to a whole row so floor() is not 1 off.
     private var pageCoast = false
@@ -71,9 +69,10 @@ public final class ScrollPhysics {
         seekFollowsTop = false
         pinnedToBottom = false
         pageCoast = false
-        coastFriction = max(friction, 0.05)
-        // +impulse → older history → lower position → negative velocity.
-        velocity -= deltaRows * impulseScale
+        coastFriction = max(friction, 0.05) * 3
+        velocity -= deltaRows * coastFriction
+        runTime = max(runTime, 1.5)
+        lastTickAt = now()
     }
 
     /// Trackpad/Magic Mouse finger motion. Position follows the delta 1:1.
@@ -301,7 +300,7 @@ public final class ScrollPhysics {
                 return false
             }
         } else if !seeking {
-            velocity *= exp(-coastFriction * dt)
+            decayCoast(actualDelta: delta, dt: dt)
             if abs(velocity) < settleVel {
                 finishCoast(maxO, towardHistory: velocity < 0)
             }
@@ -318,6 +317,23 @@ public final class ScrollPhysics {
         if mu <= 1e-12 { return velocity * dt }
         let decay = exp(-mu * dt)
         return velocity * (1 - decay) / mu
+    }
+
+    /// Age the exponential by the time that produced `actualDelta`.
+    /// A visual cap may shorten this frame's move; it must not shorten the coast.
+    private func decayCoast(actualDelta: Double, dt: Double) {
+        let mu = coastFriction
+        let v = velocity
+        if mu <= 1e-12 || abs(v) < 1e-15 {
+            velocity = 0
+            return
+        }
+        let remain = 1 - mu * actualDelta / v
+        if remain > 0, remain <= 1 {
+            velocity = v * remain
+        } else {
+            velocity = v * exp(-mu * dt)
+        }
     }
 
     private func finishCoast(_ maxO: Double, towardHistory: Bool) {

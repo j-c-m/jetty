@@ -103,9 +103,28 @@ final class ScrollPhysicsTests: XCTestCase {
         }
     }
 
+    func testWheelImpulseCoastsAboutTheDelta() {
+        let p = ScrollPhysics()
+        var t = 0.0
+        p.now = { t }
+        p.pinBottom(maxOffset: 500)
+        t = 0.1
+        XCTAssertFalse(p.step(dt: 1.0 / 60.0, maxOffset: 500, viewportRows: 35))
+        t = 1.0
+        p.applyImpulse(deltaRows: 8)
+        t = 1.05
+        XCTAssertTrue(p.step(dt: 0.05, maxOffset: 500, viewportRows: 35))
+        var n = 0
+        while n < 400, p.step(dt: 1.0 / 60.0, maxOffset: 500, viewportRows: 35) {
+            n += 1
+            t += 1.0 / 60.0
+        }
+        XCTAssertEqual(p.position, 492, accuracy: 0.25)
+        XCTAssertFalse(p.pinnedToBottom)
+    }
+
     func testPreciseDeltaMovesOneToOne() {
         let p = ScrollPhysics()
-        p.impulseScale = 4
         p.pinBottom(maxOffset: 100)
         p.applyPreciseDelta(deltaRows: 5, timestamp: 1.0, began: true, ended: false)
         XCTAssertEqual(p.position, 95, accuracy: 1e-9)
