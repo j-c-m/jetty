@@ -667,6 +667,69 @@ final class KittyGraphicsTests: XCTestCase {
         XCTAssertEqual(s.imgLiveN, 1)
     }
 
+    func testRawRGBAPremultipliesOnStore() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        p.feed(apc("a=T,f=32,s=1,v=1,i=1,t=d,C=1,q=2;\(b64([10, 20, 30, 128]))"))
+        XCTAssertEqual(s.imgLiveN, 1)
+        let pix = firstPixel(s)
+        XCTAssertEqual(pix?.0, Self.premulChan(10, 128))
+        XCTAssertEqual(pix?.1, Self.premulChan(20, 128))
+        XCTAssertEqual(pix?.2, Self.premulChan(30, 128))
+        XCTAssertEqual(pix?.3, 128)
+    }
+
+    func testOpaqueRGBUnchanged() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        p.feed(apc("a=T,f=24,s=1,v=1,i=1,t=d,C=1,q=2;\(b64([255, 0, 0]))"))
+        XCTAssertEqual(firstPixel(s)?.0, 255)
+        XCTAssertEqual(firstPixel(s)?.1, 0)
+        XCTAssertEqual(firstPixel(s)?.2, 0)
+        XCTAssertEqual(firstPixel(s)?.3, 255)
+    }
+
+    func testAnimFrameBgPremul() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        p.feed(apc("a=T,f=32,s=1,v=1,i=1,t=d,C=1,q=2;\(b64([255, 0, 0, 255]))"))
+        p.feed(apc("a=f,f=32,s=1,v=1,i=1,Y=16711816,t=d,q=2;\(b64([0, 0, 0, 0]))"))
+        p.feed(apc("a=a,i=1,c=2"))
+        XCTAssertEqual(firstPixel(s)?.0, 0)
+        XCTAssertEqual(firstPixel(s)?.1, Self.premulChan(255, 136))
+        XCTAssertEqual(firstPixel(s)?.2, 0)
+        XCTAssertEqual(firstPixel(s)?.3, 136)
+    }
+
+    func testAnimComposePremulBlend() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let dst: [UInt8] = [200, 150, 100, 255]
+        let src: [UInt8] = [10, 20, 30, 128]
+        p.feed(apc("a=T,f=32,s=1,v=1,i=1,t=d,C=1,q=2;\(b64(dst))"))
+        p.feed(apc("a=f,f=32,s=1,v=1,i=1,t=d,q=2;\(b64(src))"))
+        p.feed(apc("a=c,i=1,r=2,c=1,q=2"))
+        let sp = (
+            Self.premulChan(src[0], src[3]),
+            Self.premulChan(src[1], src[3]),
+            Self.premulChan(src[2], src[3]),
+            src[3]
+        )
+        let want = Self.premulOver(src: sp, dst: (dst[0], dst[1], dst[2], dst[3]))
+        XCTAssertEqual(firstPixel(s)?.0, want.0)
+        XCTAssertEqual(firstPixel(s)?.1, want.1)
+        XCTAssertEqual(firstPixel(s)?.2, want.2)
+        XCTAssertEqual(firstPixel(s)?.3, want.3)
+    }
+
     func testDeletePHitsCoveredNonOriginCell() {
         let s = Screen(cols: 20, rows: 8, scrollbackCapRows: 0)
         s.setCellPx(width: 8, height: 16)
@@ -1038,6 +1101,25 @@ final class KittyGraphicsTests: XCTestCase {
         let out = String(bytes: p.writes, encoding: .utf8) ?? ""
         XCTAssertTrue(out.contains("OK"), out)
         XCTAssertEqual(jt_img_anim_frame_count(s.implPtr, 1), 2)
+    }
+
+    private static func premulChan(_ c: UInt8, _ a: UInt8) -> UInt8 {
+        UInt8((UInt32(c) * UInt32(a) + 127) / 255)
+    }
+
+    private static func premulOver(
+        src: (UInt8, UInt8, UInt8, UInt8),
+        dst: (UInt8, UInt8, UInt8, UInt8)
+    ) -> (UInt8, UInt8, UInt8, UInt8) {
+        let sa = src.3
+        if sa == 0 { return dst }
+        if sa == 255 || dst.3 == 0 { return src }
+        let inv = UInt32(255 - sa)
+        func ch(_ s: UInt8, _ d: UInt8) -> UInt8 {
+            let v = UInt32(s) + (UInt32(d) * inv + 127) / 255
+            return UInt8(min(v, 255))
+        }
+        return (ch(src.0, dst.0), ch(src.1, dst.1), ch(src.2, dst.2), ch(src.3, dst.3))
     }
 
     private func firstPixel(_ s: Screen) -> (UInt8, UInt8, UInt8, UInt8)? {

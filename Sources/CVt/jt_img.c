@@ -101,12 +101,10 @@ static void compose_row(
             continue;
         }
         uint8_t inv = (uint8_t)(255 - sa);
-        for (int c = 0; c < 3; c++) {
-            uint32_t v = ((uint32_t)s[c] * sa + (uint32_t)d[c] * inv + 127u) / 255u;
+        for (int c = 0; c < 4; c++) {
+            uint32_t v = (uint32_t)s[c] + ((uint32_t)d[c] * inv + 127u) / 255u;
             d[c] = (uint8_t)(v > 255u ? 255u : v);
         }
-        uint32_t oa = (uint32_t)sa + ((uint32_t)d[3] * inv + 127u) / 255u;
-        d[3] = (uint8_t)(oa > 255u ? 255u : oa);
     }
 }
 
@@ -155,15 +153,18 @@ static void fill_bg(uint8_t *data, size_t n, uint32_t y) {
         memset(data, 0, n);
         return;
     }
-    uint8_t r = (uint8_t)(y >> 24);
-    uint8_t g = (uint8_t)(y >> 16);
-    uint8_t b = (uint8_t)(y >> 8);
-    uint8_t a = (uint8_t)y;
+    uint8_t px[4] = {
+        (uint8_t)(y >> 24),
+        (uint8_t)(y >> 16),
+        (uint8_t)(y >> 8),
+        (uint8_t)y
+    };
+    jt_img_premultiply_rgba(px, 1);
     for (size_t i = 0; i + 4 <= n; i += 4) {
-        data[i + 0] = r;
-        data[i + 1] = g;
-        data[i + 2] = b;
-        data[i + 3] = a;
+        data[i + 0] = px[0];
+        data[i + 1] = px[1];
+        data[i + 2] = px[2];
+        data[i + 3] = px[3];
     }
 }
 
@@ -273,6 +274,22 @@ uint32_t jt_img_alloc_id(jt_img_store *st) {
         id = id == 0 ? 2147483647u : id - 1;
     }
     return 0;
+}
+
+void jt_img_premultiply_rgba(uint8_t *rgba, size_t npx) {
+    if (!rgba || npx == 0) return;
+    for (size_t i = 0; i < npx; i++) {
+        uint8_t *p = rgba + i * 4;
+        uint8_t a = p[3];
+        if (a == 255) continue;
+        if (a == 0) {
+            p[0] = p[1] = p[2] = 0;
+            continue;
+        }
+        p[0] = (uint8_t)(((uint32_t)p[0] * a + 127u) / 255u);
+        p[1] = (uint8_t)(((uint32_t)p[1] * a + 127u) / 255u);
+        p[2] = (uint8_t)(((uint32_t)p[2] * a + 127u) / 255u);
+    }
 }
 
 uint8_t *jt_img_rgb_to_rgba(const uint8_t *rgb, uint32_t w, uint32_t h) {

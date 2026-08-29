@@ -612,6 +612,7 @@ static int pixels_from_raw(jt_img_loading *ld, uint8_t **rgba, uint32_t *w, uint
         uint8_t *out = (uint8_t *)malloc(need);
         if (!out) return -1;
         memcpy(out, ld->data, need);
+        jt_img_premultiply_rgba(out, (size_t)W * (size_t)H);
         *rgba = out;
     }
     *w = W;
