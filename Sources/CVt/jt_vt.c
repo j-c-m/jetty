@@ -817,6 +817,11 @@ static int try_neon_utf8_3(const uint8_t *p, uint32_t cps[5]) {
 static int decode_utf8(const uint8_t *p, size_t n, uint32_t *cp, size_t *adv);
 static size_t take_combining(const uint8_t *p, size_t n, uint32_t *marks, int max, int *nmarks);
 
+/* Ghostty/xterm: C1 decoded from UTF-8 is ignored, not printed or executed. */
+static int utf8_c1(uint32_t cp) {
+    return cp >= 0x80 && cp <= 0x9F;
+}
+
 static void emit_utf8_run(jt_vt *p, jt_scr *scr, const uint8_t *src, size_t n) {
     if (!scr) return;
     size_t j = 0;
@@ -905,7 +910,7 @@ static void emit_utf8_run(jt_vt *p, jt_scr *scr, const uint8_t *src, size_t n) {
                            && (src[k] & 0xE0) == 0xC0 && src[k] >= 0xC2
                            && (src[k + 1] & 0xC0) == 0x80) {
                         uint32_t cp = ((uint32_t)(src[k] & 0x1F) << 6) | (src[k + 1] & 0x3F);
-                        if (jt_codepoint_width(cp) != 1) break;
+                        if (utf8_c1(cp) || jt_codepoint_width(cp) != 1) break;
                         buf[nb++] = cp;
                         k += 2;
                     }
@@ -927,7 +932,8 @@ static void emit_utf8_run(jt_vt *p, jt_scr *scr, const uint8_t *src, size_t n) {
                             continue;
                         }
                     }
-                    jt_scr_print_scalar(scr, ((uint32_t)(b0 & 0x1F) << 6) | (b1 & 0x3F));
+                    uint32_t cp = ((uint32_t)(b0 & 0x1F) << 6) | (b1 & 0x3F);
+                    if (!utf8_c1(cp)) jt_scr_print_scalar(scr, cp);
                     j += 2;
                     continue;
                 }
@@ -989,7 +995,7 @@ static void emit_utf8_run(jt_vt *p, jt_scr *scr, const uint8_t *src, size_t n) {
         }
         uint32_t cp = 0;
         int r = jt_utf8_next(&p->utf8_st, &p->utf8_acc, src[j], &cp);
-        if (r == 1 || r == 2) jt_scr_print_scalar(scr, cp);
+        if ((r == 1 || r == 2) && !utf8_c1(cp)) jt_scr_print_scalar(scr, cp);
         if (r != 2) j++;
     }
 }
@@ -1304,6 +1310,10 @@ static void dispatch(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
         enter_escape(p);
         return;
     }
+    if (b == 0x9C && (apc_active(p) || p->state == JT_ST_SOS_PM_APC)) {
+        apc_close(p, scr, h, p->state == JT_ST_APC_G);
+        return;
+    }
     int in_string = p->state == JT_ST_OSC_STRING || p->state == JT_ST_OSC_IGNORE
         || p->state == JT_ST_SOS_PM_APC || p->state == JT_ST_DCS_IGNORE
         || p->state == JT_ST_APC_G || p->state == JT_ST_APC_IGNORE;
@@ -1357,7 +1367,7 @@ static void dispatch(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
         }
         break;
     case JT_ST_APC_G:
-        if (b < 0x20) break;
+        if (b < 0x20 || b >= 0x80) break;
         if (p->apc_ignore || p->apc_n >= JT_IMG_MAX_APC) {
             p->apc_ignore = 1;
             p->state = JT_ST_APC_IGNORE;
@@ -1540,7 +1550,7 @@ void jt_vt_feed(jt_vt *p, const uint8_t *bytes, size_t n,
         }
         if (p->state == JT_ST_APC_G) {
             size_t j = i;
-            while (j < n && bytes[j] >= 0x20) j++;
+            while (j < n && bytes[j] >= 0x20 && bytes[j] < 0x80) j++;
             if (j > i) jt_apc_feed(p, bytes + i, j - i);
             if (p->apc_ignore) p->state = JT_ST_APC_IGNORE;
             i = j;
@@ -1549,6 +1559,11 @@ void jt_vt_feed(jt_vt *p, const uint8_t *bytes, size_t n,
             if (b == 0x1B) {
                 int r = apc_take_esc(p, scr, host, bytes, &i, n);
                 if (r < 0) return;
+                continue;
+            }
+            if (b == 0x9C) {
+                apc_close(p, scr, host, p->state == JT_ST_APC_G);
+                i++;
                 continue;
             }
             if (b == 0x18 || b == 0x1A) {
@@ -1560,7 +1575,8 @@ void jt_vt_feed(jt_vt *p, const uint8_t *bytes, size_t n,
         }
         if (p->state == JT_ST_APC_IGNORE) {
             size_t j = i;
-            while (j < n && bytes[j] != 0x1B && bytes[j] != 0x18 && bytes[j] != 0x1A)
+            while (j < n && bytes[j] != 0x1B && bytes[j] != 0x18 && bytes[j] != 0x1A
+                   && bytes[j] != 0x9C)
                 j++;
             i = j;
             if (i >= n) return;

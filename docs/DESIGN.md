@@ -106,7 +106,7 @@ Do **not** bundle a private terminfo in v1. No cap required for daily use is mis
 | 8-byte Ghostty style-table cell | User: 16-byte inline |
 | Ligatures (`liga` / `calt`) | Off in v1; shaper must still be able to grow |
 | Private terminfo overlay | Stock file is sufficient |
-| 8-bit C1 CSI (`0x9B`) as a control in UTF-8 | Bytes `≥ 0x80` go through the UTF-8 DFA |
+| 8-bit C1 CSI (`0x9B`) as a control in UTF-8 | Bytes `≥ 0x80` go through the UTF-8 DFA; decoded C1 (U+0080–U+009F) is ignored |
 | Linux `CSI [[` F-key swallow | That is linux console, not xterm |
 
 ---
@@ -204,7 +204,7 @@ Recorded 2026-08-21. Do not reopen.
 | GPU dirty-skip | Follow-on. v1 stores `dirty[]` and expands the visible viewport every frame |
 | Width LUT | 2 bits × `0x110000` = **272 KiB** (`278_528` B), not 140 KiB |
 | Zoom step | 1 pt, clamp 8…72; Cmd+0 restores config `font-size` |
-| 8-bit C1 | Not executed; `≥ 0x80` is UTF-8 |
+| 8-bit C1 | Not executed; `≥ 0x80` is UTF-8; decoded C1 is ignored. APC 8-bit ST (`0x9C`) ends the string; OSC/DCS treat `0x9C` as payload |
 | Linux `CSI [[` swallow | Not implemented |
 | Grapheme / rare pools | Refcounted id pools; cell copy shares the id |
 | Width table | Generated 2-bit packed LUT, committed C, `scripts/gen-width-table.py` |

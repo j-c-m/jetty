@@ -817,6 +817,37 @@ final class KittyGraphicsTests: XCTestCase {
         XCTAssertFalse(s.plainString().contains("A"))
     }
 
+    func testApcRawStTerminates() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 9, count: 12)
+        p.feed(Array("\u{1B}_Ga=T,f=24,s=2,v=2,i=1,t=d,C=1;\(b64(rgb))".utf8) + [0x9C])
+        XCTAssertEqual(s.imgLiveN, 1)
+        XCTAssertEqual(s.plainString(), "")
+    }
+
+    func testApcUtf8C1ByteThenRawSt() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 9, count: 12)
+        p.feed(Array("\u{1B}_Ga=T,f=24,s=2,v=2,i=1,t=d,C=1;\(b64(rgb))".utf8) + [0xC2, 0x9C])
+        XCTAssertEqual(s.imgLiveN, 1)
+        XCTAssertEqual(s.plainString(), "")
+    }
+
+    func testNonGApcRawStEnds() {
+        let s = Screen(cols: 20, rows: 5, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed(Array("\u{1B}_hello".utf8) + [0x9C] + Array("X".utf8))
+        XCTAssertEqual(s.plainString(), "X")
+        XCTAssertEqual(p.writes, [])
+    }
+
     func testApcBelDoesNotTerminate() {
         let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
         s.setCellPx(width: 8, height: 16)

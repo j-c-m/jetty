@@ -334,6 +334,42 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(p.titles.last, "bad")
     }
 
+    func testUtf8C1IsIgnoredNotCsi() {
+        let s = Screen(cols: 20, rows: 5, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("hello")
+        p.feed("\u{9B}2J")
+        XCTAssertEqual(s.plainString(), "hello2J")
+        XCTAssertEqual(s.cursorX, 7)
+        p.feed("\u{9C}")
+        XCTAssertEqual(s.plainString(), "hello2J")
+        XCTAssertEqual(s.cursorX, 7)
+        p.feed("\u{A0}")
+        XCTAssertEqual(s.cursorX, 8)
+    }
+
+    func testRawC1IsNotCsi() {
+        let s = Screen(cols: 20, rows: 5, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("hello")
+        p.feed([0x9B] + Array("2J".utf8))
+        XCTAssertTrue(s.plainString().contains("hello"))
+        XCTAssertTrue(s.plainString().contains("2J"))
+    }
+
+    func testOscRawStIsPayload() {
+        let s = Screen(cols: 20, rows: 5, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed(Array("\u{1B}]0;hello".utf8) + [0x9C] + Array("world\u{07}X".utf8))
+        let title = p.titles.last ?? ""
+        XCTAssertTrue(title.contains("hello"), title)
+        XCTAssertTrue(title.contains("world"), title)
+        XCTAssertEqual(s.plainString(), "X")
+    }
+
     func testOSC4AndDefaults() {
         let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
         let p = Parser()
