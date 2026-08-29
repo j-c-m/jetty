@@ -254,6 +254,7 @@ public final class TerminalRenderer {
         imageBelowBgCount: Int = 0,
         imageBelowTextCount: Int = 0,
         imageOverCount: Int = 0,
+        cursorGlyphCount: Int = 0,
         viewport: SIMD2<Float>,
         contentOffsetY: Float = 0
     ) -> Bool {
@@ -367,6 +368,21 @@ public final class TerminalRenderer {
             enc.setVertexBuffer(obuf, offset: overlayCursorAt * OverlayInstance.stride, index: 0)
             enc.setVertexBuffer(uniformBuffers[uniformSlot], offset: 0, index: 1)
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: curN)
+        }
+        if cursorGlyphCount > 0 {
+            enc.setRenderPipelineState(inkPipeline)
+            enc.setVertexBuffer(
+                instanceBuffers[instanceSlot],
+                offset: (instanceCount + glyphCount + inkCount) * CellInstance.stride,
+                index: 0
+            )
+            enc.setVertexBuffer(uniformBuffers[uniformSlot], offset: 0, index: 1)
+            enc.setFragmentTexture(atlas.texture, index: 0)
+            enc.setFragmentTexture(atlas.colorTexture, index: 1)
+            enc.setFragmentSamplerState(sampler, index: 0)
+            enc.drawPrimitives(
+                type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: cursorGlyphCount
+            )
         }
         enc.endEncoding()
         cmd.present(drawable)

@@ -210,34 +210,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         SecureInput.setAppActive(true)
+        pollSecureInput()
     }
 
     func applicationDidResignActive(_ notification: Notification) {
         SecureInput.setAppActive(false)
+        redrawIfSecureChanged()
     }
 
     private var securePoll: Timer?
+    private var lastSecureOn = false
+
+    private func redrawIfSecureChanged() {
+        let on = SecureInput.isOn
+        guard on != lastSecureOn else { return }
+        lastSecureOn = on
+        for term in terms { term.view.needsDisplay = true }
+    }
 
     @objc func pollSecureInput() {
         SecureInput.setAutoEnabled(config?.macosAutoSecureInput ?? true)
-        guard config?.macosAutoSecureInput == true else {
+        if config?.macosAutoSecureInput == true,
+           NSApp.isActive,
+           let term = terms.first(where: { $0.window.isKeyWindow })
+        {
+            term.session.lock.lock()
+            let fd = term.session.masterFD
+            term.session.lock.unlock()
+            SecureInput.setPasswordPrompt(SecureInput.passwordPrompt(fd: fd))
+        } else {
             SecureInput.setPasswordPrompt(false)
-            return
         }
-        guard NSApp.isActive,
-              let term = terms.first(where: { $0.window.isKeyWindow })
-        else {
-            SecureInput.setPasswordPrompt(false)
-            return
-        }
-        term.session.lock.lock()
-        let fd = term.session.masterFD
-        term.session.lock.unlock()
-        SecureInput.setPasswordPrompt(SecureInput.passwordPrompt(fd: fd))
+        redrawIfSecureChanged()
     }
 
     @objc func toggleSecureInput(_ sender: Any?) {
         SecureInput.toggle()
+        lastSecureOn = SecureInput.isOn
+        for term in terms { term.view.needsDisplay = true }
     }
 
     @objc func validateMenuItem(_ item: NSMenuItem) -> Bool {
@@ -263,6 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let next = AppConfig.load()
         config = next
         SecureInput.setAutoEnabled(next.macosAutoSecureInput)
+        redrawIfSecureChanged()
         for term in terms {
             term.view.applyLiveConfig(next)
         }

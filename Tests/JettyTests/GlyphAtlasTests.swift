@@ -79,4 +79,25 @@ final class GlyphAtlasTests: XCTestCase {
         XCTAssertTrue(SpriteFace.draw(0x2502, width: 12, height: 24, baseline: 4, into: &cov))
         XCTAssertTrue(cov.contains { $0 > 0 })
     }
+
+    func testLockFillHasGrayCoverage() {
+        let cov = GlyphAtlas.systemSymbolCoverage("lock.fill", width: 12, height: 24)
+        XCTAssertNotNil(cov)
+        XCTAssertEqual(cov?.count, 12 * 24)
+        XCTAssertTrue(cov?.contains { $0 > 32 } == true)
+        XCTAssertNil(GlyphAtlas.systemSymbolCoverage("", width: 12, height: 24))
+        guard let device = MTLCreateSystemDefaultDevice(),
+              let atlas = GlyphAtlas(
+                device: device, metrics: CellMetrics.measure(fontSize: 20, backingScale: 2)
+              )
+        else { return }
+        let g = atlas.systemSymbol("lock.fill")
+        XCTAssertFalse(g.color)
+        XCTAssertGreaterThan(g.uv.u1, g.uv.u0)
+        XCTAssertGreaterThan(g.uv.v1, g.uv.v0)
+        let again = atlas.systemSymbol("lock.fill")
+        XCTAssertEqual(again.uv.u0, g.uv.u0)
+        XCTAssertEqual(again.uv.v0, g.uv.v0)
+        XCTAssertEqual(atlas.systemSymbol("").uv.u1, 0)
+    }
 }

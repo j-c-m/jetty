@@ -386,13 +386,18 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         }
         let curY = cy + liveOrigin
         let focused = window?.isKeyWindow == true
-        let blinks = curStyle == 0 || curStyle == 1 || curStyle == 3 || curStyle == 5
+        let preedit = preeditRuns()
+        let wantLock = SecureInput.isOn && vis && focused && preedit.isEmpty
+            && curY >= 0 && curY < paintRows && cx >= 0 && cx < cols
+        let lockGlyph = wantLock ? renderer.atlas.systemSymbol("lock.fill") : .empty
+        let showLock = wantLock && lockGlyph.uv.u1 > lockGlyph.uv.u0
+        let blinks = !showLock && (curStyle == 0 || curStyle == 1 || curStyle == 3 || curStyle == 5)
         let phaseOn = Int(dtNow * 2) % 2 == 0
         let blinkOn = !blinks || phaseOn
         let blockStyle = curStyle <= 2
         let cursorOn = vis && focused && blockStyle && blinkOn && curY >= 0 && curY < paintRows
+            && !showLock
         if vis, blinks, focused { armCursorBlink() }
-        let preedit = preeditRuns()
         let n = cellCount
         let palSig = palPacked.withUnsafeBufferPointer { buf -> UInt64 in
             guard let p = buf.baseAddress else { return 0 }
@@ -477,7 +482,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let wantInk = config.ligatures != .off && (!ligaSpans.isEmpty || lastInk)
         let underText = skipKey.imagesUnderText
         if underText { skipExpand = nil }
-        let instCount = n + (underText ? n : 0) + (wantInk ? n : 0)
+        let instCount = n + (underText ? n : 0) + (wantInk ? n : 0) + (showLock ? 1 : 0)
+        var drewLock = false
         if n > 0, let inst = renderer.prepareInstances(count: instCount) {
             rgb.withUnsafeMutableBufferPointer { pal in
                 palPacked.withUnsafeBufferPointer { packed in
@@ -711,6 +717,23 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                         if renderer.atlas.packGeneration == gen { break }
                         useSkip = nil
                     }
+                    if showLock {
+                        let curF = SIMD3(
+                            Float(curRGB.r) / 255, Float(curRGB.g) / 255, Float(curRGB.b) / 255
+                        )
+                        inst[n + (underText ? n : 0) + (wantInk ? n : 0)] = CellInstance(
+                            originX: insetLeftPx + Float(cx) * cw,
+                            originY: insetTopPx + Float(curY) * ch,
+                            width: cw,
+                            height: ch,
+                            uv: lockGlyph.uv,
+                            fgRGB: curF,
+                            bgRGB: .zero,
+                            colorAtlas: lockGlyph.color,
+                            bgAlpha: 0
+                        )
+                        drewLock = true
+                    }
                 }
                 }
             }
@@ -719,7 +742,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         var overlayCursorAt = -1
         let ulNeed = underlineOverlayCount(cols: cols, paintRows: paintRows)
         let preNeed = preeditUnderlineCount(preedit, cols: cols, cursorX: cx)
-        let curNeed = (vis && preedit.isEmpty && curY >= 0 && curY < paintRows && (blinkOn || !focused)) ? 4 : 0
+        let curNeed = (!showLock && vis && preedit.isEmpty && curY >= 0 && curY < paintRows
+            && (blinkOn || !focused)) ? 4 : 0
         let linkNeed = autoURLOverlayCount(liveOrigin: liveOrigin, paintRows: paintRows)
         let dfg = SIMD3(Float(defFG.r) / 255, Float(defFG.g) / 255, Float(defFG.b) / 255)
         let dbg = SIMD3(Float(defBG.r) / 255, Float(defBG.g) / 255, Float(defBG.b) / 255)
@@ -888,6 +912,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             imageBelowBgCount: imageBelowBgCount,
             imageBelowTextCount: imageBelowTextCount,
             imageOverCount: imageOverCount,
+            cursorGlyphCount: drewLock ? 1 : 0,
             viewport: SIMD2(Float(dw), Float(dh)),
             contentOffsetY: Float(visRows) * ch
         )

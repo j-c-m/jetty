@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import CoreText
 import Foundation
@@ -180,6 +181,7 @@ public final class GlyphAtlas {
     public private(set) var texture: MTLTexture
     public private(set) var colorTexture: MTLTexture
     private var spanCache: [UInt64: Glyph] = [:]
+    private var symbolCache: [String: Glyph] = [:]
     public let cellW: Int
     public let cellH: Int
     public let metrics: CellMetrics
@@ -265,6 +267,15 @@ public final class GlyphAtlas {
         return g
     }
 
+    /// Template SF Symbol packed as gray coverage so the cell shader tints it.
+    public func systemSymbol(_ name: String) -> Glyph {
+        if name.isEmpty { return .empty }
+        if let hit = symbolCache[name] { return hit }
+        let g = rasterizeSystemSymbol(name)
+        symbolCache[name] = g
+        return g
+    }
+
     private func rasterizeSpan(text: String, font: CTFont, cells: Int) -> Glyph {
         rasterizeGray(text: text, font: font, wide: false, widthCells: cells)
     }
@@ -304,6 +315,79 @@ public final class GlyphAtlas {
         return rasterizeGray(text: text, font: used, wide: wide, widthCells: wide ? 2 : 1)
     }
 
+    static func systemSymbolCoverage(_ name: String, width: Int, height: Int) -> [UInt8]? {
+        let w = max(1, width)
+        let h = max(1, height)
+        guard let img = NSImage(systemSymbolName: name, accessibilityDescription: nil) else {
+            return nil
+        }
+        let pt = CGFloat(min(w, h)) * 0.78
+        let conf = NSImage.SymbolConfiguration(pointSize: pt, weight: .medium, scale: .medium)
+            .applying(NSImage.SymbolConfiguration(hierarchicalColor: .white))
+        guard let sym = img.withSymbolConfiguration(conf) else { return nil }
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: w,
+            pixelsHigh: h,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: w * 4,
+            bitsPerPixel: 32
+        ) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSColor.clear.setFill()
+        NSRect(x: 0, y: 0, width: w, height: h).fill()
+        let s = sym.size
+        let pad: CGFloat = 0.12
+        let availW = CGFloat(w) * (1 - 2 * pad)
+        let availH = CGFloat(h) * (1 - 2 * pad)
+        let scale = min(availW / max(s.width, 1), availH / max(s.height, 1))
+        let dw = s.width * scale
+        let dh = s.height * scale
+        let r = NSRect(
+            x: (CGFloat(w) - dw) / 2,
+            y: (CGFloat(h) - dh) / 2,
+            width: dw,
+            height: dh
+        )
+        sym.draw(
+            in: r,
+            from: .zero,
+            operation: .sourceOver,
+            fraction: 1,
+            respectFlipped: true,
+            hints: [.interpolation: NSNumber(value: NSImageInterpolation.high.rawValue)]
+        )
+        NSGraphicsContext.restoreGraphicsState()
+        guard let data = rep.bitmapData else { return nil }
+        let bpr = max(rep.bytesPerRow, w * 4)
+        let spp = max(4, rep.samplesPerPixel)
+        var coverage = [UInt8](repeating: 0, count: w * h)
+        var ink = false
+        for row in 0..<h {
+            let src = row * bpr
+            let dst = row * w
+            for col in 0..<w {
+                let o = src + col * spp
+                let a = max(data[o], data[o + 1], data[o + 2], data[o + 3])
+                coverage[dst + col] = a
+                if a > 0 { ink = true }
+            }
+        }
+        return ink ? coverage : nil
+    }
+
+    private func rasterizeSystemSymbol(_ name: String) -> Glyph {
+        guard let coverage = Self.systemSymbolCoverage(name, width: cellW, height: cellH) else {
+            return .empty
+        }
+        return packGray(coverage, width: cellW, height: cellH)
+    }
+
     private func rasterizeSprite(_ cp: UInt32, wide: Bool) -> Glyph {
         let w = max(1, wide ? cellW * 2 : cellW)
         let h = cellH
@@ -316,15 +400,7 @@ public final class GlyphAtlas {
             into: &coverage
         ) else { return .empty }
         if !coverage.contains(where: { $0 > 0 }) { return .empty }
-        if let rect = shelf.allocate(width: w, height: h) {
-            return Glyph(uv: writeGray(coverage, width: w, height: h, rect: rect), color: false)
-        }
-        if growGray(), let rect = shelf.allocate(width: w, height: h) {
-            return Glyph(uv: writeGray(coverage, width: w, height: h, rect: rect), color: false)
-        }
-        clearGray()
-        guard let rect = shelf.allocate(width: w, height: h) else { return .empty }
-        return Glyph(uv: writeGray(coverage, width: w, height: h, rect: rect), color: false)
+        return packGray(coverage, width: w, height: h)
     }
 
     private func rasterizeGray(text: String, font: CTFont, wide: Bool, widthCells: Int = 1) -> Glyph {
@@ -363,6 +439,10 @@ public final class GlyphAtlas {
                 coverage[dst + col] = max(rgba[o + 3], rgba[o])
             }
         }
+        return packGray(coverage, width: w, height: h)
+    }
+
+    private func packGray(_ coverage: [UInt8], width w: Int, height h: Int) -> Glyph {
         if let rect = shelf.allocate(width: w, height: h) {
             return Glyph(uv: writeGray(coverage, width: w, height: h, rect: rect), color: false)
         }
@@ -503,6 +583,7 @@ public final class GlyphAtlas {
     private func clearGray() {
         cache = cache.filter { $0.value.color }
         spanCache.removeAll(keepingCapacity: true)
+        symbolCache.removeAll(keepingCapacity: true)
         shelf.clear()
         uploadGrayFull()
     }
