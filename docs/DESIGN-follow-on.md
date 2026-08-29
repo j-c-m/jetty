@@ -6,7 +6,7 @@
 | Author | TBD |
 | Date | 2026-08-22 |
 | Updated | 2026-08-29 |
-| Status | **Shipped** except later-plan **33** (secure input). PR 26 inject + OSC 133 `C`/`D` select/notify on this branch. PR 37 skipped. |
+| Status | **Shipped.** PRs 18–36 done (21 withdrawn, 37 skipped). |
 | Bundle ID | `dev.jetty.app` |
 | Baseline | v1 DESIGN `docs/DESIGN.md`; this plan started at HEAD `573cf05` |
 | Audience | Senior engineers who already know v1 (16-byte `Cell`, C VT, linux16term Metal) |
@@ -22,7 +22,7 @@ Ghostty (`https://github.com/ghostty-org/ghostty`) is the **parity baseline** fo
 | 18–25, 27–32, 34–36 | **done** (22 ligatures, 23 compact 32-byte instances, 20 dirty-row skip, 24 auto URL, 25 jump, 27 search, 28 rect select, 29 drag-drop, 30 notify/progress, 31 keybinds, 32 opacity, 34 DEC 2027, 35 UCD pin, 36 `.app`/notary) |
 | 21 ink-bearing letters | **withdrawn** (letters stay cell-boxed; italic/Nerd still clip) |
 | 26 shell inject + OSC 7 cwd | **done.** `extra_env` + bash/zsh/fish/nu snippets (OSC 7 + 133 only). Skip Darwin `/bin/bash`. Cmd+triple-click selects `C`…`D` output on the primary screen (no-op in alt, same as jump). `notify-on-command-finish` uses paired `C`/`D` (default `never`). |
-| 33 secure input | **later.** Config parses `macos-auto-secure-input`; `toggle_secure_input` is a no-op. No menu, no `EnableSecureEventInput`. |
+| 33 secure input | **done.** Menu **Secure Keyboard Entry**. Auto when Darwin master `tcgetattr` is ICANON && !ECHO and `macos-auto-secure-input`. No in-grid badge. |
 | 37 xcodeproj | **skipped** (notarization did not need it) |
 | Kitty graphics | **out of this document.** Shipped in `docs/DESIGN-kitty-graphics.md` (38–45). Kitty keyboard / `TERM=xterm-kitty` still out. |
 | Extra on `master` (not numbered here) | AppleScript; XTGETTCAP / DECRQSS; CSI 16 t and 22/23 t title stack; DSR 996/998; inband 2048; reverse-wrap 1045; XTVERSION; `progress-style`; Cmd+V clipboard PNG; 16K-aligned grid; Metal `maximumDrawableCount = 2`; Ghostty-like ScrollPhysics coast; DEC 2026 hold-parse like Alacritty |
@@ -33,7 +33,7 @@ Ghostty (`https://github.com/ghostty-org/ghostty`) is the **parity baseline** fo
 
 At v1 HEAD `573cf05`, Jetty was a truthful `TERM=xterm-256color` macOS terminal: 16-byte inline `Cell`, C parse/grid, AppKit + `MTKView` instanced cells, IME, mouse, OSC 0/2/4/7/8/10/11/12/52/133, DEC 2026, ExtraBold SGR 1, sprites before the font. It was correct enough to daily-drive neovim and tmux. It was not yet pleasant enough to switch to from Ghostty: ligatures were off and could not paint, italic/Nerd ink clipped to the cell, GPU expand rebuilt every visible row every frame, OSC 133 marks had no UI, URLs required OSC 8, Smulx curly/dotted/dashed stored bits but painted as a single bar, and several DESIGN.md config keys were never wired.
 
-This follow-on is **daily-driver parity** on macOS. It landed the named v1 leftovers (ligatures, dirty-row GPU skip, compact instances, jump-to-prompt, Unicode width bump, notarization, DEC 2027, fuller Smulx) plus the Ghostty-switcher features that matter for neovim/tmux/shell: auto URL, scrollback search, keybind file, rectangular selection, drag-drop paths, OSC 9/777 notifications, OSC 9;4 progress, `font-family` / `palette-N` / `adjust-cell-*`, background opacity, and shell-integration inject. Ink-bearing letter quads were **withdrawn**. macOS secure input waits for a later plan (33).
+This follow-on is **daily-driver parity** on macOS. It landed the named v1 leftovers (ligatures, dirty-row GPU skip, compact instances, jump-to-prompt, Unicode width bump, notarization, DEC 2027, fuller Smulx) plus the Ghostty-switcher features that matter for neovim/tmux/shell: auto URL, scrollback search, keybind file, rectangular selection, drag-drop paths, OSC 9/777 notifications, OSC 9;4 progress, `font-family` / `palette-N` / `adjust-cell-*`, background opacity, shell-integration inject, and macOS secure input. Ink-bearing letter quads were **withdrawn**.
 
 It does **not** become Ghostty. Tabs, splits, Kitty **keyboard**, Sixel, inspector, command palette, quick terminal, settings GUI, and other OS ports stay out. Kitty **graphics** were out of *this* grouping and shipped in `docs/DESIGN-kitty-graphics.md`.
 
@@ -71,7 +71,7 @@ From DESIGN.md PR plan and closed questions. **HEAD** column is after this follo
 | Dirty-row GPU skip | `jt_buf.dirty[rows]` is stored and set on mutate. `MetalTerminalView.draw` never reads it. Expand rebuilds every visible row. Dirty is **never cleared**. | **done (PR 20).** |
 | Ink-bearing quads | Cell-boxed R8. `CellInstance` origin/size can already represent a tight quad; atlas does not store bearings. Italic/Nerd clip. | **withdrawn (PR 21).** Italic/Nerd still clip. |
 | Compact instances | 20-float / 80-byte `CellInstance` (`Sources/Jetty/Render/CellInstance.swift`). | **done (PR 23).** 32-byte, `int16` origin, u16 pixel UVs. |
-| Jump-to-prompt | OSC 133 parse/store in `TerminalSession.osc133` keyed by `lines_scrolled + y`, cap 4096. No UI, no key. Alt-screen marks still append using primary `lines_scrolled`. | **done (PR 25).** Cmd+Shift+Up/Down. Inject still later (26). |
+| Jump-to-prompt | OSC 133 parse/store in `TerminalSession.osc133` keyed by `lines_scrolled + y`, cap 4096. No UI, no key. Alt-screen marks still append using primary `lines_scrolled`. | **done (PR 25).** Cmd+Shift+Up/Down. Inject shipped (26). |
 | Width-table Unicode bump | **done.** UCD 17.0.0 pinned in `scripts/unicode/` and `gen-width-table.py`. | done (PR 35) |
 | Cell blink (`ATTR_BLINK`) | SGR 5/6 store the bit. v1 DESIGN toggles glyph visibility every 500 ms. `GridExpand` never reads it. Cursor blink is implemented. | **done (PR 19).** Off phase `fg=bg`. |
 | xcodeproj / notarization | **done (PR 36).** `scripts/build-app.sh` assembles `dist/Jetty.app`, ad-hoc sign. `scripts/notarize.sh` for Developer ID. No xcodeproj. | done; PR 37 skipped |
@@ -144,12 +144,7 @@ Ghostty is a multi-OS product with tabs, splits, Kitty graphics, an ImGui inspec
 
 ### Later plan (not this document)
 
-Keep the spec. Do not implement in this follow-on.
-
-| Later PR | What | HEAD |
-| --- | --- | --- |
-| 26 | Shell integration inject + OSC 7 cwd inherit | **Done.** |
-| 33 | Secure keyboard entry | Still later. Config + keybind stub only. |
+None remaining. PR 26 inject and PR 33 secure input shipped.
 
 ---
 
@@ -787,15 +782,11 @@ Need `layer?.isOpaque = false` on the `MTKView`. Test: opacity 0.85, default bg 
 
 ### Password / secure input
 
-**Later plan. Not this follow-on.** Spec kept for the next document.
-
 Ghostty `Exec.zig`: slave `canonical && !echo` ⇒ password. `EnableSecureEventInput` / `DisableSecureEventInput`. Config `macos-auto-secure-input`.
 
-Follow-on: poll `tcgetattr` on the **master**’s peer via `TIOCGETA` on the slave fd we do not have — Ghostty uses the pty child tty. jetty spawn is `forkpty`; the master can `tcgetattr` on the slave if we keep the slave fd, or parse thread can `ioctl` the master (`TIOCGETA` on master returns slave flags on Darwin). Verify on Darwin before coding; if master does not reflect echo, skip auto and keep the menu toggle only.
+Darwin: `tcgetattr` on the PTY **master** returns the slave termios (`jt_pty_password_prompt`). Poll 250 ms from the app, not the parse path. Auto only while the app is active and the key window’s session is ICANON && !ECHO. Menu toggle off during a prompt suppresses auto until echo returns. Disable on resign / quit.
 
-Menu: **Secure Keyboard Entry** (macOS convention). No in-grid lock badge (product chrome). System secure-input indicator is enough.
-
-Do not enable over a heuristic that false-positives on `read -s` in a long-running TUI if we cannot get flags cheaply — menu-only is acceptable. Auto is best-effort.
+Menu: **Secure Keyboard Entry** (macOS convention). `toggle_secure_input` keybind. No in-grid lock badge. System secure-input indicator is enough.
 
 ### DEC 2027
 
@@ -978,7 +969,7 @@ Status: **now** = v1 HEAD `573cf05` when this document was written. **follow-on*
 | Tabs / splits | no | **out** | |
 | Settings GUI | no | **out** | |
 | Drag-drop paths | no | follow-on | **shipped** (PR 29) |
-| Secure input | no | **later** | still later (PR 33); config stub only |
+| Secure input | no | follow-on | **shipped** (PR 33) |
 | Shell integration inject | no | follow-on | **shipped** (PR 26) |
 | `jump_to_prompt` | no UI | follow-on | **shipped** (PR 25) |
 | Notifications | no | follow-on | **shipped** (PR 30) |
@@ -1228,7 +1219,7 @@ Interactive echo still < one 60 Hz frame. Parse budget 1 ms unchanged.
 
 ## Open Questions
 
-1. **Does Darwin `tcgetattr` on the PTY master reflect slave echo?** If no, drop auto secure-input and keep the menu. Resolve in the secure-input PR with a 10-line probe, not a design fight. **Still open** (PR 33 not started).
+1. **Does Darwin `tcgetattr` on the PTY master reflect slave echo?** **Yes.** `jt_pty_probe_master_echo` / `jt_pty_password_prompt`. Auto secure-input uses that.
 2. **Curly underline: atlas sine strip vs N quads.** Recommend strip (one quad/cell). Revisit if the strip looks wrong at non-integer scales. **Resolved in code:** 4 overlay quads (`OverlayPaint`), not a strip.
 3. **Should `copy last output` (OSC 133 C/D) ship with jump-to-prompt?** Recommend **no** in the jump PR; add later if the mark list is enough (it is). **Still out.**
 4. **xcodeproj now or never?** Recommend never until Sparkle/asset catalog is real. Notarization scripts first. **Skipped (PR 37).**
@@ -1376,10 +1367,10 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 ### PR 33 — Secure keyboard entry
 
 - **Title:** `feat: macOS secure input`
-- **Status:** **later plan.** Not this follow-on. Spec stays for the next document. Config still parses `macos-auto-secure-input`. No menu, no `EnableSecureEventInput`.
-- **Files:** session tty-flag poll, `main.swift` menu, `Config.swift` `macos-auto-secure-input`
+- **Status:** **done**
+- **Files:** `CPty/pty_spawn.c` `jt_pty_password_prompt`, `SecureInput.swift`, `main.swift` menu + 250 ms poll, `MetalTerminalView` `toggle_secure_input`
 - **Dependencies:** none
-- **Changes:** Menu toggle `EnableSecureEventInput`. **Probe in this PR** whether Darwin `tcgetattr` on the PTY master reflects slave echo (`forkpty` does not keep a slave fd). If no, menu only. No in-grid badge.
+- **Changes:** Menu **Secure Keyboard Entry**. Darwin master `tcgetattr` is ICANON && !ECHO. Auto when `macos-auto-secure-input`. Disable on resign/quit. No in-grid badge.
 
 ### PR 34 — DEC 2027
 
@@ -1415,4 +1406,4 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 
 ---
 
-**Tracks:** 18–32, 34–36 done/withdrawn. Chore 37 skip. **33 (secure input) is still later.** Inject (26) plus Cmd+triple-click output select and `notify-on-command-finish` landed with OSC 133 `C`/`D`.
+**Tracks:** 18–36 done/withdrawn. Chore 37 skip. Daily-driver follow-on is complete.

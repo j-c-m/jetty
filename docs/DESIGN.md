@@ -20,7 +20,7 @@ linux16term is frozen. Copy selected files into jetty; do not submodule it. Do n
 
 | Later | Document / PRs | Still out |
 | --- | --- | --- |
-| Daily-driver follow-on | `docs/DESIGN-follow-on.md` 18–32, 34–36 | Secure input (33) |
+| Daily-driver follow-on | `docs/DESIGN-follow-on.md` 18–36 | — |
 | Kitty graphics | `docs/DESIGN-kitty-graphics.md` 38–45 | Kitty keyboard, `TERM=xterm-kitty`, Sixel |
 | Extra VT / host on the same tree | CSI 16 t, 22/23 t title stack, DSR 996/998, XTGETTCAP, DECRQSS, reverse-wrap 1045, AppleScript, Cmd+N cwd inherit | CSI 21 t **title report** (injection) |
 
@@ -1391,4 +1391,4 @@ Each PR is independently reviewable and mergeable. No dual parser flags. No Ghos
 - **Dependencies:** PR 10, PR 13
 - **Changes:** Host overlay. Copy joins wrap bits. Copy-on-select. Bracketed paste + `writePtyBlocking`. Focus `CSI I`/`O`. Select All.
 
-Follow-ons (not v1): `docs/DESIGN-follow-on.md` (18–37). Ligatures, dirty-row GPU skip, compact instances, jump-to-prompt, width-table Unicode bump, notarization, DEC 2027 **shipped**. Ink-bearing letter quads **withdrawn** (PR 21). Shell inject **shipped** (PR 26). Secure input still later (33). Kitty graphics: `docs/DESIGN-kitty-graphics.md` (38–45 shipped).
+Follow-ons (not v1): `docs/DESIGN-follow-on.md` (18–37). Ligatures, dirty-row GPU skip, compact instances, jump-to-prompt, width-table Unicode bump, notarization, DEC 2027 **shipped**. Ink-bearing letter quads **withdrawn** (PR 21). Shell inject **shipped** (PR 26). Secure input **shipped** (PR 33). Kitty graphics: `docs/DESIGN-kitty-graphics.md` (38–45 shipped).

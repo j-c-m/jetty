@@ -13,6 +13,7 @@ final class KeybindsTests: XCTestCase {
             "cmd+g=find_next",
             "cmd+shift+g=find_prev",
             "cmd+shift+comma=reload_config",
+            "cmd+shift+s=toggle_secure_input",
         ])
         XCTAssertEqual(
             t.action(keyCode: UInt16(kVK_UpArrow), flags: [.command, .shift]),
@@ -37,6 +38,10 @@ final class KeybindsTests: XCTestCase {
         XCTAssertEqual(
             t.action(keyCode: UInt16(kVK_ANSI_Comma), flags: [.command, .shift]),
             .reloadConfig
+        )
+        XCTAssertEqual(
+            t.action(keyCode: UInt16(kVK_ANSI_S), flags: [.command, .shift]),
+            .toggleSecureInput
         )
     }
 

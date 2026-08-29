@@ -94,6 +94,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         reload.target = self
         appMenu.submenu?.addItem(reload)
         appMenu.submenu?.addItem(.separator())
+        let secure = NSMenuItem(
+            title: "Secure Keyboard Entry",
+            action: #selector(toggleSecureInput(_:)),
+            keyEquivalent: ""
+        )
+        secure.target = self
+        appMenu.submenu?.addItem(secure)
+        appMenu.submenu?.addItem(.separator())
         appMenu.submenu?.addItem(
             withTitle: "Quit Jetty",
             action: #selector(NSApplication.terminate(_:)),
@@ -189,6 +197,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         NSApp.activate(ignoringOtherApps: true)
+        SecureInput.setAutoEnabled(config?.macosAutoSecureInput ?? true)
+        securePoll = Timer.scheduledTimer(
+            timeInterval: 0.25,
+            target: self,
+            selector: #selector(pollSecureInput),
+            userInfo: nil,
+            repeats: true
+        )
+        securePoll?.tolerance = 0.1
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        SecureInput.setAppActive(true)
+    }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        SecureInput.setAppActive(false)
+    }
+
+    private var securePoll: Timer?
+
+    @objc func pollSecureInput() {
+        SecureInput.setAutoEnabled(config?.macosAutoSecureInput ?? true)
+        guard config?.macosAutoSecureInput == true else {
+            SecureInput.setPasswordPrompt(false)
+            return
+        }
+        guard NSApp.isActive,
+              let term = terms.first(where: { $0.window.isKeyWindow })
+        else {
+            SecureInput.setPasswordPrompt(false)
+            return
+        }
+        term.session.lock.lock()
+        let fd = term.session.masterFD
+        term.session.lock.unlock()
+        SecureInput.setPasswordPrompt(SecureInput.passwordPrompt(fd: fd))
+    }
+
+    @objc func toggleSecureInput(_ sender: Any?) {
+        SecureInput.toggle()
+    }
+
+    @objc func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(toggleSecureInput(_:)) {
+            item.state = SecureInput.isOn ? .on : .off
+        }
+        return true
     }
 
     @objc func newWindow(_ sender: Any?) {
@@ -206,6 +262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func reloadConfig(_ sender: Any?) {
         let next = AppConfig.load()
         config = next
+        SecureInput.setAutoEnabled(next.macosAutoSecureInput)
         for term in terms {
             term.view.applyLiveConfig(next)
         }
@@ -259,6 +316,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.newWindow(from: session)
         }
         view.onReloadConfig = { [weak self] in self?.reloadConfig(nil) }
+        view.onToggleSecureInput = { [weak self] in self?.toggleSecureInput(nil) }
 
         let grid = view.contentSizePoints(
             backingScale: backing,
@@ -342,6 +400,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationWillTerminate(_ notification: Notification) {
+        securePoll?.invalidate()
+        SecureInput.shutdown()
         for term in terms {
             term.session.stop()
         }

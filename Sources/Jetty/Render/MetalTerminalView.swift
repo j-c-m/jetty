@@ -11,6 +11,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     public var padPt: CGFloat = 4
     public var onNewWindow: (() -> Void)?
     public var onReloadConfig: (() -> Void)?
+    public var onToggleSecureInput: (() -> Void)?
 
     private var renderer: TerminalRenderer?
     private var metrics: CellMetrics
@@ -1436,7 +1437,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         case .findPrev: findPrevious(nil)
         case .endSearch: endFind()
         case .reloadConfig: onReloadConfig?()
-        case .toggleSecureInput: break
+        case .toggleSecureInput: onToggleSecureInput?()
         }
     }
 

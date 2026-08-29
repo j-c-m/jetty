@@ -10,6 +10,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/ttycom.h>
+#include <termios.h>
 #include <unistd.h>
 
 #if defined(__APPLE__)
@@ -224,6 +225,36 @@ int jt_pty_session_cwd(int master_fd, pid_t child, char *out, size_t cap) {
     if (child > 0 && jt_pty_cwd(child, out, cap) == 0) return 0;
     (void)master_fd;
     return -1;
+}
+
+int jt_pty_password_prompt(int master_fd) {
+    if (master_fd < 0) return -1;
+    struct termios t;
+    if (tcgetattr(master_fd, &t) != 0) return -1;
+    return ((t.c_lflag & ICANON) && !(t.c_lflag & ECHO)) ? 1 : 0;
+}
+
+int jt_pty_probe_master_echo(void) {
+    int master = -1;
+    int slave = -1;
+    if (openpty(&master, &slave, NULL, NULL, NULL) != 0) return -1;
+    struct termios t;
+    if (tcgetattr(slave, &t) != 0) {
+        close(master);
+        close(slave);
+        return -1;
+    }
+    t.c_lflag &= ~(tcflag_t)ECHO;
+    t.c_lflag |= (tcflag_t)ICANON;
+    if (tcsetattr(slave, TCSANOW, &t) != 0) {
+        close(master);
+        close(slave);
+        return -1;
+    }
+    int r = jt_pty_password_prompt(master);
+    close(slave);
+    close(master);
+    return r;
 }
 
 int jt_pty_ttyname(int master_fd, char *out, size_t cap) {

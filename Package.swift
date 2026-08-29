@@ -48,6 +48,7 @@ let package = Package(
                 .linkedFramework("QuartzCore"),
                 .linkedFramework("UserNotifications"),
                 .linkedFramework("ImageIO"),
+                .linkedFramework("Carbon"),
             ]
         ),
         .executableTarget(
@@ -65,7 +66,7 @@ let package = Package(
         ),
         .testTarget(
             name: "JettyTests",
-            dependencies: ["Jetty", "CVt"]
+            dependencies: ["Jetty", "CVt", "CPty"]
         ),
     ]
 )
