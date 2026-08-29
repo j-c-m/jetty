@@ -11,6 +11,7 @@ public struct Keybinds: Sendable {
         case jumpToPrompt(Int)
         case startSearch, findNext, findPrev, endSearch
         case reloadConfig
+        case openConfig
         case toggleSecureInput
     }
 
@@ -103,6 +104,7 @@ public struct Keybinds: Sendable {
             case "find_prev": return .findPrev
             case "end_search": return .endSearch
             case "reload_config": return .reloadConfig
+            case "open_config": return .openConfig
             case "toggle_secure_input": return .toggleSecureInput
             default: return nil
             }

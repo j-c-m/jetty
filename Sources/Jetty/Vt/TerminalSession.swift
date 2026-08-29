@@ -259,27 +259,36 @@ public final class TerminalSession: @unchecked Sendable {
     }
 
     @discardableResult
-    public func spawn(workingDirectory: String? = nil, extraEnv: [String] = []) -> Bool {
+    public func spawn(
+        workingDirectory: String? = nil,
+        extraEnv: [String] = [],
+        command: String? = nil
+    ) -> Bool {
         var pid: pid_t = 0
         let fd: Int32
         let envPtrs = extraEnv.map { strdup($0) }
         defer { envPtrs.forEach { if let p = $0 { free(p) } } }
         var envList: [UnsafePointer<CChar>?] = envPtrs.map { $0.map { UnsafePointer($0) } }
         envList.append(nil)
+        let cmd = command.flatMap { $0.isEmpty ? nil : $0 }
         fd = envList.withUnsafeBufferPointer { envBuf in
             let envP = extraEnv.isEmpty ? nil : envBuf.baseAddress
-            if let workingDirectory, !workingDirectory.isEmpty {
-                return workingDirectory.withCString { cwd in
-                    jt_pty_spawn_ex(
-                        UInt16(screen.cols), UInt16(screen.rows),
-                        cellWidthPx, cellHeightPx, cwd, envP, &pid
-                    )
-                }
+            func call(_ cwd: UnsafePointer<CChar>?, _ command: UnsafePointer<CChar>?) -> Int32 {
+                jt_pty_spawn_ex(
+                    UInt16(screen.cols), UInt16(screen.rows),
+                    cellWidthPx, cellHeightPx, cwd, envP, command, &pid
+                )
             }
-            return jt_pty_spawn_ex(
-                UInt16(screen.cols), UInt16(screen.rows),
-                cellWidthPx, cellHeightPx, nil, envP, &pid
-            )
+            func withCwd(_ command: UnsafePointer<CChar>?) -> Int32 {
+                if let workingDirectory, !workingDirectory.isEmpty {
+                    return workingDirectory.withCString { call($0, command) }
+                }
+                return call(nil, command)
+            }
+            if let cmd {
+                return cmd.withCString { withCwd($0) }
+            }
+            return withCwd(nil)
         }
         guard fd >= 0 else { return false }
         let remembered: String

@@ -70,6 +70,56 @@ final class ConfigTests: XCTestCase {
         XCTAssertTrue(AppConfig.parse("kitty-graphics = on").kittyGraphics)
     }
 
+    func testOpenConfigShellCommandUsesEditor() {
+        XCTAssertEqual(
+            AppConfig.openConfigShellCommand(
+                path: "/tmp/jetty/config", env: ["EDITOR": "nvim"]
+            ),
+            "exec nvim '/tmp/jetty/config'"
+        )
+        XCTAssertEqual(
+            AppConfig.openConfigShellCommand(
+                path: "/tmp/a'b", env: ["EDITOR": "emacs -nw"]
+            ),
+            "exec emacs -nw '/tmp/a'\\''b'"
+        )
+        XCTAssertNil(AppConfig.openConfigShellCommand(path: "/x", env: [:]))
+        XCTAssertNil(AppConfig.openConfigShellCommand(path: "/x", env: ["EDITOR": "  "]))
+        XCTAssertEqual(AppConfig.editorCommand(env: ["EDITOR": " vim "]), "vim")
+        XCTAssertEqual(AppConfig.editorCommand(env: ["VISUAL": "emacs", "EDITOR": "vim"]), "emacs")
+        XCTAssertEqual(
+            AppConfig.openConfigShellCommand(
+                path: "/x", env: ["EDITOR": "vim"], editor: "nvim"
+            ),
+            "exec nvim '/x'"
+        )
+        XCTAssertEqual(
+            AppConfig.openConfigShellCommand(
+                path: "/x", env: ["EDITOR": "vim"], editor: "  "
+            ),
+            "exec vim '/x'"
+        )
+        let parsed = ShellEnv.parseEnv0(Data("VISUAL=emacs\0EDITOR=nvim\0PATH=/bin\0".utf8))
+        XCTAssertEqual(parsed["VISUAL"], "emacs")
+        XCTAssertEqual(parsed["EDITOR"], "nvim")
+        XCTAssertEqual(ShellEnv.editor(from: parsed), "emacs")
+        XCTAssertEqual(ShellEnv.editor(from: ["EDITOR": "vim"]), "vim")
+        XCTAssertNil(ShellEnv.editor(from: [:]))
+    }
+
+    func testEnsureConfigFileCreates() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jetty-cfg-\(UUID().uuidString)")
+        let url = dir.appendingPathComponent("jetty/config")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        let got = AppConfig.ensureConfigFile(at: url)
+        XCTAssertEqual(got, url)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        AppConfig.ensureConfigFile(at: url)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+    }
+
     func testEmptyFamilyIsOmitted() {
         let c = AppConfig.parse("font-family =\nligatures = false")
         XCTAssertNil(c.fontFamily)

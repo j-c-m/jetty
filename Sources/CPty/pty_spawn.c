@@ -120,16 +120,24 @@ static void exec_login_shell(void) {
     _exit(127);
 }
 
+static void exec_command(const char *command) {
+    set_term_identity();
+    execl("/bin/sh", "sh", "-c", command, (char *)NULL);
+    dprintf(STDERR_FILENO, "jetty: exec sh -c failed: %s\n", strerror(errno));
+    _exit(127);
+}
+
 int jt_pty_spawn(uint16_t cols, uint16_t rows,
                  uint32_t cell_width_px, uint32_t cell_height_px,
                  pid_t *child_out) {
-    return jt_pty_spawn_ex(cols, rows, cell_width_px, cell_height_px, NULL, NULL, child_out);
+    return jt_pty_spawn_ex(cols, rows, cell_width_px, cell_height_px, NULL, NULL, NULL, child_out);
 }
 
 int jt_pty_spawn_ex(uint16_t cols, uint16_t rows,
                     uint32_t cell_width_px, uint32_t cell_height_px,
                     const char *cwd,
                     const char *const *extra_env,
+                    const char *command,
                     pid_t *child_out) {
     if (!child_out) {
         return -1;
@@ -158,7 +166,10 @@ int jt_pty_spawn_ex(uint16_t cols, uint16_t rows,
             chdir_home_if_root();
         }
         apply_extra_env(extra_env);
-        exec_login_shell();
+        if (command && command[0])
+            exec_command(command);
+        else
+            exec_login_shell();
     }
 
     int flags = fcntl(master, F_GETFL);

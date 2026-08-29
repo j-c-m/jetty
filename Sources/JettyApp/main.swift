@@ -85,6 +85,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hideOthers.keyEquivalentModifierMask = [.command, .option]
         appMenu.submenu?.addItem(hideOthers)
         appMenu.submenu?.addItem(.separator())
+        let openCfg = NSMenuItem(
+            title: "Open Config",
+            action: #selector(openConfig(_:)),
+            keyEquivalent: ","
+        )
+        openCfg.target = self
+        appMenu.submenu?.addItem(openCfg)
         let reload = NSMenuItem(
             title: "Reload Config",
             action: #selector(reloadConfig(_:)),
@@ -269,6 +276,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc func openConfig(_ sender: Any?) {
+        let url = AppConfig.ensureConfigFile()
+        let editor = AppConfig.editorCommand() ?? ShellEnv.loginShellEditor()
+        if let cmd = AppConfig.openConfigShellCommand(path: url.path, editor: editor) {
+            if openWindow(command: cmd) == nil {
+                fputs("jetty: spawn failed\n", stderr)
+            }
+            return
+        }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        p.arguments = ["-t", url.path]
+        do {
+            try p.run()
+        } catch {
+            fputs("jetty: open config: \(error)\n", stderr)
+        }
+    }
+
     @objc func reloadConfig(_ sender: Any?) {
         let next = AppConfig.load()
         config = next
@@ -283,7 +309,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func openWindow(
         workingDirectory: String = "",
         fontSize: Double = 0,
-        initialInput: String = ""
+        initialInput: String = "",
+        command: String = ""
     ) -> TermWindow? {
         guard let device, var config else { return nil }
         if fontSize > 0 {
@@ -327,6 +354,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.newWindow(from: session)
         }
         view.onReloadConfig = { [weak self] in self?.reloadConfig(nil) }
+        view.onOpenConfig = { [weak self] in self?.openConfig(nil) }
         view.onToggleSecureInput = { [weak self] in self?.toggleSecureInput(nil) }
 
         let grid = view.contentSizePoints(
@@ -393,9 +421,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 window?.close()
             }
         }
-        let inject = ShellInject.kind(config: config.shellIntegration)
-        let extra = ShellInject.extraEnv(kind: inject)
-        guard session.spawn(workingDirectory: cwd, extraEnv: extra) else {
+        let extra: [String]
+        if command.isEmpty {
+            extra = ShellInject.extraEnv(kind: ShellInject.kind(config: config.shellIntegration))
+        } else {
+            extra = []
+        }
+        guard session.spawn(
+            workingDirectory: cwd, extraEnv: extra, command: command.isEmpty ? nil : command
+        ) else {
             session.stop()
             return nil
         }

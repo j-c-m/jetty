@@ -141,6 +141,45 @@ public struct AppConfig: Sendable {
         return URL(fileURLWithPath: base).appendingPathComponent("jetty/config")
     }
 
+    @discardableResult
+    public static func ensureConfigFile(at url: URL = configURL()) -> URL {
+        let fm = FileManager.default
+        try? fm.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        if !fm.fileExists(atPath: url.path) {
+            fm.createFile(atPath: url.path, contents: nil)
+        }
+        return url
+    }
+
+    public static func editorCommand(
+        env: [String: String] = ProcessInfo.processInfo.environment,
+        sessionEditor: String? = nil
+    ) -> String? {
+        if let s = sessionEditor?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
+            return s
+        }
+        for key in ["VISUAL", "EDITOR"] {
+            let e = env[key]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !e.isEmpty { return e }
+        }
+        return nil
+    }
+
+    public static func openConfigShellCommand(
+        path: String,
+        env: [String: String] = ProcessInfo.processInfo.environment,
+        editor: String? = nil
+    ) -> String? {
+        guard let editor = editorCommand(env: env, sessionEditor: editor) else { return nil }
+        return "exec \(editor) \(shellSingleQuote(path))"
+    }
+
+    public static func shellSingleQuote(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
     public static func parseBool(_ s: String) -> Bool {
         ["true", "1", "yes"].contains(s.lowercased())
     }
