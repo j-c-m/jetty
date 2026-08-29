@@ -25,6 +25,7 @@ struct jt_vt {
     int apc_n, apc_cap;
     uint8_t apc_expect_g;
     uint8_t apc_ignore;
+    uint8_t apc_esc;
     jt_img_loading load;
 };
 

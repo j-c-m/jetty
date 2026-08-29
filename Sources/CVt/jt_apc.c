@@ -296,6 +296,7 @@ void jt_apc_begin(jt_vt *p) {
     if (!p) return;
     p->apc_n = 0;
     p->apc_ignore = 0;
+    p->apc_esc = 0;
 }
 
 void jt_apc_reset(jt_vt *p) {
@@ -306,6 +307,7 @@ void jt_apc_reset(jt_vt *p) {
     p->apc_cap = 0;
     p->apc_ignore = 0;
     p->apc_expect_g = 0;
+    p->apc_esc = 0;
     jt_img_abort_loading(&p->load);
 }
 

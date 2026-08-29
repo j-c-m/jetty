@@ -685,6 +685,102 @@ final class KittyGraphicsTests: XCTestCase {
         XCTAssertEqual(s.imgLiveN, 0)
     }
 
+    func testApcSTSplitAcrossFeeds() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 9, count: 12)
+        p.feed("\u{1B}_Ga=T,f=24,s=2,v=2,i=1,t=d,C=1;\(b64(rgb))\u{1B}")
+        XCTAssertEqual(s.imgLiveN, 0)
+        p.feed("\\")
+        XCTAssertEqual(s.imgLiveN, 1)
+        XCTAssertFalse(s.plainString().contains("A"))
+    }
+
+    func testApcResyncDeleteAllMidFrame() {
+        let s = Screen(cols: 20, rows: 5, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 9, count: 12)
+        p.feed(apc("a=T,f=24,s=2,v=2,i=7,t=d,C=1;\(b64(rgb))"))
+        XCTAssertEqual(s.imgLiveN, 1)
+        p.feed("\u{1B}_Ga=T,f=24,s=2,v=2,i=8,t=d,m=1,C=1;AAAA")
+        p.feed("\u{1B}_Ga=d,d=A\u{1B}\\")
+        XCTAssertEqual(s.imgLiveN, 0)
+        XCTAssertFalse(s.plainString().contains("A"))
+    }
+
+    func testApcResyncMouseAndAltScreen() {
+        let s = Screen(cols: 20, rows: 8, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?1049h\u{1B}[?1003h")
+        XCTAssertTrue(s.inAlt)
+        XCTAssertEqual(s.mouseEvent, 1003)
+        p.feed("\u{1B}_Ga=T,f=24,s=2,v=2,i=1,t=d,m=1,C=1;AAAA")
+        p.feed("\u{1B}[?1003l\u{1B}[?1049l")
+        XCTAssertFalse(s.inAlt)
+        XCTAssertEqual(s.mouseEvent, 0)
+        XCTAssertFalse(s.plainString().contains("A"))
+    }
+
+    func testApcInterleavedStatusCsiDoesNotPrintPayload() {
+        let s = Screen(cols: 20, rows: 5, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 0, count: 12)
+        let enc = b64(rgb)
+        let mid = enc.index(enc.startIndex, offsetBy: 4)
+        p.feed(
+            "\u{1B}_Ga=T,f=24,s=2,v=2,i=1,t=d,C=1;\(enc[..<mid])\u{1B}[K\(enc[mid...])\u{1B}\\"
+        )
+        XCTAssertFalse(s.plainString().contains("A"), s.plainString())
+        XCTAssertEqual(s.imgLiveN, 0)
+    }
+
+    func testMpvKittyVoChunkedRGBDoesNotPrintPayload() {
+        let s = Screen(cols: 80, rows: 24, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let w = 64
+        let h = 48
+        let rgb = [UInt8](repeating: 0, count: w * h * 3)
+        let enc = b64(rgb)
+        var bytes: [UInt8] = Array("\u{1B}[1;1H".utf8)
+        let chunk = 4096
+        var offset = 0
+        var first = true
+        while offset < enc.count {
+            let end = min(offset + chunk, enc.count)
+            let piece = enc.utf8.dropFirst(offset).prefix(end - offset)
+            if first {
+                bytes += Array("\u{1B}_Ga=T,f=24,s=\(w),v=\(h),C=1,q=2,m=1;".utf8)
+                first = false
+            } else {
+                let more = end < enc.count ? 1 : 0
+                bytes += Array("\u{1B}_Gm=\(more);".utf8)
+            }
+            bytes += Array(piece)
+            bytes += [0x1B, 0x5C]
+            offset = end
+        }
+        var i = 0
+        while i < bytes.count {
+            let n = min(64 * 1024, bytes.count - i)
+            p.feed(Array(bytes[i..<(i + n)]))
+            i += n
+        }
+        let text = s.plainString()
+        XCTAssertFalse(text.contains("A"), text)
+        XCTAssertEqual(s.imgLiveN, 1)
+        XCTAssertEqual(p.writes, [])
+    }
+
     func testChunkedRGB() {
         let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
         s.setCellPx(width: 8, height: 16)

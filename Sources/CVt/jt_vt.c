@@ -70,6 +70,7 @@ void jt_vt_reset(jt_vt *p) {
     p->apc_n = 0;
     p->apc_ignore = 0;
     p->apc_expect_g = 0;
+    p->apc_esc = 0;
     jt_img_abort_loading(&p->load);
 }
 
@@ -192,6 +193,7 @@ static void enter_ground(jt_vt *p) {
     p->state = JT_ST_GROUND;
     clear_seq(p);
     p->osc_n = 0;
+    p->apc_esc = 0;
 }
 
 static void enter_escape(jt_vt *p) {
@@ -1046,6 +1048,142 @@ static int gl_is_ascii(const jt_scr *scr) {
 
 static void dispatch(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b);
 
+static int apc_active(const jt_vt *p) {
+    return p->state == JT_ST_APC_G || p->state == JT_ST_APC_IGNORE;
+}
+
+static void apc_close(jt_vt *p, jt_scr *scr, const jt_vt_host *h, int finish) {
+    p->apc_esc = 0;
+    if (finish && p->state == JT_ST_APC_G) jt_apc_finish(p, scr, h);
+    else {
+        p->apc_n = 0;
+        p->apc_ignore = 0;
+        jt_img_abort_loading(&p->load);
+    }
+    enter_ground(p);
+}
+
+enum { JT_APC_ESC_ESC = 1, JT_APC_ESC_CSI = 2 };
+
+static void apc_abort(jt_vt *p) {
+    p->apc_esc = 0;
+    p->apc_n = 0;
+    p->apc_ignore = 0;
+    p->apc_expect_g = 0;
+    jt_img_abort_loading(&p->load);
+}
+
+static void apc_enter_private_csi(jt_vt *p) {
+    apc_abort(p);
+    enter_csi(p);
+    p->inter[0] = '?';
+    p->ni = 1;
+    p->state = JT_ST_CSI_PARAM;
+}
+
+static int apc_resume_esc(
+    jt_vt *p,
+    jt_scr *scr,
+    const jt_vt_host *h,
+    const uint8_t *bytes,
+    size_t *i
+) {
+    uint8_t st = p->apc_esc;
+    p->apc_esc = 0;
+    uint8_t b = bytes[*i];
+    if (st == JT_APC_ESC_ESC) {
+        if (b == '\\') {
+            apc_close(p, scr, h, p->state == JT_ST_APC_G);
+            (*i)++;
+            return 1;
+        }
+        if (b == '_') {
+            apc_abort(p);
+            p->apc_expect_g = 1;
+            p->state = JT_ST_SOS_PM_APC;
+            (*i)++;
+            return 1;
+        }
+        if (b == '[') {
+            p->apc_esc = JT_APC_ESC_CSI;
+            (*i)++;
+            return 1;
+        }
+        if (p->state == JT_ST_APC_G) {
+            uint8_t esc = 0x1B;
+            jt_apc_feed(p, &esc, 1);
+            if (p->apc_ignore) p->state = JT_ST_APC_IGNORE;
+        }
+        return 0;
+    }
+    if (st == JT_APC_ESC_CSI) {
+        if (b == '?') {
+            apc_enter_private_csi(p);
+            (*i)++;
+            return 1;
+        }
+        if (p->state == JT_ST_APC_G) {
+            uint8_t pre[2] = {0x1B, '['};
+            jt_apc_feed(p, pre, 2);
+            if (p->apc_ignore) p->state = JT_ST_APC_IGNORE;
+        }
+        return 0;
+    }
+    return 0;
+}
+
+static int apc_take_esc(
+    jt_vt *p,
+    jt_scr *scr,
+    const jt_vt_host *h,
+    const uint8_t *bytes,
+    size_t *i,
+    size_t n
+) {
+    if (*i + 1 >= n) {
+        p->apc_esc = JT_APC_ESC_ESC;
+        return -1;
+    }
+    uint8_t n1 = bytes[*i + 1];
+    if (n1 == '\\') {
+        apc_close(p, scr, h, p->state == JT_ST_APC_G);
+        *i += 2;
+        return 1;
+    }
+    if (n1 == '_') {
+        apc_abort(p);
+        p->apc_expect_g = 1;
+        p->state = JT_ST_SOS_PM_APC;
+        *i += 2;
+        return 1;
+    }
+    if (n1 == '[') {
+        if (*i + 2 >= n) {
+            p->apc_esc = JT_APC_ESC_CSI;
+            return -1;
+        }
+        if (bytes[*i + 2] == '?') {
+            apc_enter_private_csi(p);
+            *i += 3;
+            return 1;
+        }
+        if (p->state == JT_ST_APC_G) {
+            uint8_t esc = 0x1B;
+            jt_apc_feed(p, &esc, 1);
+            if (p->apc_ignore) p->state = JT_ST_APC_IGNORE;
+        }
+        (*i)++;
+        return 1;
+    }
+    if (p->state == JT_ST_APC_G) {
+        uint8_t esc = 0x1B;
+        jt_apc_feed(p, &esc, 1);
+        if (p->apc_ignore) p->state = JT_ST_APC_IGNORE;
+    }
+    (*i)++;
+    return 1;
+}
+
 static void escape_byte(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
     switch (b) {
     case '[': enter_csi(p); break;
@@ -1149,15 +1287,21 @@ static void csi_param(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
 
 static void dispatch(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
     if (b == 0x18 || b == 0x1A) {
-        utf8_reset(p);
-        enter_ground(p);
+        if (apc_active(p)) apc_close(p, scr, h, 0);
+        else {
+            utf8_reset(p);
+            enter_ground(p);
+        }
         if (b == 0x1A && scr) jt_scr_print_scalar(scr, 0xFFFD);
         return;
     }
     if (b == 0x1B) {
+        if (apc_active(p)) {
+            p->apc_esc = 1;
+            return;
+        }
         if (p->state == JT_ST_OSC_STRING) finish_osc(p, scr, h);
         if (p->state == JT_ST_DCS_IGNORE) finish_dcs(p, scr, h);
-        if (p->state == JT_ST_APC_G) jt_apc_finish(p, scr, h);
         utf8_reset(p);
         enter_escape(p);
         return;
@@ -1217,8 +1361,7 @@ static void dispatch(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
         break;
     case JT_ST_APC_G:
         if (b == 0x07) {
-            jt_apc_finish(p, scr, h);
-            enter_ground(p);
+            apc_close(p, scr, h, 1);
         } else if (p->apc_ignore || p->apc_n >= JT_IMG_MAX_APC) {
             p->apc_ignore = 1;
             p->state = JT_ST_APC_IGNORE;
@@ -1228,11 +1371,7 @@ static void dispatch(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
         }
         break;
     case JT_ST_APC_IGNORE:
-        if (b == 0x07) {
-            p->apc_ignore = 0;
-            p->apc_n = 0;
-            enter_ground(p);
-        }
+        if (b == 0x07) apc_close(p, scr, h, 0);
         break;
     case JT_ST_DCS_IGNORE:
         if (b == 0x07) {
@@ -1401,15 +1540,31 @@ void jt_vt_feed(jt_vt *p, const uint8_t *bytes, size_t n,
     }
     size_t i = 0;
     while (i < n) {
+        if (p->apc_esc) {
+            if (apc_resume_esc(p, scr, host, bytes, &i)) continue;
+        }
         if (p->state == JT_ST_APC_G) {
             size_t j = i;
             while (j < n && bytes[j] != 0x07 && bytes[j] != 0x1B && bytes[j] != 0x18
                    && bytes[j] != 0x1A)
                 j++;
             if (j > i) jt_apc_feed(p, bytes + i, j - i);
+            if (p->apc_ignore) p->state = JT_ST_APC_IGNORE;
             i = j;
             if (i >= n) return;
-            dispatch(p, scr, host, bytes[i]);
+            uint8_t b = bytes[i];
+            if (b == 0x1B) {
+                int r = apc_take_esc(p, scr, host, bytes, &i, n);
+                if (r < 0) return;
+                continue;
+            }
+            if (b == 0x07) {
+                apc_close(p, scr, host, 1);
+                i++;
+                continue;
+            }
+            apc_close(p, scr, host, 0);
+            if (b == 0x1A && scr) jt_scr_print_scalar(scr, 0xFFFD);
             i++;
             continue;
         }
@@ -1418,7 +1573,13 @@ void jt_vt_feed(jt_vt *p, const uint8_t *bytes, size_t n,
             while (j < n && bytes[j] != 0x07 && bytes[j] != 0x1B) j++;
             i = j;
             if (i >= n) return;
-            dispatch(p, scr, host, bytes[i]);
+            uint8_t b = bytes[i];
+            if (b == 0x1B) {
+                int r = apc_take_esc(p, scr, host, bytes, &i, n);
+                if (r < 0) return;
+                continue;
+            }
+            apc_close(p, scr, host, 0);
             i++;
             continue;
         }
