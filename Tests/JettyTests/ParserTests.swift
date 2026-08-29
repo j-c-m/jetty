@@ -439,6 +439,17 @@ final class ParserTests: XCTestCase {
         session.lock.unlock()
         XCTAssertEqual(session.title, "hello")
         XCTAssertEqual(session.workingDirectory, "/Users/me/src")
+        XCTAssertEqual(session.inheritWorkingDirectory(), "")
+        let tmp = FileManager.default.temporaryDirectory.path
+        let uri = URL(fileURLWithPath: tmp).absoluteString
+        session.lock.lock()
+        session.parser.feed("\u{1B}]7;\(uri)\u{07}")
+        session.lock.unlock()
+        XCTAssertEqual(session.inheritWorkingDirectory(), (tmp as NSString).standardizingPath)
+        session.lock.lock()
+        session.parser.feed("\u{1B}]7;file:///no/such/jetty-cwd\u{07}")
+        session.lock.unlock()
+        XCTAssertEqual(session.inheritWorkingDirectory(), "")
     }
 
     func testOSC9NotifyAndProgress() {

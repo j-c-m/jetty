@@ -922,7 +922,7 @@ Port `linux16term/Sources/Linux16TermApp/main.swift` `AppDelegate` / `TermWindow
 - Window: Minimize, Zoom, Bring All to Front; `NSApp.windowsMenu`.
 - Child death: reap, **close that window**; do not quit if others exist.
 - Last window close quits (`applicationShouldTerminateAfterLastWindowClosed`).
-- New window cascaded +24/−24 from key window.
+- New window cascaded +24/−24 from key window. Inherits that window’s cwd (OSC 7, else the session shell cwd — not Darwin `login` — else spawn dir).
 
 Paste: if 2004 on, wrap `ESC [ 200 ~` … `ESC [ 201 ~` (strip embedded `ESC [ 201 ~` from the payload). Always `writePtyBlocking`.
 

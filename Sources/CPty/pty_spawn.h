@@ -21,6 +21,11 @@ int jt_pty_spawn_ex(uint16_t cols, uint16_t rows,
 
 int jt_pty_ttyname(int master_fd, char *out, size_t cap);
 
+int jt_pty_cwd(pid_t pid, char *out, size_t cap);
+
+/* Shell cwd. Darwin `login` stays as the PTY child; the shell is its child. */
+int jt_pty_session_cwd(int master_fd, pid_t child, char *out, size_t cap);
+
 int jt_pty_set_winsize(int master_fd, uint16_t cols, uint16_t rows,
                        uint32_t cell_width_px, uint32_t cell_height_px);
 

@@ -119,6 +119,27 @@ public final class TerminalSession: @unchecked Sendable {
         return fromOsc.isEmpty ? spawn : fromOsc
     }
 
+    /// Directory for a new window: OSC 7, else the session shell cwd, else spawn.
+    public func inheritWorkingDirectory() -> String {
+        lock.lock()
+        let uri = osc7
+        let spawn = spawnDirectory
+        let pid = childPID
+        let fd = masterFD
+        lock.unlock()
+        let osc = Self.pathFromOSC7(uri)
+        if let path = Self.existingDirectory(osc) { return path }
+        if pid > 0 || fd >= 0 {
+            var buf = [CChar](repeating: 0, count: Int(PATH_MAX))
+            if jt_pty_session_cwd(fd, pid, &buf, buf.count) == 0 {
+                let n = buf.firstIndex(of: 0) ?? buf.count
+                let live = String(decoding: buf.prefix(n).map { UInt8(bitPattern: $0) }, as: UTF8.self)
+                if let path = Self.existingDirectory(live) { return path }
+            }
+        }
+        return Self.existingDirectory(spawn) ?? ""
+    }
+
     public var ttyName: String {
         lock.lock()
         let fd = masterFD
@@ -132,6 +153,15 @@ public final class TerminalSession: @unchecked Sendable {
     public static func pathFromOSC7(_ uri: String) -> String {
         guard uri.hasPrefix("file:"), let url = URL(string: uri), url.isFileURL else { return "" }
         return url.path
+    }
+
+    private static func existingDirectory(_ path: String) -> String? {
+        guard !path.isEmpty else { return nil }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else {
+            return nil
+        }
+        return path
     }
 
     private static func defaultSpawnDirectory() -> String {

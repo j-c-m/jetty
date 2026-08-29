@@ -13,6 +13,10 @@
 #include <unistd.h>
 
 #if defined(__APPLE__)
+#include <libproc.h>
+#endif
+
+#if defined(__APPLE__)
 #include <util.h>
 #else
 #include <pty.h>
@@ -138,6 +142,62 @@ int jt_pty_spawn_ex(uint16_t cols, uint16_t rows,
 
     *child_out = child;
     return master;
+}
+
+int jt_pty_cwd(pid_t pid, char *out, size_t cap) {
+    if (pid <= 0 || !out || cap == 0) return -1;
+#if defined(__APPLE__)
+    struct proc_vnodepathinfo vpi;
+    int n = proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &vpi, sizeof vpi);
+    if (n != (int)sizeof vpi) return -1;
+    size_t len = strnlen(vpi.pvi_cdir.vip_path, sizeof vpi.pvi_cdir.vip_path);
+    if (len == 0 || len + 1 > cap) return -1;
+    memcpy(out, vpi.pvi_cdir.vip_path, len + 1);
+    return 0;
+#else
+    (void)pid;
+    return -1;
+#endif
+}
+
+#if defined(__APPLE__)
+static int is_login_proc(pid_t pid) {
+    char name[32];
+    memset(name, 0, sizeof name);
+    if (proc_name((int)pid, name, sizeof name) <= 0) return 0;
+    return strcmp(name, "login") == 0;
+}
+
+static int cwd_of_children(pid_t parent, char *out, size_t cap) {
+    pid_t kids[32];
+    int bytes = proc_listchildpids(parent, kids, sizeof kids);
+    if (bytes <= 0) return -1;
+    int n = bytes / (int)sizeof(pid_t);
+    if (n > 32) n = 32;
+    for (int i = 0; i < n; i++) {
+        if (kids[i] > 0 && jt_pty_cwd(kids[i], out, cap) == 0) return 0;
+    }
+    return -1;
+}
+#endif
+
+int jt_pty_session_cwd(int master_fd, pid_t child, char *out, size_t cap) {
+    if (!out || cap == 0) return -1;
+#if defined(__APPLE__)
+    if (child > 0 && is_login_proc(child) && cwd_of_children(child, out, cap) == 0)
+        return 0;
+    if (master_fd >= 0) {
+        pid_t pg = -1;
+        if (ioctl(master_fd, TIOCGPGRP, &pg) == 0 && pg > 1
+            && jt_pty_cwd(pg, out, cap) == 0)
+            return 0;
+        pg = tcgetpgrp(master_fd);
+        if (pg > 1 && jt_pty_cwd(pg, out, cap) == 0) return 0;
+    }
+#endif
+    if (child > 0 && jt_pty_cwd(child, out, cap) == 0) return 0;
+    (void)master_fd;
+    return -1;
 }
 
 int jt_pty_ttyname(int master_fd, char *out, size_t cap) {

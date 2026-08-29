@@ -192,7 +192,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func newWindow(_ sender: Any?) {
-        if openWindow() == nil {
+        let session = terms.first { $0.window === NSApp.keyWindow }?.session
+        newWindow(from: session)
+    }
+
+    func newWindow(from session: TerminalSession?) {
+        let cwd = session?.inheritWorkingDirectory() ?? ""
+        if openWindow(workingDirectory: cwd) == nil {
             fputs("jetty: spawn failed\n", stderr)
         }
     }
@@ -249,7 +255,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             device: device,
             backingScale: backing
         )
-        view.onNewWindow = { [weak self] in self?.newWindow(nil) }
+        view.onNewWindow = { [weak self, weak session] in
+            self?.newWindow(from: session)
+        }
         view.onReloadConfig = { [weak self] in self?.reloadConfig(nil) }
 
         let grid = view.contentSizePoints(
