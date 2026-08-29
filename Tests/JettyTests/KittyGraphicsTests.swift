@@ -25,6 +25,15 @@ final class KittyGraphicsTests: XCTestCase {
         XCTAssertEqual(p.writes, [])
     }
 
+    func testNonGApcBelDoesNotEndDrain() {
+        let s = Screen(cols: 20, rows: 5, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}_hello\u{07}X\u{1B}\\Y")
+        XCTAssertEqual(s.plainString(), "Y")
+        XCTAssertEqual(p.writes, [])
+    }
+
     func testQueryThenDA1() {
         let s = Screen(cols: 20, rows: 5, scrollbackCapRows: 0)
         s.setCellPx(width: 8, height: 16)
@@ -741,6 +750,35 @@ final class KittyGraphicsTests: XCTestCase {
         p.feed("\u{1B}_Ga=T,f=24,s=2,v=2,i=1,t=d,C=1;\(b64(rgb))\u{1B}")
         XCTAssertEqual(s.imgLiveN, 0)
         p.feed("\\")
+        XCTAssertEqual(s.imgLiveN, 1)
+        XCTAssertFalse(s.plainString().contains("A"))
+    }
+
+    func testApcBelDoesNotTerminate() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 9, count: 12)
+        let enc = b64(rgb)
+        p.feed("\u{1B}_Ga=T,f=24,s=2,v=2,i=1,t=d,C=1;\(enc)\u{07}")
+        XCTAssertEqual(s.imgLiveN, 0)
+        p.feed("\u{1B}\\")
+        XCTAssertEqual(s.imgLiveN, 1)
+        XCTAssertFalse(s.plainString().contains("A"))
+    }
+
+    func testApcBelInsidePayloadIsSkipped() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 9, count: 12)
+        let enc = b64(rgb)
+        let mid = enc.index(enc.startIndex, offsetBy: 4)
+        p.feed(
+            "\u{1B}_Ga=T,f=24,s=2,v=2,i=1,t=d,C=1;\(enc[..<mid])\u{07}\(enc[mid...])\u{1B}\\"
+        )
         XCTAssertEqual(s.imgLiveN, 1)
         XCTAssertFalse(s.plainString().contains("A"))
     }
