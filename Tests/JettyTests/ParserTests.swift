@@ -424,6 +424,7 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(p.osc7.last, "file://host/tmp")
         XCTAssertEqual(TerminalSession.pathFromOSC7("file:///Users/me/src"), "/Users/me/src")
         XCTAssertEqual(TerminalSession.pathFromOSC7("file://localhost/tmp"), "/tmp")
+        XCTAssertEqual(TerminalSession.pathFromOSC7("file://host/tmp/foo?bar"), "/tmp/foo?bar")
         XCTAssertEqual(TerminalSession.pathFromOSC7("http://example.com"), "")
         p.feed("\u{1B}]133;A\u{07}")
         XCTAssertEqual(p.osc133.last?.0, UInt8(ascii: "A"))

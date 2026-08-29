@@ -23,6 +23,19 @@ public struct AppConfig: Sendable {
     public var osc52Read: Osc52Read = .ask
     public var keybinds: [String] = []
     public var kittyGraphics: Bool = true
+    public var shellIntegration: ShellIntegration = .detect
+    public var notifyOnCommandFinish: NotifyWhen = .never
+    public var notifyOnCommandFinishAfter: TimeInterval = 5
+    public var notifyOnCommandFinishBell: Bool = true
+    public var notifyOnCommandFinishDesktop: Bool = false
+
+    public enum ShellIntegration: Sendable, Equatable {
+        case none, detect, bash, zsh, fish, nu
+    }
+
+    public enum NotifyWhen: Sendable, Equatable {
+        case never, unfocused, always
+    }
 
     public enum Ligatures: Sendable, Equatable {
         /// Cell-boxed letters. No run `CTLine`.
@@ -100,6 +113,14 @@ public struct AppConfig: Sendable {
                 }
             case "kitty-graphics":
                 c.kittyGraphics = parseOnOff(val)
+            case "shell-integration":
+                if let v = parseShellIntegration(val) { c.shellIntegration = v }
+            case "notify-on-command-finish":
+                if let v = parseNotifyWhen(val) { c.notifyOnCommandFinish = v }
+            case "notify-on-command-finish-after":
+                if let n = parseSeconds(val) { c.notifyOnCommandFinishAfter = n }
+            case "notify-on-command-finish-action":
+                parseNotifyAction(val, into: &c)
             default:
                 if key.hasPrefix("palette-"),
                    let idx = Int(key.dropFirst("palette-".count)),
@@ -137,6 +158,108 @@ public struct AppConfig: Sendable {
         case "programming": return .programming
         case "on", "true", "1", "yes": return .on
         default: return nil
+        }
+    }
+
+    public static func parseShellIntegration(_ s: String) -> ShellIntegration? {
+        switch s.lowercased() {
+        case "none", "off", "false", "0", "no": return ShellIntegration.none
+        case "detect": return .detect
+        case "bash": return .bash
+        case "zsh": return .zsh
+        case "fish": return .fish
+        case "nu", "nushell": return .nu
+        default: return nil
+        }
+    }
+
+    public static func parseNotifyWhen(_ s: String) -> NotifyWhen? {
+        switch s.lowercased() {
+        case "never", "off", "false", "0", "no": return .never
+        case "unfocused": return .unfocused
+        case "always", "on", "true", "1", "yes": return .always
+        default: return nil
+        }
+    }
+
+    /// Ghostty `Duration`: `1h30m`, `45s`, `500ms`. A bare number is seconds.
+    public static func parseSeconds(_ raw: String) -> TimeInterval? {
+        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "µs", with: "us")
+            .replacingOccurrences(of: "μs", with: "us")
+        if s.isEmpty { return nil }
+        var i = s.startIndex
+        var total: TimeInterval = 0
+        var tokens = 0
+        func skipWS() {
+            while i < s.endIndex, s[i].isWhitespace {
+                i = s.index(after: i)
+            }
+        }
+        while i < s.endIndex {
+            skipWS()
+            if i >= s.endIndex { break }
+            let numStart = i
+            var seenDot = false
+            while i < s.endIndex {
+                let c = s[i]
+                if c.isNumber {
+                    i = s.index(after: i)
+                    continue
+                }
+                if c == ".", !seenDot {
+                    seenDot = true
+                    i = s.index(after: i)
+                    continue
+                }
+                break
+            }
+            if i == numStart { return nil }
+            guard let n = Double(s[numStart..<i]), n >= 0 else { return nil }
+            skipWS()
+            let unit: TimeInterval
+            let rest = s[i...]
+            if rest.hasPrefix("ms") {
+                unit = 0.001
+                i = s.index(i, offsetBy: 2)
+            } else if rest.hasPrefix("us") {
+                unit = 0.000001
+                i = s.index(i, offsetBy: 2)
+            } else if rest.hasPrefix("ns") {
+                unit = 1e-9
+                i = s.index(i, offsetBy: 2)
+            } else if i < s.endIndex {
+                switch s[i] {
+                case "y": unit = 365 * 86_400
+                case "d": unit = 86_400
+                case "h": unit = 3_600
+                case "m": unit = 60
+                case "s": unit = 1
+                default: return nil
+                }
+                i = s.index(after: i)
+            } else if tokens == 0 {
+                unit = 1
+            } else {
+                return nil
+            }
+            total += n * unit
+            tokens += 1
+        }
+        return tokens > 0 ? total : nil
+    }
+
+    public static func parseNotifyAction(_ raw: String, into c: inout AppConfig) {
+        for part in raw.split(separator: ",") {
+            let p = part.trimmingCharacters(in: .whitespaces).lowercased()
+            switch p {
+            case "bell": c.notifyOnCommandFinishBell = true
+            case "no-bell": c.notifyOnCommandFinishBell = false
+            case "notify": c.notifyOnCommandFinishDesktop = true
+            case "no-notify": c.notifyOnCommandFinishDesktop = false
+            default: break
+            }
         }
     }
 

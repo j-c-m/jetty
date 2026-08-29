@@ -25,6 +25,10 @@ final class ConfigTests: XCTestCase {
             osc52-write = deny
             osc52-read = deny
             keybind = cmd+shift+up=jump_to_prompt:-1
+            shell-integration = none
+            notify-on-command-finish = unfocused
+            notify-on-command-finish-after = 10s
+            notify-on-command-finish-action = no-bell,notify
             unknown-key = ignored
             """)
         XCTAssertEqual(c.fontFamily, "Menlo")
@@ -47,6 +51,19 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(c.osc52Write, .deny)
         XCTAssertEqual(c.osc52Read, .deny)
         XCTAssertEqual(c.keybinds, ["cmd+shift+up=jump_to_prompt:-1"])
+        XCTAssertEqual(c.shellIntegration, .none)
+        XCTAssertEqual(c.notifyOnCommandFinish, .unfocused)
+        XCTAssertEqual(c.notifyOnCommandFinishAfter, 10)
+        XCTAssertEqual(AppConfig.parseSeconds("10s"), 10)
+        XCTAssertEqual(AppConfig.parseSeconds("10"), 10)
+        XCTAssertEqual(AppConfig.parseSeconds("1m30s"), 90)
+        XCTAssertEqual(AppConfig.parseSeconds("1h30m"), 5_400)
+        XCTAssertEqual(AppConfig.parseSeconds("500ms") ?? -1, 0.5, accuracy: 0.000_001)
+        XCTAssertEqual(AppConfig.parse("notify-on-command-finish-after = 1m30s").notifyOnCommandFinishAfter, 90)
+        XCTAssertNil(AppConfig.parseSeconds("1x"))
+        XCTAssertNil(AppConfig.parseSeconds("1m30"))
+        XCTAssertFalse(c.notifyOnCommandFinishBell)
+        XCTAssertTrue(c.notifyOnCommandFinishDesktop)
         XCTAssertTrue(AppConfig.parse("").kittyGraphics)
         XCTAssertFalse(AppConfig.parse("kitty-graphics = off").kittyGraphics)
         XCTAssertFalse(AppConfig.parse("kitty-graphics = no").kittyGraphics)
@@ -71,6 +88,11 @@ final class ConfigTests: XCTestCase {
         XCTAssertTrue(c.desktopNotifications)
         XCTAssertTrue(c.progressStyle)
         XCTAssertTrue(c.macosAppleScript)
+        XCTAssertEqual(c.shellIntegration, .detect)
+        XCTAssertEqual(c.notifyOnCommandFinish, .never)
+        XCTAssertEqual(c.notifyOnCommandFinishAfter, 5)
+        XCTAssertTrue(c.notifyOnCommandFinishBell)
+        XCTAssertFalse(c.notifyOnCommandFinishDesktop)
     }
 
     func testLigaturesAliases() {

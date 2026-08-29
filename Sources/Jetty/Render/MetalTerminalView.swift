@@ -1459,6 +1459,10 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         session.osc52WriteAllow = next.osc52Write == .allow
         session.osc52ReadAsk = next.osc52Read == .ask
         session.desktopNotifications = next.desktopNotifications
+        session.notifyOnCommandFinish = next.notifyOnCommandFinish
+        session.notifyOnCommandFinishAfter = next.notifyOnCommandFinishAfter
+        session.notifyOnCommandFinishBell = next.notifyOnCommandFinishBell
+        session.notifyOnCommandFinishDesktop = next.notifyOnCommandFinishDesktop
         if !next.progressStyle {
             setProgress(state: 0, percent: 0)
         }
@@ -2004,7 +2008,9 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         session.lock.unlock()
         let flags = event.modifierFlags
         if flags.contains(.command) {
-            openLink(at: event)
+            if event.clickCount >= 3 {
+                selectCommandOutput(at: cellAt(event))
+            }
             return
         }
         let host = mode == 0 || flags.contains(.shift)
@@ -2063,10 +2069,14 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         session.lock.lock()
         let mode = session.screen.mouseEvent
         session.lock.unlock()
-        if mode != 0 {
-            if !event.modifierFlags.contains(.command) {
-                _ = reportMouse(event, action: .release, button: button)
+        if event.modifierFlags.contains(.command) {
+            if event.clickCount == 1 {
+                openLink(at: event)
             }
+            return
+        }
+        if mode != 0 {
+            _ = reportMouse(event, action: .release, button: button)
             return
         }
         finishHostSelect(event)
@@ -2084,6 +2094,31 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             selEnd = cell
             needsDisplay = true
         }
+    }
+
+    private func selectCommandOutput(at cell: (x: Int, y: Int)) {
+        session.lock.lock()
+        let inAlt = session.screen.inAlt
+        let marks = session.osc133.map { (line: $0.line, action: $0.action) }
+        let linesScrolled = session.screen.linesScrolled
+        let cols = session.screen.cols
+        let rows = session.screen.rows
+        session.lock.unlock()
+        if inAlt { return }
+        let doc = CommandOutput.docLine(liveY: cell.y, linesScrolled: linesScrolled)
+        let liveEnd = linesScrolled &+ UInt64(max(0, rows))
+        guard let span = CommandOutput.span(marks: marks, at: doc, liveEnd: liveEnd) else { return }
+        let last = span.end > 0 ? span.end - 1 : span.start
+        let y0 = CommandOutput.liveY(doc: span.start, linesScrolled: linesScrolled)
+        let y1 = CommandOutput.liveY(doc: last, linesScrolled: linesScrolled)
+        selAnchor = (0, y0)
+        selEnd = (max(0, cols - 1), y1)
+        selRect = false
+        selecting = false
+        pendingSelect = nil
+        pendingRect = false
+        needsDisplay = true
+        if config.copyOnSelect { copy(nil) }
     }
 
     private func finishHostSelect(_ event: NSEvent) {

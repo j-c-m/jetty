@@ -6,7 +6,7 @@
 | Author | TBD |
 | Date | 2026-08-22 |
 | Updated | 2026-08-29 |
-| Status | **Shipped** except later-plan **26 remainder** (shell inject) and **33** (secure input). PR 37 skipped. |
+| Status | **Shipped** except later-plan **33** (secure input). PR 26 inject + OSC 133 `C`/`D` select/notify on this branch. PR 37 skipped. |
 | Bundle ID | `dev.jetty.app` |
 | Baseline | v1 DESIGN `docs/DESIGN.md`; this plan started at HEAD `573cf05` |
 | Audience | Senior engineers who already know v1 (16-byte `Cell`, C VT, linux16term Metal) |
@@ -21,7 +21,7 @@ Ghostty (`https://github.com/ghostty-org/ghostty`) is the **parity baseline** fo
 | --- | --- |
 | 18–25, 27–32, 34–36 | **done** (22 ligatures, 23 compact 32-byte instances, 20 dirty-row skip, 24 auto URL, 25 jump, 27 search, 28 rect select, 29 drag-drop, 30 notify/progress, 31 keybinds, 32 opacity, 34 DEC 2027, 35 UCD pin, 36 `.app`/notary) |
 | 21 ink-bearing letters | **withdrawn** (letters stay cell-boxed; italic/Nerd still clip) |
-| 26 shell inject + OSC 7 cwd | **partial.** Cmd+N inherits cwd from OSC 7, else the session shell, else spawn dir (`jt_pty_spawn_ex` `cwd`). No `extra_env`, no bash/zsh/fish/nu snippets. Jump-to-prompt needs OSC 133 from the shell. |
+| 26 shell inject + OSC 7 cwd | **done.** `extra_env` + bash/zsh/fish/nu snippets (OSC 7 + 133 only). Skip Darwin `/bin/bash`. Cmd+triple-click selects `C`…`D` output on the primary screen (no-op in alt, same as jump). `notify-on-command-finish` uses paired `C`/`D` (default `never`). |
 | 33 secure input | **later.** Config parses `macos-auto-secure-input`; `toggle_secure_input` is a no-op. No menu, no `EnableSecureEventInput`. |
 | 37 xcodeproj | **skipped** (notarization did not need it) |
 | Kitty graphics | **out of this document.** Shipped in `docs/DESIGN-kitty-graphics.md` (38–45). Kitty keyboard / `TERM=xterm-kitty` still out. |
@@ -33,7 +33,7 @@ Ghostty (`https://github.com/ghostty-org/ghostty`) is the **parity baseline** fo
 
 At v1 HEAD `573cf05`, Jetty was a truthful `TERM=xterm-256color` macOS terminal: 16-byte inline `Cell`, C parse/grid, AppKit + `MTKView` instanced cells, IME, mouse, OSC 0/2/4/7/8/10/11/12/52/133, DEC 2026, ExtraBold SGR 1, sprites before the font. It was correct enough to daily-drive neovim and tmux. It was not yet pleasant enough to switch to from Ghostty: ligatures were off and could not paint, italic/Nerd ink clipped to the cell, GPU expand rebuilt every visible row every frame, OSC 133 marks had no UI, URLs required OSC 8, Smulx curly/dotted/dashed stored bits but painted as a single bar, and several DESIGN.md config keys were never wired.
 
-This follow-on is **daily-driver parity** on macOS. It landed the named v1 leftovers (ligatures, dirty-row GPU skip, compact instances, jump-to-prompt, Unicode width bump, notarization, DEC 2027, fuller Smulx) plus the Ghostty-switcher features that matter for neovim/tmux/shell: auto URL, scrollback search, keybind file, rectangular selection, drag-drop paths, OSC 9/777 notifications, OSC 9;4 progress, `font-family` / `palette-N` / `adjust-cell-*`, and background opacity. Ink-bearing letter quads were **withdrawn**. Shell-integration inject and macOS secure input wait for a later plan (26 remainder, 33).
+This follow-on is **daily-driver parity** on macOS. It landed the named v1 leftovers (ligatures, dirty-row GPU skip, compact instances, jump-to-prompt, Unicode width bump, notarization, DEC 2027, fuller Smulx) plus the Ghostty-switcher features that matter for neovim/tmux/shell: auto URL, scrollback search, keybind file, rectangular selection, drag-drop paths, OSC 9/777 notifications, OSC 9;4 progress, `font-family` / `palette-N` / `adjust-cell-*`, background opacity, and shell-integration inject. Ink-bearing letter quads were **withdrawn**. macOS secure input waits for a later plan (33).
 
 It does **not** become Ghostty. Tabs, splits, Kitty **keyboard**, Sixel, inspector, command palette, quick terminal, settings GUI, and other OS ports stay out. Kitty **graphics** were out of *this* grouping and shipped in `docs/DESIGN-kitty-graphics.md`.
 
@@ -148,7 +148,7 @@ Keep the spec. Do not implement in this follow-on.
 
 | Later PR | What | HEAD |
 | --- | --- | --- |
-| 26 | Shell integration inject + OSC 7 cwd inherit | **Partial.** Cwd inherit for new windows shipped. Inject snippets / `extra_env` still later. |
+| 26 | Shell integration inject + OSC 7 cwd inherit | **Done.** |
 | 33 | Secure keyboard entry | Still later. Config + keybind stub only. |
 
 ---
@@ -171,7 +171,7 @@ Keep the spec. Do not implement in this follow-on.
 
 8. **OSC 133 UI uses the existing mark list on the primary screen only.** Ignore OSC 133 while `in_alt`. Jump skips marks outside `[lines_scrolled - sb_len, lines_scrolled + rows)`. ED 3 and RIS clear the list. Do not clamp expired marks to 0. Default keys: `Cmd+Shift+Up/Down` (Ghostty macOS `super+shift+arrow`, not Terminal.app Cmd+Up). Rationale: alt keys would pollute primary; wrap/ED 3 would jump to the oldest row.
 
-9. **Shell integration injects OSC 7/133 only (later plan).** Detect bash/zsh/fish/nu. Do not inject Ghostty `ssh-terminfo`, `sudo` wrapper, or `TERM=xterm-ghostty`. `TERM` stays `xterm-256color`. Rationale: stock terminfo; no private overlay. Not this follow-on.
+9. **Shell integration injects OSC 7/133 only.** Detect bash/zsh/fish/nu. Do not inject Ghostty `ssh-terminfo`, `sudo` wrapper, or `TERM=xterm-ghostty`. `TERM` stays `xterm-256color`. Rationale: stock terminfo; no private overlay.
 
 10. **Auto URL is hover-time scan, not a print-path matcher.** Do not put regex on `jt_scr_print_run`. Cmd-hover scans the visible row (and maybe ±1 for wrap-join). OSC 8 still wins when `extra` has a URI. Rationale: canary lock; Ghostty `link-url` is a renderer concern.
 
@@ -667,10 +667,10 @@ Do not keep the slave fd (`forkpty(..., NULL, ...)` unchanged).
 
 | Shell | Resource | Env `login -p` must see |
 | --- | --- | --- |
-| bash (not `/bin/bash`) | `Shell/bash/jetty.bash` | `ENV` = that path. Set `JETTY_BASH_ENV` **only** when a previous `ENV` existed; the snippet sources `${JETTY_BASH_ENV}` if set. |
-| zsh | `Shell/zsh/` (wrapper `.zshenv` / `.zshrc`) | `ZDOTDIR` = that dir. Set `JETTY_ZSH_ZDOTDIR` **only** when a previous `ZDOTDIR` existed. Snippet: `source ${JETTY_ZSH_ZDOTDIR:-$HOME}/.zshrc` (and `.zshenv` the same way). |
+| bash (not `/bin/bash`) | `Shell/bash/jetty.bash` | `ENV` = that path. Set `JETTY_BASH_ENV` **only** when a previous `ENV` existed; the snippet sources `${JETTY_BASH_ENV}` if set. `PROMPT_COMMAND`: empty is an array on bash 5.1+, else a string; `declare -p` array → `+=`; string → `;` then append. |
+| zsh | `Shell/zsh/` (wrapper `.zshenv` + `jetty.zsh`) | `ZDOTDIR` = that dir. Set `JETTY_ZSH_ZDOTDIR` **only** when a previous `ZDOTDIR` existed. `{ source user ~/.zshenv } always { source jetty.zsh }` so `return` cannot skip inject. `jetty.zsh` defers first `A` to precmd (after `.zshrc`). If `_jetty_precmd` is not last in `precmd_functions`, re-append. |
 | fish | `Shell/` as an XDG data dir containing `fish/vendor_conf.d/jetty.fish` | prepend that dir to `XDG_DATA_DIRS` (default `/usr/local/share:/usr/share`); `JETTY_SHELL_XDG_DIR` = that dir so the snippet can pop it |
-| nu | `Shell/` with `nushell/vendor/autoload/jetty.nu` | same `XDG_DATA_DIRS` prepend. Do **not** rewrite argv (`login -flp` already `exec -l $SHELL`). Document that nu autoload may need a one-line `use` in the user’s config if vendor autoload is off |
+| nu | `Shell/` with `nushell/vendor/autoload/jetty.nu` | same `XDG_DATA_DIRS` prepend. Do **not** rewrite argv (`login -flp` already `exec -l $SHELL`). Merge `pre_prompt` / `pre_execution` onto the existing `hooks` record (do not replace `display_output` and other keys). Document that nu autoload may need a one-line `use` in the user’s config if vendor autoload is off |
 
 Do not wrap `sudo`. Do not install terminfo. Do not set `TERM`. Do not `chdir` the host process. Darwin `login -flp` already passes `-l` to the login shell (skips the login helper’s home `chdir`); child `chdir` before `exec_login_shell` is the inherit-cwd path. Keep skip of Darwin `/bin/bash`.
 
@@ -930,8 +930,8 @@ Status: **now** = v1 HEAD `573cf05` when this document was written. **follow-on*
 | Smulx 4:0–4:5 | store; paint single/double | follow-on | **shipped** (PR 19); curly is 4 quads |
 | Setulc SGR 58 | rare store + paint | now | |
 | OSC 8 | now | now | |
-| OSC 7 | store | follow-on UX | inherit cwd **shipped** (Cmd+N); inject still later (26) |
-| OSC 133 | store, no UI | follow-on | jump-to-prompt **shipped** (PR 25); needs inject or a shell that already emits 133 |
+| OSC 7 | store | follow-on UX | inherit cwd **shipped** (Cmd+N); inject **shipped** (PR 26) |
+| OSC 133 | store, no UI | follow-on | jump-to-prompt **shipped** (PR 25); inject **shipped** (PR 26) |
 | OSC 52 allow/ask | now | now | |
 | OSC 9 / 777 notify | drain | follow-on | **shipped** (PR 30) |
 | OSC 9;4 progress | drain | follow-on | **shipped** (PR 30); `progress-style` |
@@ -979,7 +979,7 @@ Status: **now** = v1 HEAD `573cf05` when this document was written. **follow-on*
 | Settings GUI | no | **out** | |
 | Drag-drop paths | no | follow-on | **shipped** (PR 29) |
 | Secure input | no | **later** | still later (PR 33); config stub only |
-| Shell integration inject | no | **later** | still later (PR 26 remainder). Cwd inherit shipped. |
+| Shell integration inject | no | follow-on | **shipped** (PR 26) |
 | `jump_to_prompt` | no UI | follow-on | **shipped** (PR 25) |
 | Notifications | no | follow-on | **shipped** (PR 30) |
 | Progress bar | no | follow-on | **shipped** (PR 30) |
@@ -1151,7 +1151,7 @@ Skip method (review): (a) memcpy skipped rows from the previous ring slot; (b) o
 | OSC 52 | Unchanged (write allow / read ask). |
 | Notarization entitlements | Do **not** turn the sandbox on. `login -flp` still needs a real TTY. |
 | Config `keybind` | Host actions only. No arbitrary `text:` / `csi:` to the PTY in this follow-on (avoids a config-file command injection gadget). |
-| OSC 7 inherit cwd | Must be a local existing directory. Ignore non-`file` URIs. Do not follow symlinks out of the user’s home as a special case — `chdir` the path POSIX gives; the child is already the user. |
+| OSC 7 inherit cwd | Must be a local existing directory. Accept `file://` and `kitty-shell-cwd://`. Do not follow symlinks out of the user’s home as a special case — `chdir` the path POSIX gives; the child is already the user. |
 
 Hopping callbacks (`notify`, `progress`, `osc52_*`, `set_title`) must not take `session.lock` (`83a94a7`). `osc7` / `osc133` / `history_cleared` / `palette_changed` / `size_report` run under the lock the parse thread already holds. CSI 14/18 t must not hop to main.
 
@@ -1415,4 +1415,4 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 
 ---
 
-**Tracks:** 18–25, 27–32, 34–36 done/withdrawn. Host left: none. Chore 37 skip. **26 remainder (inject) and 33 (secure input) are a later plan, not this document.** Cwd inherit for Cmd+N shipped without inject.
+**Tracks:** 18–32, 34–36 done/withdrawn. Chore 37 skip. **33 (secure input) is still later.** Inject (26) plus Cmd+triple-click output select and `notify-on-command-finish` landed with OSC 133 `C`/`D`.

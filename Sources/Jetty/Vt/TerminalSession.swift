@@ -24,6 +24,11 @@ public final class TerminalSession: @unchecked Sendable {
     public var desktopNotifications = true
     public var isNotifyFocused: (@Sendable () -> Bool)?
     public var onProgress: (@Sendable (UInt8, UInt8) -> Void)?
+    public var notifyOnCommandFinish: AppConfig.NotifyWhen = .never
+    public var notifyOnCommandFinishAfter: TimeInterval = 5
+    public var notifyOnCommandFinishBell = true
+    public var notifyOnCommandFinishDesktop = false
+    var commandStartedAt: Date?
     public private(set) var osc7: String = ""
     public var title: String {
         lock.lock()
@@ -88,9 +93,11 @@ public final class TerminalSession: @unchecked Sendable {
             let line = self.screen.linesScrolled + UInt64(max(0, self.screen.cursorY))
             self.osc133.append((line, action, opts))
             if self.osc133.count > 4096 { self.osc133.removeFirst(self.osc133.count - 4096) }
+            self.noteCommandMark(action: action, opts: opts)
         }
         parser.onHistoryCleared = { [weak self] in
             self?.osc133.removeAll()
+            self?.commandStartedAt = nil
         }
         parser.onSizeReport = { [weak self] kind in
             self?.replySizeReport(kind)
@@ -151,8 +158,86 @@ public final class TerminalSession: @unchecked Sendable {
     }
 
     public static func pathFromOSC7(_ uri: String) -> String {
-        guard uri.hasPrefix("file:"), let url = URL(string: uri), url.isFileURL else { return "" }
-        return url.path
+        let kitty = "kitty-shell-cwd://"
+        if uri.hasPrefix(kitty) {
+            let rest = uri.dropFirst(kitty.count)
+            if let slash = rest.firstIndex(of: "/") {
+                return dropTrailingSlash(String(rest[slash...]))
+            }
+            return ""
+        }
+        let file = "file://"
+        if uri.hasPrefix(file) {
+            let rest = uri.dropFirst(file.count)
+            guard let slash = rest.firstIndex(of: "/") else { return "" }
+            return dropTrailingSlash(percentDecodePath(String(rest[slash...])))
+        }
+        return ""
+    }
+
+    private static func dropTrailingSlash(_ path: String) -> String {
+        if path.count > 1, path.hasSuffix("/") { return String(path.dropLast()) }
+        return path
+    }
+
+    /// Fish OSC 7 url-escapes `$PWD`. Invalid `%` sequences stay literal.
+    static func percentDecodePath(_ s: String) -> String {
+        let u = Array(s.utf8)
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(u.count)
+        var i = 0
+        while i < u.count {
+            if u[i] == UInt8(ascii: "%"), i + 2 < u.count,
+               let hi = hexNibble(u[i + 1]), let lo = hexNibble(u[i + 2])
+            {
+                bytes.append((hi << 4) | lo)
+                i += 3
+                continue
+            }
+            bytes.append(u[i])
+            i += 1
+        }
+        return String(decoding: bytes, as: UTF8.self)
+    }
+
+    private static func hexNibble(_ b: UInt8) -> UInt8? {
+        switch b {
+        case UInt8(ascii: "0")...UInt8(ascii: "9"): return b - UInt8(ascii: "0")
+        case UInt8(ascii: "a")...UInt8(ascii: "f"): return b - UInt8(ascii: "a") + 10
+        case UInt8(ascii: "A")...UInt8(ascii: "F"): return b - UInt8(ascii: "A") + 10
+        default: return nil
+        }
+    }
+
+    private func noteCommandMark(action: UInt8, opts: [UInt8]) {
+        if action == UInt8(ascii: "C") {
+            commandStartedAt = Date()
+            return
+        }
+        guard action == UInt8(ascii: "D") else { return }
+        guard let start = commandStartedAt else { return }
+        commandStartedAt = nil
+        let when = notifyOnCommandFinish
+        if when == .never { return }
+        let dur = Date().timeIntervalSince(start)
+        if dur < notifyOnCommandFinishAfter { return }
+        let exit = CommandOutput.exitCode(opts: opts)
+        let bell = notifyOnCommandFinishBell
+        let desktop = notifyOnCommandFinishDesktop
+        let title = windowTitle
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let focused = self.isNotifyFocused?() ?? false
+            if when == .unfocused, focused { return }
+            if bell { NSSound.beep() }
+            if desktop {
+                var body = "finished in \(Int(dur.rounded()))s"
+                if let exit {
+                    body = "exit \(exit), " + body
+                }
+                DesktopNotify.post(title: "Command finished", body: body, subtitle: title)
+            }
+        }
     }
 
     private static func existingDirectory(_ path: String) -> String? {
@@ -174,20 +259,26 @@ public final class TerminalSession: @unchecked Sendable {
     }
 
     @discardableResult
-    public func spawn(workingDirectory: String? = nil) -> Bool {
+    public func spawn(workingDirectory: String? = nil, extraEnv: [String] = []) -> Bool {
         var pid: pid_t = 0
         let fd: Int32
-        if let workingDirectory, !workingDirectory.isEmpty {
-            fd = workingDirectory.withCString { cwd in
-                jt_pty_spawn_ex(
-                    UInt16(screen.cols), UInt16(screen.rows),
-                    cellWidthPx, cellHeightPx, cwd, &pid
-                )
+        let envPtrs = extraEnv.map { strdup($0) }
+        defer { envPtrs.forEach { if let p = $0 { free(p) } } }
+        var envList: [UnsafePointer<CChar>?] = envPtrs.map { $0.map { UnsafePointer($0) } }
+        envList.append(nil)
+        fd = envList.withUnsafeBufferPointer { envBuf in
+            let envP = extraEnv.isEmpty ? nil : envBuf.baseAddress
+            if let workingDirectory, !workingDirectory.isEmpty {
+                return workingDirectory.withCString { cwd in
+                    jt_pty_spawn_ex(
+                        UInt16(screen.cols), UInt16(screen.rows),
+                        cellWidthPx, cellHeightPx, cwd, envP, &pid
+                    )
+                }
             }
-        } else {
-            fd = jt_pty_spawn_ex(
+            return jt_pty_spawn_ex(
                 UInt16(screen.cols), UInt16(screen.rows),
-                cellWidthPx, cellHeightPx, nil, &pid
+                cellWidthPx, cellHeightPx, nil, envP, &pid
             )
         }
         guard fd >= 0 else { return false }

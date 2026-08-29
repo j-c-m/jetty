@@ -301,6 +301,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         session.osc52ReadAsk = config.osc52Read == .ask
         session.screen.setKittyGraphics(config.kittyGraphics)
         session.desktopNotifications = config.desktopNotifications
+        session.notifyOnCommandFinish = config.notifyOnCommandFinish
+        session.notifyOnCommandFinishAfter = config.notifyOnCommandFinishAfter
+        session.notifyOnCommandFinishBell = config.notifyOnCommandFinishBell
+        session.notifyOnCommandFinishDesktop = config.notifyOnCommandFinishDesktop
         session.isNotifyFocused = { [weak window] in
             MainActor.assumeIsolated {
                 window?.isKeyWindow == true
@@ -320,7 +324,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 window?.close()
             }
         }
-        guard session.spawn(workingDirectory: cwd) else {
+        let inject = ShellInject.kind(config: config.shellIntegration)
+        let extra = ShellInject.extraEnv(kind: inject)
+        guard session.spawn(workingDirectory: cwd, extraEnv: extra) else {
             session.stop()
             return nil
         }

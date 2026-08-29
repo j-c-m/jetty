@@ -55,6 +55,23 @@ static void chdir_home_if_root(void) {
     }
 }
 
+static void apply_extra_env(const char *const *extra_env) {
+    if (!extra_env) return;
+    for (int i = 0; extra_env[i]; i++) {
+        const char *e = extra_env[i];
+        const char *eq = strchr(e, '=');
+        if (!eq || eq == e) continue;
+        size_t kn = (size_t)(eq - e);
+        if (kn >= 256) continue;
+        char key[256];
+        memcpy(key, e, kn);
+        key[kn] = 0;
+        if (setenv(key, eq + 1, 1) != 0) {
+            dprintf(STDERR_FILENO, "jetty: setenv %s: %s\n", key, strerror(errno));
+        }
+    }
+}
+
 static void exec_login_shell(void) {
     set_term_identity();
 
@@ -76,8 +93,15 @@ static void exec_login_shell(void) {
     }
 
     const char *shell = resolve_shell(pw);
+    /* ENV is ignored unless bash is POSIX. JETTY_BASH_INJECT is that path. */
+    const char *bash_inject = getenv("JETTY_BASH_INJECT");
     char exec_cmd[4096];
-    int cn = snprintf(exec_cmd, sizeof(exec_cmd), "exec -l %s", shell);
+    int cn;
+    if (bash_inject && bash_inject[0]) {
+        cn = snprintf(exec_cmd, sizeof(exec_cmd), "exec -l %s --posix", shell);
+    } else {
+        cn = snprintf(exec_cmd, sizeof(exec_cmd), "exec -l %s", shell);
+    }
     if (cn <= 0 || (size_t)cn >= sizeof(exec_cmd)) {
         dprintf(STDERR_FILENO, "jetty: shell path too long\n");
         _exit(127);
@@ -98,12 +122,13 @@ static void exec_login_shell(void) {
 int jt_pty_spawn(uint16_t cols, uint16_t rows,
                  uint32_t cell_width_px, uint32_t cell_height_px,
                  pid_t *child_out) {
-    return jt_pty_spawn_ex(cols, rows, cell_width_px, cell_height_px, NULL, child_out);
+    return jt_pty_spawn_ex(cols, rows, cell_width_px, cell_height_px, NULL, NULL, child_out);
 }
 
 int jt_pty_spawn_ex(uint16_t cols, uint16_t rows,
                     uint32_t cell_width_px, uint32_t cell_height_px,
                     const char *cwd,
+                    const char *const *extra_env,
                     pid_t *child_out) {
     if (!child_out) {
         return -1;
@@ -131,6 +156,7 @@ int jt_pty_spawn_ex(uint16_t cols, uint16_t rows,
         } else {
             chdir_home_if_root();
         }
+        apply_extra_env(extra_env);
         exec_login_shell();
     }
 

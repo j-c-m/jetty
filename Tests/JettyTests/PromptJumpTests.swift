@@ -91,15 +91,28 @@ final class Osc133StoreTests: XCTestCase {
         s.lock.unlock()
     }
 
+    func testED3ClearsCommandTimer() {
+        let s = TerminalSession(cols: 4, rows: 2, scrollbackCapRows: 8)
+        s.lock.lock()
+        s.parser.feed("\u{1B}]133;C\u{07}")
+        XCTAssertNotNil(s.commandStartedAt)
+        s.parser.feed("\u{1B}[3J")
+        XCTAssertNil(s.commandStartedAt)
+        s.lock.unlock()
+    }
+
     func testRISClearsMarksAndScrollback() {
         let s = TerminalSession(cols: 4, rows: 2, scrollbackCapRows: 8)
         s.lock.lock()
         s.parser.feed("AAAABBBBCCCC")
         s.parser.feed("\u{1B}]133;A\u{07}")
+        s.parser.feed("\u{1B}]133;C\u{07}")
         XCTAssertGreaterThan(s.screen.scrollbackCount, 0)
-        XCTAssertEqual(s.osc133.count, 1)
+        XCTAssertEqual(s.osc133.count, 2)
+        XCTAssertNotNil(s.commandStartedAt)
         s.parser.feed("\u{1B}c")
         XCTAssertTrue(s.osc133.isEmpty)
+        XCTAssertNil(s.commandStartedAt)
         XCTAssertEqual(s.screen.scrollbackCount, 0)
         s.lock.unlock()
     }
