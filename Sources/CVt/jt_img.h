@@ -261,6 +261,8 @@ int jt_img_delete(
 );
 void jt_img_drop_id(struct jt_scr *s, uint32_t id);
 uint8_t *jt_img_rgb_to_rgba(const uint8_t *rgb, uint32_t w, uint32_t h);
+int jt_shm_open(const char *name, int oflag, unsigned mode);
+int jt_shm_unlink(const char *name);
 
 #ifdef __cplusplus
 }

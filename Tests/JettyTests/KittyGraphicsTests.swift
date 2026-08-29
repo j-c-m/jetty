@@ -1,4 +1,5 @@
 import CVt
+import Darwin
 import XCTest
 @testable import Jetty
 
@@ -586,6 +587,52 @@ final class KittyGraphicsTests: XCTestCase {
         XCTAssertEqual(s.imgLiveN, 0)
         XCTAssertEqual(s.imgVirtualN, 1)
         XCTAssertEqual(s.poolCells, 0)
+    }
+
+    private func withShm(_ name: String, size: Int, rgb: [UInt8], body: () -> Void) throws {
+        _ = jt_shm_unlink(name)
+        let fd = jt_shm_open(name, O_CREAT | O_RDWR, 0o600)
+        if fd < 0 { throw XCTSkip("shm_open") }
+        defer { _ = jt_shm_unlink(name) }
+        XCTAssertEqual(ftruncate(fd, off_t(size)), 0)
+        let map = mmap(nil, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)
+        XCTAssertNotEqual(map, MAP_FAILED)
+        _ = rgb.withUnsafeBytes { raw in
+            memcpy(map, raw.baseAddress, rgb.count)
+        }
+        munmap(map, size)
+        close(fd)
+        body()
+    }
+
+    func testShmRGBPutMpvStyle() throws {
+        let name = "/jt-kg-\(getpid())"
+        let rgb: [UInt8] = [255, 0, 0, 0, 255, 0, 0, 0, 255, 1, 2, 3]
+        try withShm(name, size: rgb.count, rgb: rgb) {
+            let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+            s.setCellPx(width: 8, height: 16)
+            let p = Parser()
+            p.screen = s
+            let payload = Array(name.dropFirst().utf8)
+            p.feed(apc("a=T,t=s,f=24,s=2,v=2,i=1,C=1,q=2,m=1;\(b64(payload))"))
+            XCTAssertEqual(s.imgLiveN, 1)
+            XCTAssertEqual(firstPixel(s)?.0, 255)
+        }
+    }
+
+    func testShmPageRoundedStillPuts() throws {
+        let name = "/jt-kgp-\(getpid())"
+        let rgb: [UInt8] = [0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        try withShm(name, size: 16384, rgb: rgb) {
+            let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+            s.setCellPx(width: 8, height: 16)
+            let p = Parser()
+            p.screen = s
+            let payload = Array(name.dropFirst().utf8)
+            p.feed(apc("a=T,t=s,f=24,s=2,v=2,i=3,C=1,q=2,m=1;\(b64(payload))"))
+            XCTAssertEqual(s.imgLiveN, 1)
+            XCTAssertEqual(firstPixel(s)?.1, 255)
+        }
     }
 
     func testPasswdFileRefused() {

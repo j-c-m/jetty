@@ -467,6 +467,14 @@ static int read_file_window(
     return 0;
 }
 
+int jt_shm_open(const char *name, int oflag, unsigned mode) {
+    return shm_open(name, oflag, (mode_t)mode);
+}
+
+int jt_shm_unlink(const char *name) {
+    return shm_unlink(name);
+}
+
 static int read_shm(const char *name, uint32_t S, uint32_t O, uint8_t **out, size_t *out_n) {
     if (!name || name[0] == 0) return -1;
     char nbuf[256];
@@ -589,16 +597,21 @@ static int pixels_from_raw(jt_img_loading *ld, uint8_t **rgba, uint32_t *w, uint
     uint32_t W = ld->w, H = ld->h;
     if (W == 0 || H == 0 || W > JT_IMG_MAX_DIM || H > JT_IMG_MAX_DIM) return -1;
     size_t bpp = ld->format == 24 ? 3 : 4;
-    if (ld->n != (size_t)W * (size_t)H * bpp) return -1;
+    size_t need = (size_t)W * (size_t)H * bpp;
+    if (ld->medium == 's') {
+        if (ld->n < need) return -1;
+    } else if (ld->n != need) {
+        return -1;
+    }
     if ((size_t)W * (size_t)H * 4 > JT_IMG_MAX_BYTES) return -1;
     if (ld->format == 24) {
         uint8_t *out = jt_img_rgb_to_rgba(ld->data, W, H);
         if (!out) return -1;
         *rgba = out;
     } else {
-        uint8_t *out = (uint8_t *)malloc(ld->n);
+        uint8_t *out = (uint8_t *)malloc(need);
         if (!out) return -1;
-        memcpy(out, ld->data, ld->n);
+        memcpy(out, ld->data, need);
         *rgba = out;
     }
     *w = W;
@@ -674,7 +687,13 @@ static int complete_transmit(
             name[nbytes] = 0;
             uint8_t *shm = NULL;
             size_t sn = 0;
-            if (read_shm(name, ld->S, ld->O, &shm, &sn) != 0) io_err = 1;
+            uint32_t S = ld->S;
+            if (!S && (ld->format == 24 || ld->format == 32) && ld->w && ld->h) {
+                size_t bpp = ld->format == 24 ? 3 : 4;
+                size_t need = (size_t)ld->w * (size_t)ld->h * bpp;
+                if (need <= UINT32_MAX) S = (uint32_t)need;
+            }
+            if (read_shm(name, S, ld->O, &shm, &sn) != 0) io_err = 1;
             else {
                 owned = shm;
                 bytes = shm;
