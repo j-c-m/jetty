@@ -270,6 +270,38 @@ final class KittyGraphicsTests: XCTestCase {
         XCTAssertEqual(s.imgRelativeN, 0)
     }
 
+    func testRelativeVirtualParentSparseOrigin() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let rgb = [UInt8](repeating: 8, count: 12)
+        p.feed(apc("a=T,U=1,i=1,s=2,v=2,f=24,c=2,r=2,t=d,q=2;\(b64(rgb))"))
+        p.feed(apc("a=t,f=24,s=2,v=2,i=2,t=d,q=2;\(b64(rgb))"))
+        p.feed(apc("a=p,i=2,P=1,H=0,V=0,c=1,r=1,C=1,q=2"))
+        XCTAssertEqual(s.imgVirtualN, 1)
+        XCTAssertEqual(s.imgRelativeN, 1)
+        p.feed("\u{1B}[1;6H\u{1B}[38;5;1m\u{10EEEE}")
+        p.feed("\u{1B}[2;1H\u{10EEEE}\u{1B}[39m")
+        var paint = [Cell](repeating: .empty, count: s.cols * s.rows)
+        paint.withUnsafeMutableBufferPointer { dest in
+            s.blitLiveGrid(to: dest.baseAddress!)
+        }
+        var snaps = [jt_img_snap](repeating: jt_img_snap(), count: 8)
+        let n = paint.withUnsafeBufferPointer { cellBuf in
+            snaps.withUnsafeMutableBufferPointer { buf in
+                jt_img_relative_scan(
+                    s.implPtr, cellBuf.baseAddress!, 10, 4, 0, 8, 16,
+                    buf.baseAddress!, 8
+                )
+            }
+        }
+        XCTAssertEqual(n, 1)
+        XCTAssertEqual(snaps[0].image_id, 2)
+        XCTAssertEqual(snaps[0].ox, 0)
+        XCTAssertEqual(snaps[0].oy, 0)
+    }
+
     func testRelativeVirtualParentRejected() {
         let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
         s.setCellPx(width: 8, height: 16)

@@ -1967,7 +1967,10 @@ static int virt_origin_cell(
     int32_t *ox,
     int32_t *oy
 ) {
+    /* Kitty/Ghostty: min x and min y of matching cells, independently. */
     if (!paint || cols <= 0 || paint_rows <= 0) return 0;
+    int found = 0;
+    int32_t min_x = 0, min_y = 0;
     for (int32_t y = 0; y < paint_rows; y++) {
         for (int32_t x = 0; x < cols; x++) {
             ph_run cur;
@@ -1978,14 +1981,17 @@ static int virt_origin_cell(
             uint32_t pid = cur.has_pid ? cur.placement_id : 0;
             const jt_img_placement *t = placeholder_target(st, image_id, pid);
             if (!t) continue;
-            if (t->image_id == root->image_id && t->placement_id == root->placement_id) {
-                *ox = x;
-                *oy = y;
-                return 1;
-            }
+            if (t->image_id != root->image_id || t->placement_id != root->placement_id)
+                continue;
+            if (!found || x < min_x) min_x = x;
+            if (!found || y < min_y) min_y = y;
+            found = 1;
         }
     }
-    return 0;
+    if (!found) return 0;
+    *ox = min_x;
+    *oy = min_y;
+    return 1;
 }
 
 int32_t jt_img_relative_scan(
