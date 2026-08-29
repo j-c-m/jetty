@@ -5,34 +5,57 @@
 | Document | Design (Kitty graphics) |
 | Author | TBD |
 | Date | 2026-08-25 |
-| Status | Draft |
+| Updated | 2026-08-29 |
+| Status | **Shipped.** PRs 38–44 as planned; PR 45 (animation + relative) also shipped on `master`. |
 | Bundle ID | `dev.jetty.app` |
-| Baseline | v1 `docs/DESIGN.md`; follow-on `docs/DESIGN-follow-on.md`; HEAD of this tree |
+| Baseline | v1 `docs/DESIGN.md`; follow-on `docs/DESIGN-follow-on.md` |
 | Audience | Senior engineers who already know v1 (16-byte `Cell`, C VT, linux16term Metal) |
 
-This is design only. It does not implement the emulator. It does **not** rewrite `docs/DESIGN.md` or `docs/DESIGN-follow-on.md`. Those documents list Kitty graphics as out of scope; this is the later plan.
+This is the Kitty graphics plan. It does **not** rewrite `docs/DESIGN.md` or `docs/DESIGN-follow-on.md`; those listed graphics as out of *their* scope. v1 locks still hold: 16-byte `Cell`, `TERM=xterm-256color`, no Ghostty wrap, no `KITTY_WINDOW_ID`.
 
 Ghostty (`https://github.com/ghostty-org/ghostty`) is the **parity baseline** for Kitty graphics *semantics*. It is not a library. Do not wrap `libghostty`, Zig, or `ghostty.h`. Study `src/terminal/kitty/graphics_*.zig` and `src/renderer/image.zig` as prior art. The protocol spec is https://sw.kovidgoyal.net/kitty/graphics-protocol/.
+
+### HEAD vs this plan
+
+Proposed Design below is the original **v1-of-graphics** spec (stills, then placeholders). **Do not treat “Not v1” rows as current code.**
+
+| Slice | HEAD |
+| --- | --- |
+| 38 APC `G` parse | **done** |
+| 39 RGB store, put, query `OK`, `kitty-graphics` | **done** |
+| 40 GPU `z>=0` | **done** |
+| 41 PNG, zlib, file, temp, shm | **done** |
+| 42 deletes, `I=`, quota eviction | **done** |
+| 43 under-text `z<0` | **done** |
+| 44 Unicode placeholders `U+10EEEE` | **done** |
+| 45 animation `a=f`/`a=a`/`a=c` + `d=f`; relative `P`/`Q`/`H`/`V` | **done** (opened after 44). Parent chain 8; `ETOODEEP` / `ECYCLE` / `ENOPARENT`. |
+| Caps | Later matched Ghostty: max dim **10000**, max one image **400 MiB**, decoded store quota **320_000_000**. `N=` low bit is **transient** (not ignored). |
+| APC terminator | ST (`ESC \` or C1 `0x9C`). **BEL does not end APC** (post-plan Ghostty match). |
+| RGBA | Premultiplied in the store. shm maps **s×v** bytes, not the page-rounded object. |
+| Auto-id reply | Implicit `i` (icat omits `i`) does **not** echo `OK`. |
+| Still out | Kitty keyboard / `TERM=xterm-kitty`; JPEG/GIF as `f=`; Sixel; iTerm2 images |
 
 ---
 
 ## Overview
 
-Jetty is a truthful `TERM=xterm-256color` macOS terminal: locked 16-byte `Cell`, C parse/grid, `MTKView` instanced cells. Apps that display images (`kitten icat`, chafa, yazi, nvim `image.nvim`, notcurses) speak the Kitty graphics protocol over APC `ESC _ G … ST`. Today Jetty **drains** APC (`JT_ST_SOS_PM_APC` in `Sources/CVt/jt_vt.c`) and never replies, so those apps fall back to sixel/ASCII or fail.
+Jetty is a truthful `TERM=xterm-256color` macOS terminal: locked 16-byte `Cell`, C parse/grid, `MTKView` instanced cells. Apps that display images (`kitten icat`, chafa, yazi, nvim `image.nvim`, notcurses) speak the Kitty graphics protocol over APC `ESC _ G … ST`. At the start of this plan Jetty **drained** APC (`JT_ST_SOS_PM_APC` in `Sources/CVt/jt_vt.c`) and never replied, so those apps fell back to sixel/ASCII or failed.
 
 This plan adds Kitty graphics as a **side table + extra GPU pass**, not a cell-layout change. Direct placements live in a per-screen image store keyed by `(image_id, placement_id)`. Pins are logical cell coordinates plus a history document-line id — the same absolute-line trick OSC 133 already uses (`lines_scrolled + y`). Live pins and history pins are **separate counters**. ASCII `y\n` walks the live list only, and is a no-op when `live_n == 0` even if scrollback still holds images. The GPU binds nothing extra when no placement’s **dest rect** intersects the viewport.
 
-**v1-of-graphics (shippable):** transmit + query + put + delete for still images. Formats RGB/RGBA/PNG, zlib, direct chunked + file + POSIX shm. Direct (cursor-relative) placements with z-index, source crop, dest rows/cols, pixel offsets, `C=1`. Query `OK` is not advertised until put can store a pin.
+**v1-of-graphics (original shippable slice):** transmit + query + put + delete for still images. Formats RGB/RGBA/PNG, zlib, direct chunked + file + POSIX shm. Direct (cursor-relative) placements with z-index, source crop, dest rows/cols, pixel offsets, `C=1`. Query `OK` is not advertised until put can store a pin. **This slice shipped (38–43).**
 
-**Not v1:** animation (`a=f` / `a=a` / `a=c`), Unicode placeholders (`U=1`, `U+10EEEE`), relative placements (`P`/`Q`/`H`/`V`). Placeholders are a later slice in this document’s PR plan. Animation is a later plan. We do **not** claim full Kitty+Ghostty parity in the first merge.
+**Originally not v1, now shipped:** Unicode placeholders (`U=1`, `U+10EEEE`, PR 44); animation (`a=f` / `a=a` / `a=c`, `d=f`) and relative placements (`P`/`Q`/`H`/`V`, PR 45). We do **not** advertise `xterm-kitty`. JPEG/GIF as `f=` stay out.
 
 ---
 
 ## Background & Motivation
 
-### Current state (do not invent)
+### Current state at the start of this plan (do not invent)
 
-| Piece | What the code does today |
+Pre-38 snapshot. HEAD is the Shipped table above.
+
+| Piece | What the code did then |
 | --- | --- |
 | `Cell` | 16 bytes (`jt_cell.h`). `extra` at offset 14 is the rare-store id (OSC 8 URI + SGR 58). Zero bits = default empty. |
 | `jt_scr.pool_cells` | Live count of cells with a grapheme or rare `extra`. When 0: `fill_row` is lazy `erased=1`, `store_ascii_cells` does not `release_cells`, `stamp_cell` is a plain assign (`jt_grid.c`). |
@@ -49,18 +72,18 @@ Incident (PR 7): walking every cell on `fill_row` / `store_ascii_cells` / `stamp
 
 ### Pain
 
-1. **Apps already send APC `G`.** `icat`, yazi, chafa, nvim image plugins probe with `a=q` then DA1. Jetty answers DA1 and never answers the query, so they correctly conclude “no graphics.”
+1. **Apps already send APC `G`.** `icat`, yazi, chafa, nvim image plugins probe with `a=q` then DA1. At the start of this plan Jetty answered DA1 and never answered the query, so they correctly concluded “no graphics.”
 2. **Cannot densify `Cell`.** An image id in `extra` or a third content kind would either collide with OSC 8 or force `pool_cells` onto every image cell. Direct Kitty placements are **not** cell contents; they are overlays that scroll with the grid.
 3. **Cannot wrap Ghostty.** Ghostty’s store is `ImageStorage` on a page-backed `Screen` with `PageList.Pin`. Jetty has a circular `rowmap` + 50k-row ring. Copy the *protocol* and the *side-table idea*, not the pin type.
 
 ### What Ghostty / Kitty / WezTerm / foot actually do
 
-| | Kitty | Ghostty | WezTerm | foot | Jetty (this plan) |
+| | Kitty | Ghostty | WezTerm | foot | Jetty (this plan → HEAD) |
 | --- | --- | --- | --- | --- | --- |
-| Protocol | spec | full (incl. placeholders, relative, animation) | transmit/put; placeholders historically weak | sixel; no Kitty | v1 stills; placeholders later in this stack |
+| Protocol | spec | full (incl. placeholders, relative, animation) | transmit/put; placeholders historically weak | sixel; no Kitty | stills 38–43; placeholders 44; relative + animation 45 |
 | Cell | not used for direct put | pin + optional `U+10EEEE` | overlay list | n/a | side table; `Cell` unchanged |
 | GPU | compositor layers | dedicated image pass + IOSurface | texture overlays | sixel | `MTKView` extra pass; no IOSurface |
-| Quota | 320MB / buffer | 320MB; max dim 10000; max image 400MB | similar | n/a | 320MB decoded store; max dim 8192; max image 32MB |
+| Quota | 320MB / buffer | 320MB; max dim 10000; max image 400MB | similar | n/a | Plan: 320MB / 8192 / 32MB. **HEAD matches Ghostty:** 320_000_000 / 10000 / 400MB |
 | `TERM` | `xterm-kitty` | `xterm-ghostty` | `wezterm` | `foot` | **`xterm-256color`** |
 
 WezTerm is not the dialect to copy (incomplete placeholders, `enable_kitty_graphics` flag). Foot is sixel-only. Kitty is the spec. Ghostty is the implementation to match when the spec is silent.
@@ -71,7 +94,7 @@ WezTerm is not the dialect to copy (incomplete placeholders, `enable_kitty_graph
 
 ### Goals
 
-- Still-image Kitty graphics that `kitten icat`, chafa, yazi, and non-tmux nvim image plugins can use after an `a=q` probe.
+- Still-image Kitty graphics that `kitten icat`, chafa, yazi, and non-tmux nvim image plugins can use after an `a=q` probe. **HEAD also:** placeholders (tmux), relative placements, animation frames.
 - Keep every v1 lock: 16-byte `Cell`, `TERM=xterm-256color`, no Ghostty wrap, no linux16term growth, no IOSurface copy-forward.
 - Idle `y\n`: no per-cell retain/hash/width/memmove on `jt_scr_index` / `fill_row` / ASCII `print_run`. `pool_cells == 0` rules unchanged. `live_n == 0` means `index` does not walk the placement array, even if history still holds images. Canaries must not 2×.
 - Honest discovery: reply `OK` to `a=q` only when put can store a pin; do not advertise `xterm-kitty` or `KITTY_WINDOW_ID`.
@@ -85,9 +108,9 @@ WezTerm is not the dialect to copy (incomplete placeholders, `enable_kitty_graph
 | Densify `Cell` / Ghostty style table / image id in `extra` | v1 lock; OSC 8 already owns `extra` |
 | libghostty / Zig / `ghostty.h` | v1 lock |
 | Sixel, iTerm2 inline images | Different protocols; not this document |
-| Animation (`a=f`, `a=a`, `a=c`) | Later plan. Parse and reply `ENOTSUP` if `i`/`I` set |
-| Relative placements (`P`/`Q`/`H`/`V`) | Need placeholders; later slice |
-| Usage hint `N=` as a real cache policy | Parse and ignore in v1 |
+| Animation (`a=f`, `a=a`, `a=c`) | Out of the first merge. **Shipped in PR 45.** |
+| Relative placements (`P`/`Q`/`H`/`V`) | Need placeholders; later slice. **Shipped in PR 45.** |
+| Usage hint `N=` as a real cache policy | Parse and ignore in v1. **HEAD:** low bit is transient (Ghostty). |
 | JPEG / GIF as `f=` | Spec is RGB/RGBA/PNG only |
 | Walking unread cells to skip BCE | AGENTS.md lock |
 | Image atlas packed into `GlyphAtlas` | Wrong lifetime; would evict letters |
@@ -105,19 +128,19 @@ WezTerm is not the dialect to copy (incomplete placeholders, `enable_kitty_graph
 
 4. **C parser for APC `G`; C store; Swift ImageIO only for PNG; Swift Metal for paint.** RGB/RGBA/zlib/base64 stay in C. PNG/file/shm: validate caps, copy payload, `unlockForIO?()`, I/O, `relock?()` in `defer`, commit if `loading.generation` still matches. Closures are nil in unit tests. RGB→RGBA expansion (alpha=255) is C, before `addImage`. Rationale: one parser; `NSLock` is not recursive; `ParserTests.feed` never took the session lock.
 
-5. **v1 protocol slice = stills, direct placement.** Actions `t`/`T`/`q`/`p`/`d`. Media `d`/`f`/`t`/`s`. Formats 24/32/100. `o=z`. No `a=f`/`a=a`/`a=c`, no `U=1`, no `P`/`Q`. Unsupported actions with an id reply `ENOTSUP` (quiet keys still apply). Retransmit of the same `i` and put of the same `(image_id, placement_id)` **replace** in the first store PR. Rationale: `icat` / chafa / yazi; do not advertise query `OK` before replace-put exists.
+5. **v1 protocol slice = stills, direct placement.** Actions `t`/`T`/`q`/`p`/`d`. Media `d`/`f`/`t`/`s`. Formats 24/32/100. `o=z`. No `a=f`/`a=a`/`a=c`, no `U=1`, no `P`/`Q` **in the first merge**. Unsupported actions with an id reply `ENOTSUP` (quiet keys still apply). Retransmit of the same `i` and put of the same `(image_id, placement_id)` **replace** in the first store PR. Rationale: `icat` / chafa / yazi; do not advertise query `OK` before replace-put exists. **HEAD:** 44 adds `U=1`; 45 adds `a=f`/`a=a`/`a=c` and `P`/`Q`/`H`/`V`.
 
 6. **Zero-image GPU path is byte-identical to today.** `imageCount == 0` → no image pipeline bind, no extra `drawPrimitives`, no new cell instance layout, overlay stays one pass. `z >= 0` only in the viewport → today’s cell mix + ink + **decoration overlay** (UL/strike/auto-URL/preedit underline) + image pass + **cursor overlay**. Any **visible** dest rect with `z < 0` → a **new** dense two-range compositing layout (not liga ink); `DirtySkip.fullRebuild` while that bit is true. Rationale: idle neovim must not pay for icat; liga overflow is not a bg pass.
 
 7. **`TERM` stays `xterm-256color`.** Discovery is `a=q` then DA1, plus `TERM_PROGRAM=jetty`. Config `kitty-graphics = true` (default on) lands in the **same PR** that first replies to query. Off: drain APC `G` like today, **no** query reply. Rationale: v1 honesty; lying `TERM=xterm-kitty` was rejected in `DESIGN.md` alternative 6.
 
-8. **Quota 320 MiB decoded RGBA (Kitty/Ghostty store cap), max dim 8192, max one image 32 MiB, max 256 images, max 1024 placements, one loading image.** 320 MiB is the *decoded store* cap; a single image is still 32 MiB. Evict: (1) `placement_n==0`, oldest generation first; (2) if still over, evict oldest image **and all its placements** (live+hist). Never leave a pin whose `image_id` is missing. If that cannot free `max(needed, one image)`, `ENOSPC` and do not store. Rationale: match Kitty/Ghostty’s 320MB buffer quota. 105×35 @2× fullscreen RGBA is ~17 MiB.
+8. **Quota 320 MiB decoded RGBA (Kitty/Ghostty store cap), max dim 8192, max one image 32 MiB, max 256 images, max 1024 placements, one loading image.** 320 MiB is the *decoded store* cap; a single image is still 32 MiB **in the first merge**. Evict: (1) `placement_n==0`, oldest generation first; (2) if still over, evict oldest image **and all its placements** (live+hist). Never leave a pin whose `image_id` is missing. If that cannot free `max(needed, one image)`, `ENOSPC` and do not store. Rationale: match Kitty/Ghostty’s 320MB buffer quota. 105×35 @2× fullscreen RGBA is ~17 MiB. **HEAD:** max dim 10000, max image 400 MiB, quota 320_000_000 (`e314e2f`).
 
 9. **`d=a` / ED 2 / `d=p|c|x|y|q` use dest **cell-rect** intersection, not origin-only.** Unplace if the dest cell rectangle intersects the live grid (or the named cell/column/row). History-only pixels (dest entirely in sb, `dest_y1 < 0`) stay on ED 2. RIS is `jt_img_store_reset` on **both** stores + `abort_loading`. ED 0/1 / EL / ECH / ICH / DCH do not move or delete direct pins. Any `a=d` aborts an in-flight chunked upload. Rationale: a `r=10` put at `y=rows-2` then two `index`es leaves origin in history while dest still covers live rows; `CSI 2 J` must clear those remnants.
 
 10. **Do not set `KITTY_WINDOW_ID`.** That env is a Kitty process id. Query is the honest probe.
 
-11. **Auto-assign image ids like Ghostty.** Client `i=0` (and no `I`) still gets `next_auto_id` starting at 2147483647; the assigned `i` is **echoed** in the reply unless quiet suppresses it. There is no stored id=0 image. Query/delete with both `i` and `I` omitted: no reply. Both `i` and `I` set: `EINVAL`.
+11. **Auto-assign image ids like Ghostty.** Client `i=0` (and no `I`) still gets `next_auto_id` starting at 2147483647; the assigned `i` is **echoed** in the reply unless quiet suppresses it **when the client supplied `i` or `I`**. There is no stored id=0 image. Query/delete with both `i` and `I` omitted: no reply. Both `i` and `I` set: `EINVAL`. **HEAD:** implicit auto-id (icat omits `i`) does **not** generate a reply (`37b08ab`) — echoing `i=2147483647;OK` leaked into the shell.
 
 ---
 
@@ -130,9 +153,9 @@ WezTerm is not the dialect to copy (incomplete placeholders, `enable_kitty_graph
 | PNG | **ImageIO** via `jt_vt_host.png_decode`. Host **drops `session.lock`** around decode. RGB/RGBA goldens do not need it. Decode as **sRGB**. If a PNG golden mismatches Kitty, pin a fixture. |
 | shm / files | **In v1.** Sandbox is off. Emulator **process cwd** (not OSC 7). macOS tmp: `/tmp`, `/private/tmp`, `$TMPDIR` only — no `/dev/shm`. |
 | Under-text z | **In v1 GPU**, only when a **visible dest rect** has `z < 0`. Dense two-range + always-`fullRebuild`; liga ink is not that layout. |
-| Unicode placeholders | **Specified below, implemented after direct GPU** (PR 44). Not required to ship icat. `a=T,U=1` is **`ENOTSUP`** until then. |
-| Animation | **Out.** `ENOTSUP` if addressed. Later document. |
-| Relative placements | **Out of v1.** After placeholders. |
+| Unicode placeholders | **Specified below, implemented after direct GPU** (PR 44). Not required to ship icat. `a=T,U=1` is **`ENOTSUP`** until then. **HEAD: shipped.** |
+| Animation | **Out of the first merge.** `ENOTSUP` if addressed until PR 45. **HEAD: shipped** (`a=f`/`a=a`/`a=c`, `d=f`). |
+| Relative placements | **Out of v1-of-graphics.** After placeholders. **HEAD: shipped** (`P`/`Q`/`H`/`V`, parent chain 8). |
 | CSI 16 t | **Already implemented.** No graphics PR for it. |
 | `Cell.extra` for image ids | **Rejected.** |
 | GPU pixel format | **`rgba8Unorm`**, matching the C RGBA8 store. Not `bgra8Unorm`. |
@@ -186,7 +209,7 @@ APC form (spec):
 ESC _ G <key=value, ...> ; <base64 payload> ST
 ```
 
-ST is `ESC \`. Also accept BEL (0x07), matching how `jt_vt.c` already terminates OSC/DCS.
+ST is `ESC \`. The original plan also accepted BEL (0x07), matching OSC/DCS. **HEAD:** APC `G` ends on ST only (`ESC \` or C1 `0x9C`). BEL is payload. OSC/DCS still take BEL.
 
 #### v1 actions (implement)
 
@@ -198,24 +221,24 @@ ST is `ESC \`. Also accept BEL (0x07), matching how `jt_vt.c` already terminates
 | `p` | Put existing image | yes |
 | `d` | Delete | yes (all `d=` except `f`/`F`) |
 
-#### Deferred actions (parse, do not execute)
+#### Deferred actions in the first merge (parse, do not execute)
 
-| `a` | Meaning | Reply |
-| --- | --- | --- |
-| `f` | Animation frame data | `ENOTSUP` if `i` or `I` set |
-| `a` | Animation control | `ENOTSUP` |
-| `c` | Compose frames | `ENOTSUP` |
-| other | Invalid | `EINVAL` |
+| `a` | Meaning | First merge | HEAD |
+| --- | --- | --- | --- |
+| `f` | Animation frame data | `ENOTSUP` if `i` or `I` set | **shipped** (PR 45) |
+| `a` | Animation control | `ENOTSUP` | **shipped** (PR 45) |
+| `c` | Compose frames | `ENOTSUP` | **shipped** (PR 45) |
+| other | Invalid | `EINVAL` | `EINVAL` |
 
 Quiet `q=0` (default) replies; `q=1` suppresses `OK`; `q>=2` suppresses all (Ghostty `Command.Quiet`). Continuation chunks may carry `q`.
 
 #### v1 keys
 
-**Transmission** (`jt_img_tx`): `f` 24/32/100 (0 → RGBA, unknown → defer `EINVAL` at execute so the id can be echoed), `t` `d`/`f`/`t`/`s`, `s`/`v` width/height, `S`/`O` file size/offset, `i`/`I`/`p`, `o=z`, `m` only when `t=d` (Ghostty/Kitty: ignore `m` on file/shm — mpv relies on this), `N` parsed and ignored.
+**Transmission** (`jt_img_tx`): `f` 24/32/100 (0 → RGBA, unknown → defer `EINVAL` at execute so the id can be echoed), `t` `d`/`f`/`t`/`s`, `s`/`v` width/height, `S`/`O` file size/offset, `i`/`I`/`p`, `o=z`, `m` only when `t=d` (Ghostty/Kitty: ignore `m` on file/shm — mpv relies on this), `N` parsed and ignored **in v1**. **HEAD:** `N` low bit is transient (Ghostty).
 
 **Retransmit of `i`:** if that id already exists, delete the old image **and all its placements** (live+hist), then store the new pixels. Do not display until a new put (spec). Same `(image_id, placement_id)` on put: the new placement **replaces** the old (move/resize without flicker). `p=0` always allocates a new internal placement id (multiple puts of the same image).
 
-**Display** (`jt_img_put`): `i`/`I`/`p`, source `x`/`y`/`w`/`h`, cell offsets `X`/`Y`, dest `c`/`r`, `z` as i32, `C=1` no cursor move (any other `C` moves). `U`, `P`, `Q`, `H`, `V` in v1: if `U!=0` or `P!=0` → `ENOTSUP`. `z`, `H`, `V` parse as i32 (Ghostty `finishValue`).
+**Display** (`jt_img_put`): `i`/`I`/`p`, source `x`/`y`/`w`/`h`, cell offsets `X`/`Y`, dest `c`/`r`, `z` as i32, `C=1` no cursor move (any other `C` moves). `U`, `P`, `Q`, `H`, `V` in v1-of-graphics: if `U!=0` or `P!=0` → `ENOTSUP`. `z`, `H`, `V` parse as i32 (Ghostty `finishValue`). **HEAD:** `U=1` is PR 44; `P`/`Q`/`H`/`V` are PR 45.
 
 **Source crop (Kitty defaults 0 = remainder):** after the image size is known, `src_w == 0` → `width - src_x`; `src_h == 0` → `height - src_y`. Same for omitted keys. A put with no crop stores the full image, not an empty dest.
 
@@ -232,9 +255,9 @@ Quiet `q=0` (default) replies; `q=1` suppresses `OK`; `q>=2` suppresses all (Gho
 
 Cursor after put (unless `C=1`): add the **resolved** dest columns and dest rows (the cell rectangle actually used — for `pixel_size`, `ceil(dest_w / cell_w)` and `ceil(dest_h / cell_h)` at **put**). Clamp. Do **not** wrap or `index`. Cursor does not reflow later on zoom.
 
-**`pending_wrap`:** a put uses the current cell (`cx`,`cy`) and does **not** consume wrap. `pending_wrap` stays set. The next **print** still wraps. Relative puts (later) never move the cursor.
+**`pending_wrap`:** a put uses the current cell (`cx`,`cy`) and does **not** consume wrap. `pending_wrap` stays set. The next **print** still wraps. Relative puts (PR 45) never move the cursor.
 
-**Delete** (`d=`): `a/A`, `i/I`, `n/N`, `c/C`, `p/P`, `q/Q`, `r/R`, `x/X`, `y/Y`, `z/Z`. `f/F` → `ENOTSUP`. Lowercase unplaces; uppercase also frees image data if `placement_n==0` after the unplace (history pins count as references — do not free while `hist_n` still points at the image). 1-based `x`/`y`. Inverted `r` range matches nothing (Kitty).
+**Delete** (`d=`): `a/A`, `i/I`, `n/N`, `c/C`, `p/P`, `q/Q`, `r/R`, `x/X`, `y/Y`, `z/Z`. `f/F` → `ENOTSUP` **in the first merge**. Lowercase unplaces; uppercase also frees image data if `placement_n==0` after the unplace (history pins count as references — do not free while `hist_n` still points at the image). 1-based `x`/`y`. Inverted `r` range matches nothing (Kitty). **HEAD:** `d=f`/`F` shipped with animation (PR 45).
 
 **Dest cell rect** (shared by paint, `d=a`, ED 2, `d=p/c/x/y/q`):
 
@@ -673,7 +696,7 @@ Do **not** set `KITTY_WINDOW_ID`. Do **not** add a private terminfo. Do **not** 
 
 Needed for tmux / some nvim configs. **Does not densify `Cell`.** `U+10EEEE` is width 1 in `jt_width.inc`. Combining `U+0305` / `U+030D` are width 0 and already `attach_mark` on the UTF-8 path.
 
-- Transmit with `q=2`, then `a=p,U=1,i=…,c=…,r=…` creates a **virtual** placement (no pin, not drawn by itself). Until PR 44, `U!=0` → `ENOTSUP`.
+- Transmit with `q=2`, then `a=p,U=1,i=…,c=…,r=…` creates a **virtual** placement (no pin, not drawn by itself). Until PR 44, `U!=0` → `ENOTSUP`. **HEAD: PR 44 shipped.**
 - Grid contains `U+10EEEE`. Diacritics → grapheme store → `pool_cells++` **only on that UTF-8 path**, never ASCII `print_run`.
 - Scan `paint[]` **after** the existing `lockDemand` blit, never the live grid, never `fill_row`. Gate: `virtual_n==0` → skip the scan.
 
@@ -694,7 +717,7 @@ Optional third diacritic: most-significant byte of a 32-bit id (`id |= dia2 << 2
 - Real placeholder images are **not** protocol placements (`a=d` `a/c/p/…` do not affect them). Delete virtuals only for `d=i/I/r/R/n/N`.
 - `GridExpand`: if the cell resolved as a placeholder, skip the letter glyph (bg remains).
 - Diacritic table: commit Kitty’s `rowcolumn-diacritics.txt` as `jt_img_diacritics.inc`. Inherit-from-left rules, left-to-right on the visible row only.
-- Still no `P`/`Q`.
+- Still no `P`/`Q` **until PR 45.** **HEAD: relative placements shipped.**
 
 ### Config
 
@@ -874,7 +897,7 @@ A 2× jump is a regression — fix before commit.
 2. PR 39 is the first honest E2E: store + put + query `OK` + `kitty-graphics` key. Rollback: `kitty-graphics = false`.
 3. PR 40+41: visible `icat` (RGB then PNG).
 4. Canaries in **every** PR, plus the history-image `y\n` canary from 39 on.
-5. Placeholders (PR 44) after icat. Animation stays a later document.
+5. Placeholders (PR 44) after icat. Animation was a later document; **PR 45 shipped** animation + relative placements.
 
 No staged percentage rollout (single-user macOS app). No compile-time flag.
 
@@ -898,7 +921,7 @@ No staged percentage rollout (single-user macOS app). No compile-time flag.
 
 ## Open Questions
 
-None remaining. Quota, PNG sRGB, and `a=T,U=1` → `ENOTSUP` are Closed Questions above.
+None remaining from the first merge. Quota, PNG sRGB, and `a=T,U=1` → `ENOTSUP` **until PR 44** are Closed Questions above. Animation/relative were closed as “later”; **PR 45 shipped them.**
 
 ---
 
@@ -921,7 +944,7 @@ Tests travel with the code they prove. New file `Tests/JettyTests/KittyGraphicsT
 | both `i` and `I` | `EINVAL` |
 | Chunk `m=1` then `m=0` | one image; mid-command other `G` aborts; `a=d` aborts |
 | `m=1` on `t=s` | ignored; one-shot load |
-| Oversize `s=9000` | `EINVAL` / no store |
+| Oversize `s=9000` | First merge: `EINVAL` / no store (max dim 8192). HEAD: 9000 is in range (max dim 10000) |
 | Dest: only `c=10`; only `r=5`; neither; both; `C=1` | cursor and stored cols/rows as dest rules |
 | `pending_wrap` then put | wrap bit still set; put at current cell |
 | `r=10` at `y=rows-2`, `index` twice | dest still intersects live rows (not origin-only) |
@@ -945,7 +968,7 @@ Tests travel with the code they prove. New file `Tests/JettyTests/KittyGraphicsT
 | 1049h with primary `hist_n==1` then alt `y\n` | ~5ms band (`img_live_n` refreshed) |
 | PNG `feed` with no session lock | `OK`/`EINVAL`; no unlock of unheld `NSLock` |
 | `a=d,d=p,x=1,y=1` | intersecting put gone |
-| `a=f` with `i=1` | `ENOTSUP` |
+| `a=f` with `i=1` | First merge: `ENOTSUP`. HEAD: stores a frame (PR 45) |
 | `q=2` | no reply |
 | GPU: no intersecting dest | `imageCount==0`; DirtySkip memcpy still skips idle rows |
 | PNG 1×1 via ImageIO | one placement |
@@ -963,7 +986,7 @@ Canaries: `testScrollRegionParseCost`, `testPrintRunCost`, `testSyncHoldParseCos
 - Ghostty `src/terminal/kitty/{graphics.zig,graphics_command.zig,graphics_storage.zig,graphics_image.zig,graphics_exec.zig,graphics_unicode.zig,graphics_animation.zig}`
 - Ghostty `src/renderer/image.zig` (placement draw, not a template to copy IOSurface)
 - Jetty `Sources/CVt/{jt_vt.c,jt_grid.c,jt_cell.h,jt_vt.h}`, `Sources/Jetty/Render/{TerminalRenderer.swift,GridExpand.swift,DirtySkip.swift,MetalTerminalView.swift,CellInstance.swift}`, `Sources/Jetty/Vt/PromptJump.swift`, `Sources/Jetty/Config/Config.swift` (`parseBool`)
-- Jetty `docs/DESIGN.md` (non-goal; alternative 6 reject `xterm-kitty`), `docs/DESIGN-follow-on.md` (non-goal), `docs/vs-ghostty.md`, `AGENTS.md`
+- Jetty `docs/DESIGN.md` (v1 non-goal; alternative 6 reject `xterm-kitty`), `docs/DESIGN-follow-on.md` (out of that grouping), `docs/vs-ghostty.md`, `AGENTS.md`
 - WezTerm Kitty support: incomplete vs spec; do not copy the dialect
 - foot issue #481: no Kitty graphics; sixel only
 
@@ -978,6 +1001,7 @@ Prefer small **honest** E2E slices. A query `OK` before put is not mergeable.
 ### PR 38 — APC `G` parse only (no query `OK`)
 
 - **Title:** `feat: parse Kitty APC G without advertising support`
+- **Status:** **done**
 - **Files:** `Sources/CVt/jt_vt.c`, `jt_vt.h`, new `jt_apc.c` (KV + base64 + quiet parse + response encoder unused), `Tests/JettyTests/KittyGraphicsTests.swift`
 - **Dependencies:** none (v1 + follow-on done)
 - **Changes:** `ESC _ G` → `JT_ST_APC_G` growable buffer cap 64 KiB. Drain non-`G` APC as today. `finish_apc` on ST/BEL. **Do not** `write_pty` `OK` for `a=q`. Unknown `a` / `a=q`: no reply (icat still falls back via DA1-only). Overflow ignore-until-ST. Canary: APC is not GROUND. Golden: `a=q` then `CSI c` → **only** DA1.
@@ -985,6 +1009,7 @@ Prefer small **honest** E2E slices. A query `OK` before put is not mergeable.
 ### PR 39 — RGB store, put, query `OK`, config, lifetime
 
 - **Title:** `feat: Kitty RGB store, put, query, and pin lifetime`
+- **Status:** **done**
 - **Files:** new `Sources/CVt/jt_img.c` / `jt_img.h`, `jt_grid.c` (`scroll_up`/`scroll_down`/`jt_scr_il`/`jt_scr_dl`/`jt_scr_ed`/`jt_scr_ris`/`jt_scr_resize`/`jt_scr_init`/`jt_scr_deinit`/`jt_scr_switch_screen_mode` only), `jt_vt.h` `jt_scr` fields, `jt_apc.c` replies, `Config.swift` `kitty-graphics` (true-set includes `on`), `Parser.swift` / session reload, `Screen.swift` snapshot, tests
 - **Dependencies:** PR 38
 - **Changes:** Both stores allocated in `jt_scr_init`. `img_live_n` refreshed on switch/RIS/clear/shift. `a=t`/`T`/`q`/`p` for `f=24/32`, `t=d`, chunk `m`. RGB→RGBA in C. Auto `i` assign+echo. Retransmit same `i` deletes old image+placements. Same `(i,p)` put replaces. Dest rules (`c`/`r`/neither), source `w`/`h` 0 = remainder. `C=1`, `pending_wrap` not consumed. `X`/`Y` clamp at put. Quiet. `d=a/A` / ED 2 = dest cell-rect ∩ live grid. `live_n`/`hist_n`; `jt_img_shift_region` at the four call sites; **no** `fill_row` hook; **no** `rotate_up` hook. Resize rows+cols. RIS resets both stores. `kitty-graphics` default true; false drains, no reply. Goldens: query then DA1; history-image 1 MiB `y\n` ~16ms; `r=10` remnant + `CSI 2 J`; sb wrap `lines_scrolled>cap`; 1049h then alt `y\n` ~5ms. **No GPU.**
@@ -992,6 +1017,7 @@ Prefer small **honest** E2E slices. A query `OK` before put is not mergeable.
 ### PR 40 — GPU pass for `z>=0`
 
 - **Title:** `feat: Metal Kitty image pass above cells`
+- **Status:** **done**
 - **Files:** new `ImagePaint.swift`, `CellInstance.swift` only if overlay split helpers, `TerminalRenderer.swift` (image pipeline, linear sampler, `rgba8Unorm` cache, `draw` under/over counts), `MetalTerminalView.swift` snapshot dest-rect under lock, copy RGBA, **unlock**, upload, prune cache; overlay split decorations vs cursor when `imageCount>0`. **Do not** change `GridExpand` cell mix.
 - **Dependencies:** PR 39
 - **Changes:** `imageCount==0` → identical draws to HEAD (one overlay pass). `jt_img_snapshot(integer_row, …)` uses PromptJump space; clip dest+UV so `int16` cannot wrap; `ImagePaint` adds `originX`/`originY` only. Visible `z>=0` → mix + ink + decorations (UL/auto-URL/preedit underline) + images + cursor. Cache drops ids not in snap. Golden: idle memcpy-skip; `r=5000` origin `y=-1` strip; sb wrap still paints the falling row.
@@ -999,6 +1025,7 @@ Prefer small **honest** E2E slices. A query `OK` before put is not mergeable.
 ### PR 41 — PNG, zlib, file, temp, shm
 
 - **Title:** `feat: Kitty PNG zlib file and shm transmit`
+- **Status:** **done**
 - **Files:** `jt_img.c`, `jt_apc.c`, `Package.swift` (`libz`, `ImageIO`), `Parser.swift` `unlockForIO`/`relock`/`png_decode`, `CVtBridge.swift`, `TerminalSession.parseBatch` installs hop, tests
 - **Dependencies:** PR 39 (parallel with 40)
 - **Changes:** `o=z` inflate (`unlockForIO` if payload `> 64 KiB`). `f=100` ImageIO via optional hop. Tests leave closures nil. `t=f`/`t=t`/`t=s`: emulator cwd, no `/dev/shm`, `S==0` shm maps whole object capped. `m` ignored on non-direct. Goldens: 1×1 PNG with **no** session lock; relative path; `/etc/passwd` fails; shm; temp unlink only with `tty-graphics-protocol` under `/tmp`/`/private/tmp`.
@@ -1006,6 +1033,7 @@ Prefer small **honest** E2E slices. A query `OK` before put is not mergeable.
 ### PR 42 — Remaining deletes, image numbers, quota eviction
 
 - **Title:** `feat: Kitty delete variants, image numbers, quota`
+- **Status:** **done**
 - **Files:** `jt_img.c`, tests
 - **Dependencies:** PR 39
 - **Changes:** `d=i/I/n/N/c/C/p/P/q/Q/r/R/x/X/y/Y/z/Z`. Intersection is dest **cell rect**, not origin. `I=` newest. Evict unused then oldest image+placements against the **320 MiB decoded-store** quota (one image still 32 MiB); never dangling pins; `ENOSPC` if cannot free. `f/F` → `ENOTSUP`. Retransmit-replace already in 39. Golden: `d=p` on a covered non-origin cell.
@@ -1013,6 +1041,7 @@ Prefer small **honest** E2E slices. A query `OK` before put is not mergeable.
 ### PR 43 — Under-text compositing (`z < 0`)
 
 - **Title:** `feat: Kitty negative-z compositing pass`
+- **Status:** **done**
 - **Files:** `GridExpand.swift` (dense `[0,n)` bg-only + `[n,2n)` glyphs), `TerminalRenderer.swift` / shaders, `DirtySkip.swift` (`fullRebuild` while `imagesUnderText`), `MetalTerminalView.swift`, tests
 - **Dependencies:** PR 40
 - **Changes:** **New** layout, not liga two-range. While `imagesUnderText`: always full rebuild, no `copyPresentedRow`. Dense `n = paintRows*cols`. Auto-URL + preedit underline in decoration overlay (under z≥0 images); cursor + preedit glyph last. `z>=0` only: PR 40 path. Golden: `z=-1` under `A`; `z < INT32_MIN/2` under `CSI 44 m` bg; skip memcpy off while under-text.
@@ -1020,17 +1049,19 @@ Prefer small **honest** E2E slices. A query `OK` before put is not mergeable.
 ### PR 44 — Unicode placeholders (v2 of graphics, same product)
 
 - **Title:** `feat: Kitty unicode placeholders U+10EEEE`
+- **Status:** **done**
 - **Files:** `jt_img.c` virtual placements, `jt_img_diacritics.inc`, `MetalTerminalView` scan of `paint[]` when `virtual_n>0`, `GridExpand` skip glyph on resolved placeholder, tests
 - **Dependencies:** PR 40, PR 42
 - **Changes:** `U=1` put. Fg/ul packing table (indexed vs RGB vs default; `jt_rare_get` for placement id). `a=d` only `i/I/r/R/n/N` affect virtuals. **Still no `P`/`Q`.** Golden: 2×2 with `U+0305`/`U+030D` and indexed fg 42. `print_run` of `y\n` never interned a grapheme.
 
 ### PR 45 — later plan, not this stack: animation + relative placements
 
-- **Title:** *(do not open until 38–44 are done)*
+- **Title:** *(do not open until 38–44 are done)* — opened after 44.
+- **Status:** **done.** `feat: Kitty animation a=f/a=a/a=c and d=f`; `feat: Kitty relative placements P/Q/H/V`.
 - **Files:** `graphics_animation` port to C, `P`/`Q`/`H`/`V`, parent chain 8, `ETOODEEP` / `ECYCLE` / `ENOPARENT`
 - **Dependencies:** PR 44
-- **Changes:** Out of this document’s ship. mpv-in-terminal and placeholder-relative groups. Keep the spec pointers in Ghostty `graphics_animation.zig` / `resolveParent`.
+- **Changes:** Originally out of this document’s first ship. mpv-in-terminal and placeholder-relative groups. Spec pointers in Ghostty `graphics_animation.zig` / `resolveParent`. Virtual+relative is `EVIRTUAL_REL`.
 
 ---
 
-**Tracks:** 38 parse (no advertise); 39 honest CPU E2E (query+put+`live_n`+config); 40 GPU over-text dest-rect; 41 media ∥ 40; 42 deletes/quota; 43 under-text compositing; 44 placeholders. **45 is a later plan.** Usable `icat` is 39+40+41. 44 is tmux. Animation is not this document.
+**Tracks:** 38 parse (no advertise); 39 honest CPU E2E (query+put+`live_n`+config); 40 GPU over-text dest-rect; 41 media ∥ 40; 42 deletes/quota; 43 under-text compositing; 44 placeholders. **38–45 all shipped.** Usable `icat` is 39+40+41. 44 is tmux. 45 is animation + relative.

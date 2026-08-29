@@ -11,14 +11,14 @@ Observed on the same Mac, same font size, same `y\n` / neovim-tmux load: Jetty i
 | OS | macOS, Linux, (Windows later) | macOS 14+, Apple Silicon |
 | `TERM` | `xterm-ghostty` | stock `xterm-256color` |
 | Layout | windows, tabs, splits | windows only |
-| Graphics | Kitty images, custom shaders, background images | cells, sprites, emoji atlas |
+| Graphics | Kitty images, custom shaders, background images | Kitty stills + placeholders + relative + animation (APC `G`); cells, sprites, emoji atlas. No custom shaders / background images |
 | Chrome | inspector, command palette, quick terminal, settings | menus + `~/.config/jetty/config` |
 | Ligatures | font `liga` / `calt` on shaped runs | default `programming` (table hit); `on` shapes each run; letters stay cell-boxed |
 | Glyphs | Core Text subpixel position, ink-bearing quads | pixel-aligned cell tiles, nearest |
 | SGR 1 | bold face | ExtraBold face |
 | Keyboard | full `Action` union, Kitty keyboard optional | host keybinds + xterm encode |
 
-Jetty is a lightweight xterm. Tabs, splits, Kitty graphics/keyboard, Sixel, ImGui inspector, and other OS ports stay out. AppleScript command names match Ghostty for windows and terminals.
+Jetty is a lightweight xterm. Tabs, splits, Kitty **keyboard**, Sixel, ImGui inspector, and other OS ports stay out. Kitty **graphics** are in (`docs/DESIGN-kitty-graphics.md`); `TERM` stays `xterm-256color`. AppleScript command names match Ghostty for windows and terminals.
 
 ## Machine
 
@@ -28,7 +28,7 @@ Jetty is a lightweight xterm. Tabs, splits, Kitty graphics/keyboard, Sixel, ImGu
 
 **Graphemes.** Both intern multi-codepoint clusters. Jetty keeps `jt_scr.pool_cells`: the count of cells that hold a grapheme or rare `extra`. When it is 0 (the `y\n` path), `fill_row` does not scan, `store_ascii_cells` does not `release_cells`, and `stamp_cell` is a plain assign.
 
-**GPU.** Ghostty’s Metal path uses an `IOSurfaceLayer` (not `CAMetalLayer` drawables): each in-flight `FrameState` has its own IOSurface-backed `MTLTexture`, plus copy-forward / span blit and extra passes for images, shaders, and ink-bearing glyphs. Jetty is an `MTKView` of instanced quads: opaque R8 glyphs with blending **off**, a blended ink pass only for ligature overflow and BGRA emoji, then overlays (underline, cursor, progress). Instances are 32 bytes. Clean rows memcpy from the last presented ring slot; they are not re-expanded. `maximumDrawableCount = 2` is a present-latency cap on the layer, not a Ghostty contrast.
+**GPU.** Ghostty’s Metal path uses an `IOSurfaceLayer` (not `CAMetalLayer` drawables): each in-flight `FrameState` has its own IOSurface-backed `MTLTexture`, plus copy-forward / span blit and extra passes for images, shaders, and ink-bearing glyphs. Jetty is an `MTKView` of instanced quads: opaque R8 glyphs with blending **off**, a blended ink pass only for ligature overflow and BGRA emoji, then overlays (underline, cursor, progress). Visible Kitty dest rects add a linear `rgba8Unorm` image pass (and a dense bg/glyph split only while a `z<0` dest is in the viewport). Idle frames with `imageCount==0` bind nothing extra. Instances are 32 bytes. Clean rows memcpy from the last presented ring slot; they are not re-expanded. `maximumDrawableCount = 2` is a present-latency cap on the layer, not a Ghostty contrast.
 
 **Glyph cache.** Ghostty rasters a tight bbox and stores left/top bearings (`font/Glyph.zig` `offset_x` / `offset_y`). Paint is an ink-bearing quad: origin = cell + bearing, size = glyph pixels. A constraint pass (`fit` / `cover` / `stretch` / Nerd `fit_cover1`) remaps size and alignment per glyph. The atlas is a bag of variable rectangles.
 
@@ -70,13 +70,13 @@ Jetty’s idle frame is small:
 2. **32-byte instances, blend-off glyphs.** The common letter pass is opaque nearest-filter R8 over a cell-sized atlas tile at an integer origin. Ghostty’s ink-bearing, blended, subpixel-positioned glyphs cost more fragment time per cell (variable bbox, bearings, often alpha blend). Jetty only blends ligature overflow and emoji.
 3. **No shape on the letter path.** A neovim row is atlas lookups of cell-boxed tiles, not HarfBuzz. `programming` `CTLine`s only table spans. `on` shapes each run then paints the same tiles; it is almost as fast as `programming`. Ghostty shapes runs as the default.
 4. **No style intern on idle.** The grid already holds paint-ready colors. OSC 4 / palette change invalidates GPU skip once; it does not hash styles every frame.
-5. **No extra compositor.** No Kitty image atlas, no shadertoy, no background image, no ImGui inspector. That work is not “optimized away”; it is not in the process.
+5. **No extra compositor on idle.** No shadertoy, no background image, no ImGui inspector. Kitty images cost a pass **only** when a dest rect intersects the viewport (`imageCount==0` is the HEAD cell path). That idle work is not “optimized away”; it is skipped.
 6. **macOS + Apple Silicon only.** One Metal path, no GTK/Vulkan/Win32 tax on the hot threads.
 
 Together that is why Activity Monitor / powermetrics show roughly half the CPU+GPU for the same editor session, while vtebench only moves a few percent. The byte-eating path was already tight. The frame path was fat in Ghostty because the product is larger.
 
 ## Honesty
 
-Jetty is slower or incomplete where Ghostty is a different product: Kitty graphics, tabs/splits layout, ink-bearing italic, Linux. Full ligatures (`ligatures = on`) are not in that list: they are almost as fast as default `programming`, and not slower than Ghostty’s shaped runs. Cell-boxed letters clip italic and some Nerd icons; Ghostty’s bearing + constraint path does not. Do not advertise `xterm-kitty`. Do not claim a smaller cell; Ghostty’s 8-byte cell is denser RAM and a more expensive mutate. Jetty pays 16 bytes to keep print and paint on one struct.
+Jetty is slower or incomplete where Ghostty is a different product: tabs/splits layout, ink-bearing italic, Kitty keyboard, Linux. Kitty **graphics** are not in that list (stills, placeholders, relative, animation). Full ligatures (`ligatures = on`) are not in that list: they are almost as fast as default `programming`, and not slower than Ghostty’s shaped runs. Cell-boxed letters clip italic and some Nerd icons; Ghostty’s bearing + constraint path does not. Do not advertise `xterm-kitty`. Do not claim a smaller cell; Ghostty’s 8-byte cell is denser RAM and a more expensive mutate. Jetty pays 16 bytes to keep print and paint on one struct.
 
 Sequence parity is “Ghostty as spec.” Paint and host chrome are Jetty’s.

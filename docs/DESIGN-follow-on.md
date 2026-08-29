@@ -5,24 +5,37 @@
 | Document | Design (follow-on) |
 | Author | TBD |
 | Date | 2026-08-22 |
-| Status | Draft |
+| Updated | 2026-08-29 |
+| Status | **Shipped** except later-plan **26 remainder** (shell inject) and **33** (secure input). PR 37 skipped. |
 | Bundle ID | `dev.jetty.app` |
-| Baseline | v1 DESIGN `docs/DESIGN.md`; HEAD `573cf05` on `master` |
+| Baseline | v1 DESIGN `docs/DESIGN.md`; this plan started at HEAD `573cf05` |
 | Audience | Senior engineers who already know v1 (16-byte `Cell`, C VT, linux16term Metal) |
 
-This is design only. It does not implement the emulator. v1 PR plan 1–17 is **done**. This document is the next plan.
+v1 PR plan 1–17 is **done**. This document is the daily-driver follow-on. Proposed Design below is the original spec; **Status** on each PR is HEAD.
 
 Ghostty (`https://github.com/ghostty-org/ghostty`) is the **parity baseline** for xterm semantics and for “what a daily macOS terminal does.” It is not a library. Do not wrap `libghostty`, Zig, or `ghostty.h`.
+
+### HEAD vs this plan
+
+| Track | HEAD |
+| --- | --- |
+| 18–25, 27–32, 34–36 | **done** (22 ligatures, 23 compact 32-byte instances, 20 dirty-row skip, 24 auto URL, 25 jump, 27 search, 28 rect select, 29 drag-drop, 30 notify/progress, 31 keybinds, 32 opacity, 34 DEC 2027, 35 UCD pin, 36 `.app`/notary) |
+| 21 ink-bearing letters | **withdrawn** (letters stay cell-boxed; italic/Nerd still clip) |
+| 26 shell inject + OSC 7 cwd | **partial.** Cmd+N inherits cwd from OSC 7, else the session shell, else spawn dir (`jt_pty_spawn_ex` `cwd`). No `extra_env`, no bash/zsh/fish/nu snippets. Jump-to-prompt needs OSC 133 from the shell. |
+| 33 secure input | **later.** Config parses `macos-auto-secure-input`; `toggle_secure_input` is a no-op. No menu, no `EnableSecureEventInput`. |
+| 37 xcodeproj | **skipped** (notarization did not need it) |
+| Kitty graphics | **out of this document.** Shipped in `docs/DESIGN-kitty-graphics.md` (38–45). Kitty keyboard / `TERM=xterm-kitty` still out. |
+| Extra on `master` (not numbered here) | AppleScript; XTGETTCAP / DECRQSS; CSI 16 t and 22/23 t title stack; DSR 996/998; inband 2048; reverse-wrap 1045; XTVERSION; `progress-style`; Cmd+V clipboard PNG; 16K-aligned grid; Metal `maximumDrawableCount = 2`; Ghostty-like ScrollPhysics coast; DEC 2026 hold-parse like Alacritty |
 
 ---
 
 ## Overview
 
-v1 is a truthful `TERM=xterm-256color` macOS terminal: 16-byte inline `Cell`, C parse/grid, AppKit + `MTKView` instanced cells, IME, mouse, OSC 0/2/4/7/8/10/11/12/52/133, DEC 2026, ExtraBold SGR 1, sprites before the font. It is correct enough to daily-drive neovim and tmux. It is not yet pleasant enough to switch to from Ghostty: ligatures are off and cannot paint, italic/Nerd ink clips to the cell, GPU expand rebuilds every visible row every frame, OSC 133 marks have no UI, URLs require OSC 8, Smulx curly/dotted/dashed store bits but paint as a single bar, and several DESIGN.md config keys were never wired.
+At v1 HEAD `573cf05`, Jetty was a truthful `TERM=xterm-256color` macOS terminal: 16-byte inline `Cell`, C parse/grid, AppKit + `MTKView` instanced cells, IME, mouse, OSC 0/2/4/7/8/10/11/12/52/133, DEC 2026, ExtraBold SGR 1, sprites before the font. It was correct enough to daily-drive neovim and tmux. It was not yet pleasant enough to switch to from Ghostty: ligatures were off and could not paint, italic/Nerd ink clipped to the cell, GPU expand rebuilt every visible row every frame, OSC 133 marks had no UI, URLs required OSC 8, Smulx curly/dotted/dashed stored bits but painted as a single bar, and several DESIGN.md config keys were never wired.
 
-This follow-on is **daily-driver parity** on macOS. It lands the named v1 leftovers (ligatures, dirty-row GPU skip, ink-bearing quads, compact instances, jump-to-prompt, Unicode width bump, notarization, DEC 2027, fuller Smulx) plus the Ghostty-switcher features that matter for neovim/tmux/shell: auto URL, scrollback search, keybind file, rectangular selection, drag-drop paths, OSC 9/777 notifications, OSC 9;4 progress, `font-family` / `palette-N` / `adjust-cell-*`, and background opacity. Shell-integration inject and macOS secure input wait for a later plan.
+This follow-on is **daily-driver parity** on macOS. It landed the named v1 leftovers (ligatures, dirty-row GPU skip, compact instances, jump-to-prompt, Unicode width bump, notarization, DEC 2027, fuller Smulx) plus the Ghostty-switcher features that matter for neovim/tmux/shell: auto URL, scrollback search, keybind file, rectangular selection, drag-drop paths, OSC 9/777 notifications, OSC 9;4 progress, `font-family` / `palette-N` / `adjust-cell-*`, and background opacity. Ink-bearing letter quads were **withdrawn**. Shell-integration inject and macOS secure input wait for a later plan (26 remainder, 33).
 
-It does **not** become Ghostty. Tabs, splits, Kitty graphics/keyboard, Sixel, inspector, command palette, quick terminal, settings GUI, and other OS ports stay out.
+It does **not** become Ghostty. Tabs, splits, Kitty **keyboard**, Sixel, inspector, command palette, quick terminal, settings GUI, and other OS ports stay out. Kitty **graphics** were out of *this* grouping and shipped in `docs/DESIGN-kitty-graphics.md`.
 
 ---
 
@@ -30,7 +43,7 @@ It does **not** become Ghostty. Tabs, splits, Kitty graphics/keyboard, Sixel, in
 
 ### Current v1 surface (do not re-propose)
 
-Shipped and locked. Treat these as present:
+Shipped and locked **at the start of this follow-on**. Treat these as present then:
 
 IME (`NSTextInputClient`), mouse 9/1000/1002/1003/1006/1007, 2004/1004, OSC 0/2/4/10/11/12/52/8/7/133, DEC 2026 Alacritty hold-parse 150 ms (no grid snapshot, GPU paints committed frames), CSI 14/18 t, DECSCUSR overlay, selection + copy wrap-join including history, Shift+Enter LF, NEON UTF-8 3-byte + fused wide print, BGRA emoji atlas, ExtraBold SGR 1, sprites (box/block/braille/geometric/powerline/branch) draw **before** the font when `SpriteFace.covers` (`573cf05`).
 
@@ -48,32 +61,34 @@ Performance canaries (do not regress; release, 105×35). Source: `AGENTS.md`. Do
 
 A 2× jump on those is a regression — fix before commit. `jt_scr.pool_cells == 0` must still skip per-cell retain/release on ASCII `y\n` scroll/print. No partial-row BCE sneak-in.
 
-### v1 leftovers (named, not built)
+### v1 leftovers (named; this is the v1-HEAD snapshot)
 
-From DESIGN.md PR plan and closed questions:
+From DESIGN.md PR plan and closed questions. **HEAD** column is after this follow-on.
 
-| Leftover | v1 state |
-| --- | --- |
-| Ligatures | Off. Per-cell rasterize. Atlas key is a scalar/`UInt64` mix, not a shaped-run key. `liga`/`calt` CT feature bits were never applied (off in practice because nothing shapes across cells). |
-| Dirty-row GPU skip | `jt_buf.dirty[rows]` is stored and set on mutate. `MetalTerminalView.draw` never reads it. Expand rebuilds every visible row. Dirty is **never cleared**. |
-| Ink-bearing quads | Cell-boxed R8. `CellInstance` origin/size can already represent a tight quad; atlas does not store bearings. Italic/Nerd clip. |
-| Compact instances | 20-float / 80-byte `CellInstance` (`Sources/Jetty/Render/CellInstance.swift`). |
-| Jump-to-prompt | OSC 133 parse/store in `TerminalSession.osc133` keyed by `lines_scrolled + y`, cap 4096. No UI, no key. Alt-screen marks still append using primary `lines_scrolled`. |
-| Width-table Unicode bump | **done.** UCD 17.0.0 pinned in `scripts/unicode/` and `gen-width-table.py`. |
-| Cell blink (`ATTR_BLINK`) | SGR 5/6 store the bit. v1 DESIGN toggles glyph visibility every 500 ms. `GridExpand` never reads it. Cursor blink is implemented. |
-| xcodeproj / notarization | **done (PR 36).** `scripts/build-app.sh` assembles `dist/Jetty.app`, ad-hoc sign. `scripts/notarize.sh` for Developer ID. No xcodeproj. |
-| DEC 2027 | **done.** Default off. DECRPM 1/2. UTF-8 scalar path only. |
-| Smulx curly/dotted/dashed | SGR `4:3`/`4:4`/`4:5` pack `UL_CURLY`/`UL_DOTTED`/`UL_DASHED` (`jt_sgr.c`, `jt_cell.h`). Overlay paints **one** bar for any non-zero UL except double (`MetalTerminalView.writeUnderlineOverlays`). |
-
-Also incomplete versus v1 DESIGN.md itself (not a new idea — a hole):
-
-| Hole | DESIGN.md | Code |
+| Leftover | v1 state | HEAD |
 | --- | --- | --- |
-| `font-family` | Config key, Core Text family, fallback to bundled Mono | `AppConfig` has no field; `CellMetrics.measure` always uses `EmbeddedFonts` |
-| `palette-0`…`palette-15` | Config overlay on compiled 0–15 | Not parsed. Compiled 0–15 is Eighties Black (`jt_grid.c` `jt_palette_reset`), cube 16–255 is xterm |
-| Strike / overline paint | Overlay pass | Bits set in SGR 9/53; overlay never reads `ATTR_STRIKETHROUGH` / `ATTR_OVERLINE` |
+| Ligatures | Off. Per-cell rasterize. Atlas key is a scalar/`UInt64` mix, not a shaped-run key. `liga`/`calt` CT feature bits were never applied (off in practice because nothing shapes across cells). | **done (PR 22).** Default `programming`. Letters stay cell-boxed. |
+| Dirty-row GPU skip | `jt_buf.dirty[rows]` is stored and set on mutate. `MetalTerminalView.draw` never reads it. Expand rebuilds every visible row. Dirty is **never cleared**. | **done (PR 20).** |
+| Ink-bearing quads | Cell-boxed R8. `CellInstance` origin/size can already represent a tight quad; atlas does not store bearings. Italic/Nerd clip. | **withdrawn (PR 21).** Italic/Nerd still clip. |
+| Compact instances | 20-float / 80-byte `CellInstance` (`Sources/Jetty/Render/CellInstance.swift`). | **done (PR 23).** 32-byte, `int16` origin, u16 pixel UVs. |
+| Jump-to-prompt | OSC 133 parse/store in `TerminalSession.osc133` keyed by `lines_scrolled + y`, cap 4096. No UI, no key. Alt-screen marks still append using primary `lines_scrolled`. | **done (PR 25).** Cmd+Shift+Up/Down. Inject still later (26). |
+| Width-table Unicode bump | **done.** UCD 17.0.0 pinned in `scripts/unicode/` and `gen-width-table.py`. | done (PR 35) |
+| Cell blink (`ATTR_BLINK`) | SGR 5/6 store the bit. v1 DESIGN toggles glyph visibility every 500 ms. `GridExpand` never reads it. Cursor blink is implemented. | **done (PR 19).** Off phase `fg=bg`. |
+| xcodeproj / notarization | **done (PR 36).** `scripts/build-app.sh` assembles `dist/Jetty.app`, ad-hoc sign. `scripts/notarize.sh` for Developer ID. No xcodeproj. | done; PR 37 skipped |
+| DEC 2027 | **done.** Default off. DECRPM 1/2. UTF-8 scalar path only. | done (PR 34) |
+| Smulx curly/dotted/dashed | SGR `4:3`/`4:4`/`4:5` pack `UL_CURLY`/`UL_DOTTED`/`UL_DASHED` (`jt_sgr.c`, `jt_cell.h`). Overlay paints **one** bar for any non-zero UL except double (`MetalTerminalView.writeUnderlineOverlays`). | **done (PR 19).** Curly is 4 overlay quads, not an atlas strip. |
+
+Also incomplete versus v1 DESIGN.md itself at the start of this follow-on (not a new idea — a hole):
+
+| Hole | DESIGN.md | v1 code | HEAD |
+| --- | --- | --- | --- |
+| `font-family` | Config key, Core Text family, fallback to bundled Mono | `AppConfig` has no field; `CellMetrics.measure` always uses `EmbeddedFonts` | **done (PR 18)** |
+| `palette-0`…`palette-15` | Config overlay on compiled 0–15 | Not parsed. Compiled 0–15 is Eighties Black (`jt_grid.c` `jt_palette_reset`), cube 16–255 is xterm | **done (PR 18)** |
+| Strike / overline paint | Overlay pass | Bits set in SGR 9/53; overlay never reads `ATTR_STRIKETHROUGH` / `ATTR_OVERLINE` | **done (PR 19)** |
 
 ### Pain for a Ghostty switcher on macOS
+
+At v1 HEAD `573cf05` (this is why the follow-on existed):
 
 1. **Paint looks boxed.** Italic clips. `=>` in JetBrains Mono does not ligate. neovim `curly` underline is a flat bar.
 2. **Idle GPU cost.** 5K ~32k cells × 80 B × 60 Hz ≈ 150 MB/s instance upload even when one status line changed. C `dirty[]` exists for this.
@@ -107,7 +122,7 @@ Ghostty is a multi-OS product with tabs, splits, Kitty graphics, an ImGui inspec
 | libghostty / Zig / `ghostty.h` | v1 lock |
 | Grow linux16term / wrap maxterm | v1 lock |
 | Densify `Cell` / Ghostty style table | v1 lock |
-| Kitty graphics, Kitty keyboard, `TERM=xterm-kitty` | Would lie about `TERM` |
+| Kitty graphics, Kitty keyboard, `TERM=xterm-kitty` | Out of **this** grouping (would not change `TERM`). Graphics later shipped in `docs/DESIGN-kitty-graphics.md`. Keyboard / `xterm-kitty` still out. |
 | Sixel, iTerm2 inline images, tmux control mode | Graphics/control protocols; not daily xterm |
 | Linux / GTK / Windows | Product is macOS |
 | Tabs, splits, `VtManager`, WebKit | Lightweight surface |
@@ -131,10 +146,10 @@ Ghostty is a multi-OS product with tabs, splits, Kitty graphics, an ImGui inspec
 
 Keep the spec. Do not implement in this follow-on.
 
-| Later PR | What |
-| --- | --- |
-| 26 | Shell integration inject + OSC 7 cwd inherit |
-| 33 | Secure keyboard entry |
+| Later PR | What | HEAD |
+| --- | --- | --- |
+| 26 | Shell integration inject + OSC 7 cwd inherit | **Partial.** Cwd inherit for new windows shipped. Inject snippets / `extra_env` still later. |
+| 33 | Secure keyboard entry | Still later. Config + keybind stub only. |
 
 ---
 
@@ -899,7 +914,7 @@ Sign: `codesign --force --sign "Developer ID Application: …" --options runtime
 
 ## Parity matrix (Ghostty → jetty)
 
-Status: **now** = v1 HEAD `573cf05`. **follow-on** = this document. **out** = will not do.
+Status: **now** = v1 HEAD `573cf05` when this document was written. **follow-on** = this plan. **HEAD** = shipped unless marked later/out. **out** = will not do in this product.
 
 ### VT / cell / TERM
 
@@ -908,20 +923,20 @@ Status: **now** = v1 HEAD `573cf05`. **follow-on** = this document. **out** = wi
 | `TERM=xterm-ghostty` + private terminfo | `xterm-256color` stock | now | Do not change |
 | Truecolor, 256, SGR mouse 1006, 2004, 1004, 2026 | now | now | |
 | 16-byte inline cell vs 8-byte style table | 16-byte locked | now | out to densify |
-| DEC 2027 grapheme width | ignore, DECRPM 4 | **now** | default off |
+| DEC 2027 grapheme width | ignore, DECRPM 4 | **now** | **shipped** (PR 34); default off |
 | Kitty keyboard / `fullkbd` | no | **out** | would require `TERM` lie |
 | 8-bit C1 CSI | no | **out** | |
 | SGR 1 bold face | ExtraBold | now | |
-| Smulx 4:0–4:5 | store; paint single/double | follow-on | curly/dotted/dashed |
+| Smulx 4:0–4:5 | store; paint single/double | follow-on | **shipped** (PR 19); curly is 4 quads |
 | Setulc SGR 58 | rare store + paint | now | |
 | OSC 8 | now | now | |
-| OSC 7 | store | follow-on UX | inherit cwd + inject |
-| OSC 133 | store, no UI | follow-on | jump-to-prompt |
+| OSC 7 | store | follow-on UX | inherit cwd **shipped** (Cmd+N); inject still later (26) |
+| OSC 133 | store, no UI | follow-on | jump-to-prompt **shipped** (PR 25); needs inject or a shell that already emits 133 |
 | OSC 52 allow/ask | now | now | |
-| OSC 9 / 777 notify | drain | follow-on | |
-| OSC 9;4 progress | drain | follow-on | |
-| OSC 21 Kitty colors | drain | **out** | |
-| Kitty graphics | no | **out** | |
+| OSC 9 / 777 notify | drain | follow-on | **shipped** (PR 30) |
+| OSC 9;4 progress | drain | follow-on | **shipped** (PR 30); `progress-style` |
+| OSC 21 Kitty colors | drain | **out** | still drain |
+| Kitty graphics | no | **out of this doc** | **shipped** in `docs/DESIGN-kitty-graphics.md` |
 | Sixel | no | **out** | |
 | iTerm2 images | no | **out** | |
 | tmux control mode | no | **out** | |
@@ -933,18 +948,18 @@ Status: **now** = v1 HEAD `573cf05`. **follow-on** = this document. **out** = wi
 
 | Ghostty | jetty now | follow-on | notes |
 | --- | --- | --- | --- |
-| `font-family` list + styles | bundled Mono only | follow-on | one family name |
-| `font-feature` / ligatures | off, no shaper | follow-on | default `programming` |
-| Ink-bearing / CoreText shape | cell-boxed | follow-on | ghosvt bearings |
+| `font-family` list + styles | bundled Mono only | follow-on | **shipped** (PR 18); one family name |
+| `font-feature` / ligatures | off, no shaper | follow-on | **shipped** (PR 22); default `programming` |
+| Ink-bearing / CoreText shape | cell-boxed | follow-on | **withdrawn** for letters (PR 21). Liga overflow is coverage ink. |
 | Sprites before font | now (`573cf05`) | now | lock |
-| `adjust-cell-width/height` | no | follow-on | px delta |
+| `adjust-cell-width/height` | no | follow-on | **shipped** (PR 18) |
 | Other `adjust-*` (underline, icon, …) | no | **out** | one pair is enough |
 | IOSurface copy-forward / Highway | no | **out** | |
-| Dirty-row skip | bits stored, unused | follow-on | |
-| Compact instances | 80 B | follow-on | 32 B |
+| Dirty-row skip | bits stored, unused | follow-on | **shipped** (PR 20) |
+| Compact instances | 80 B | follow-on | **shipped** (PR 23); 32 B |
 | Custom shaders | no | **out** | |
 | Background image | no | **out** | |
-| `background-opacity` | 1 | follow-on | |
+| `background-opacity` | 1 | follow-on | **shipped** (PR 32) |
 | `background-blur` | no | **out** | |
 
 ### Input / chrome
@@ -953,24 +968,24 @@ Status: **now** = v1 HEAD `573cf05`. **follow-on** = this document. **out** = wi
 | --- | --- | --- | --- |
 | IME | now | now | |
 | Mouse 9/1000/1002/1003/1006/1007 | now | now | |
-| `link-url` auto | OSC 8 only | follow-on | `NSDataDetector` |
-| Rectangular selection | stream only | follow-on | Option-drag |
-| Scrollback search | no | follow-on | substring |
-| `keybind` language | NSMenu + a few chords | follow-on | small table |
+| `link-url` auto | OSC 8 only | follow-on | **shipped** (PR 24); `NSDataDetector` |
+| Rectangular selection | stream only | follow-on | **shipped** (PR 28); Option-drag |
+| Scrollback search | no | follow-on | **shipped** (PR 27); substring |
+| `keybind` language | NSMenu + a few chords | follow-on | **shipped** (PR 31); small table |
 | Command palette | no | **out** | |
 | Quick terminal | no | **out** | |
 | Inspector | no | **out** | |
 | Tabs / splits | no | **out** | |
 | Settings GUI | no | **out** | |
-| Drag-drop paths | no | follow-on | |
-| Secure input | no | **later** | not this follow-on |
-| Shell integration inject | no | **later** | OSC 7/133 only; not this follow-on |
-| `jump_to_prompt` | no UI | follow-on | |
-| Notifications | no | follow-on | |
-| Progress bar | no | follow-on | |
+| Drag-drop paths | no | follow-on | **shipped** (PR 29) |
+| Secure input | no | **later** | still later (PR 33); config stub only |
+| Shell integration inject | no | **later** | still later (PR 26 remainder). Cwd inherit shipped. |
+| `jump_to_prompt` | no UI | follow-on | **shipped** (PR 25) |
+| Notifications | no | follow-on | **shipped** (PR 30) |
+| Progress bar | no | follow-on | **shipped** (PR 30) |
 | Clipboard HTML/VT copy | plain UTF-8 | **out** | |
 | `copy-on-select` | now | now | |
-| Config file | now, few keys | follow-on | |
+| Config file | now, few keys | follow-on | **shipped** (PR 18 + 31 + graphics key in later doc) |
 
 ### Platform / ship
 
@@ -979,9 +994,9 @@ Status: **now** = v1 HEAD `573cf05`. **follow-on** = this document. **out** = wi
 | macOS | now | now | |
 | Linux GTK / Windows | no | **out** | |
 | xcodeproj | no | optional | not a gate |
-| Notarization | no | follow-on | scripts |
+| Notarization | no | follow-on | **shipped** (PR 36); scripts |
 | Auto-update | no | **out** | |
-| AppleScript | yes | Ghostty command names for windows/terminals; no tabs/splits | |
+| AppleScript | yes | Ghostty command names for windows/terminals; no tabs/splits. **Shipped.** | |
 | Sandbox | off | off | lock |
 
 ---
@@ -1213,11 +1228,11 @@ Interactive echo still < one 60 Hz frame. Parse budget 1 ms unchanged.
 
 ## Open Questions
 
-1. **Does Darwin `tcgetattr` on the PTY master reflect slave echo?** If no, drop auto secure-input and keep the menu. Resolve in the secure-input PR with a 10-line probe, not a design fight.
-2. **Curly underline: atlas sine strip vs N quads.** Recommend strip (one quad/cell). Revisit if the strip looks wrong at non-integer scales.
-3. **Should `copy last output` (OSC 133 C/D) ship with jump-to-prompt?** Recommend **no** in the jump PR; add later if the mark list is enough (it is).
-4. **xcodeproj now or never?** Recommend never until Sparkle/asset catalog is real. Notarization scripts first.
-5. **`background-opacity-cells`?** Default Ghostty false is what we implement without a key. Add the key only if a user needs tmux-transparent cells.
+1. **Does Darwin `tcgetattr` on the PTY master reflect slave echo?** If no, drop auto secure-input and keep the menu. Resolve in the secure-input PR with a 10-line probe, not a design fight. **Still open** (PR 33 not started).
+2. **Curly underline: atlas sine strip vs N quads.** Recommend strip (one quad/cell). Revisit if the strip looks wrong at non-integer scales. **Resolved in code:** 4 overlay quads (`OverlayPaint`), not a strip.
+3. **Should `copy last output` (OSC 133 C/D) ship with jump-to-prompt?** Recommend **no** in the jump PR; add later if the mark list is enough (it is). **Still out.**
+4. **xcodeproj now or never?** Recommend never until Sparkle/asset catalog is real. Notarization scripts first. **Skipped (PR 37).**
+5. **`background-opacity-cells`?** Default Ghostty false is what we implement without a key. Add the key only if a user needs tmux-transparent cells. **Still no extra key.**
 
 ---
 
@@ -1289,6 +1304,7 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 ### PR 24 — Auto-detected URLs
 
 - **Title:** `feat: Cmd-hover URL detect without OSC 8`
+- **Status:** **done**
 - **Files:** new `Input/AutoURL.swift`, `MetalTerminalView.swift`, `LinkURL.swift`, `Config.swift` `link-url`
 - **Dependencies:** PR 18
 - **Changes:** `NSDataDetector` on wrap-joined row at Cmd-hover/click. Filter `LinkURL.openable`. OSC 8 wins. Overlay-only; does not invalidate GPU skip. No print-path work.
@@ -1296,6 +1312,7 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 ### PR 25 — Jump-to-prompt
 
 - **Title:** `feat: jump to OSC 133 prompts`
+- **Status:** **done**
 - **Files:** `TerminalSession.swift`, `MetalTerminalView.swift`, `main.swift`, `jt_vt.c` / `jt_vt.h` (`history_cleared` after ED 3), `Config.swift` default keys
 - **Dependencies:** none for the list (already stored)
 - **Changes:** Ignore OSC 133 while `in_alt`. Jump skips marks outside `[lines_scrolled - sb_len, lines_scrolled + rows)`. ED 3 and RIS in `jt_vt.c` → `history_cleared` → `osc133.removeAll()`. Default `Cmd+Shift+Up/Down` (Ghostty macOS). No clamp-to-0. No click-to-jump. No copy-last-output.
@@ -1303,7 +1320,7 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 ### PR 26 — Shell integration inject + OSC 7 cwd inherit
 
 - **Title:** `feat: shell integration for OSC 7 and 133`
-- **Status:** **later plan.** Not this follow-on. Spec stays for the next document. `osc7` is stored. Spawn is still `login -flp`. No snippets.
+- **Status:** **later plan (partial).** Not this follow-on. Spec stays for the next document. `osc7` is stored. `jt_pty_spawn_ex` takes `cwd` (Cmd+N inherit shipped). No `extra_env`. No snippets.
 - **Files:** `Sources/CPty/{pty_spawn.c,pty_spawn.h}`, `Sources/Jetty/Resources/Shell/{bash,zsh,fish,nu…}`, `JettyApp/main.swift`, `Config.swift`
 - **Dependencies:** PR 25 more useful; not a hard dep
 - **Changes:** `jt_pty_spawn_ex(cwd, extra_env)`. Child `chdir` then `setenv` then `login -flp`. Copy `osc7` under `session.lock`. Per-shell env table. Set `JETTY_ZSH_ZDOTDIR` / `JETTY_BASH_ENV` only when overwriting a previous value; snippets use `${…:-$HOME}`. Skip `/bin/bash` on Darwin. `TERM=xterm-256color`. No sudo/terminfo.
@@ -1311,6 +1328,7 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 ### PR 27 — Scrollback search
 
 - **Title:** `feat: find in scrollback`
+- **Status:** **done**
 - **Files:** `MetalTerminalView.swift`, `main.swift` Edit **Find**, `Screen.swift` if a row-text helper helps
 - **Dependencies:** none
 - **Changes:** `Cmd+F` titlebar accessory `NSTextField`. Relayout on show/hide (`safeAreaInsets`). First responder to the field; Escape restores the surface. Substring, `Cmd+G` / `Cmd+Shift+G`. Search-active → GPU full rebuild. No regex. No helper text.
@@ -1318,6 +1336,7 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 ### PR 28 — Rectangular selection
 
 - **Title:** `feat: Option-drag rectangular selection`
+- **Status:** **done**
 - **Files:** `MetalTerminalView.swift`, `GridExpand.swift` `CellSelection`, `Screen.copySelection`
 - **Dependencies:** none
 - **Changes:** Option-drag sets rect mode. Paint and copy column-clamped, no wrap-join. Selection → GPU full rebuild (KD 6). Stream select unchanged.
@@ -1325,9 +1344,10 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 ### PR 29 — Drag-drop paths
 
 - **Title:** `feat: paste dropped files as quoted paths`
+- **Status:** **done**
 - **Files:** `MetalTerminalView.swift` `NSDraggingDestination`, `Clipboard.swift` quote helper
 - **Dependencies:** none
-- **Changes:** Register `.fileURL` + `.string`. Quote POSIX paths, `writePtyBlocking`, honor 2004. Do not spawn windows.
+- **Changes:** Register `.fileURL` + `.string`. Quote POSIX paths, `writePtyBlocking`, honor 2004. Do not spawn windows. Cmd+V of a clipboard image also pastes a quoted temp PNG.
 
 ### PR 30 — OSC 9 / 777 notify + OSC 9;4 progress
 
@@ -1388,10 +1408,11 @@ v1 used PRs 1–17. This plan continues at **18**. Tests travel with the code th
 ### PR 37 — Optional xcodeproj wrapper
 
 - **Title:** `chore: optional Xcode wrapper for the SwiftPM app`
+- **Status:** **skipped.** Notarization shipped without it.
 - **Files:** `macos/Jetty.xcodeproj` (if still needed after PR 36)
 - **Dependencies:** PR 36
 - **Changes:** Xcode 16 package reference to `Package.swift`. No source fork. Skip this PR if notarization shipped without it. **Recommend skipping** unless Apple tooling forces it.
 
 ---
 
-**Tracks:** 18–25, 27–32, 34–36 done/withdrawn. Host left: none. Chore 37 skip. **26 and 33 are a later plan, not this document.**
+**Tracks:** 18–25, 27–32, 34–36 done/withdrawn. Host left: none. Chore 37 skip. **26 remainder (inject) and 33 (secure input) are a later plan, not this document.** Cwd inherit for Cmd+N shipped without inject.

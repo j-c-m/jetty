@@ -2,16 +2,27 @@
 
 | Field | Value |
 | --- | --- |
-| Document | Design |
+| Document | Design (v1 lock) |
 | Author | TBD |
 | Date | 2026-08-21 |
-| Status | Draft |
+| Updated | 2026-08-29 |
+| Status | **Shipped.** PRs 1–17 on `master`. Later product: `docs/DESIGN-follow-on.md`, `docs/DESIGN-kitty-graphics.md` |
 | Bundle ID | `dev.jetty.app` |
 | Audience | Senior engineers familiar with linux16term / Ghostty / ghosvt |
 
-This is design only. It does not implement the emulator.
+This is the **v1 lock**. Closed Questions below stay closed. Do not reopen the 16-byte `Cell`, `TERM=xterm-256color`, sandbox off, or no-Ghostty-wrap.
 
 linux16term is frozen. Copy selected files into jetty; do not submodule it. Do not grow `linux16term/Sources/CVt/l16_vt.c`. Do not dual-path inside linux16term. Do not wrap Ghostty, link `libghostty-vt`, use Zig, or fork ghosvt.
+
+**HEAD is not this document’s v1 snapshot.** Compact 32-byte instances, ligatures, dirty-row skip, DEC 2027, Kitty graphics, and the daily-driver host UX live in the later docs. Proposed Design below is the v1 machine as specified; where HEAD differs, the later document wins.
+
+### Shipped after v1 (pointers, not a reopen)
+
+| Later | Document / PRs | Still out |
+| --- | --- | --- |
+| Daily-driver follow-on | `docs/DESIGN-follow-on.md` 18–25, 27–32, 34–36 | Shell inject (26 remainder), secure input (33) |
+| Kitty graphics | `docs/DESIGN-kitty-graphics.md` 38–45 | Kitty keyboard, `TERM=xterm-kitty`, Sixel |
+| Extra VT / host on the same tree | CSI 16 t, 22/23 t title stack, DSR 996/998, XTGETTCAP, DECRQSS, reverse-wrap 1045, AppleScript, Cmd+N cwd inherit | CSI 21 t **title report** (injection) |
 
 ---
 
@@ -39,7 +50,7 @@ The CPU cell is a **16-byte** C `struct Cell` with independently tagged `fg`/`bg
 | Font | IBM VGA 8×16 (VileR) | unpatched JetBrains Mono + Symbols Nerd Font | **JetBrainsMono Nerd Font Mono** (patched Mono cut) |
 | Launch | 80×25, VGA `scale` | fullscreen AppDelegate | **105×35**, font size **20**, windowed |
 | Parser | C `l16_vt.c` linux SGR / CP437 | Zig `libghostty-vt` | **new** C xterm VT |
-| GPU | `MTKView` instanced cells, dirty rows | Ghostty cells + Kitty + IOSurface-era extras | linux16term `MTKView` path |
+| GPU | `MTKView` instanced cells, dirty rows | Ghostty cells + Kitty + IOSurface-era extras | linux16term `MTKView` path. Kitty graphics later: extra pass, still no IOSurface. |
 
 linux16term `DESIGN.md` is the contrast document. Do not copy its SGR table, 2-byte cell, `kbs=\177`, or F1=`ESC [[A`.
 
@@ -83,31 +94,34 @@ Do **not** bundle a private terminfo in v1. No cap required for daily use is mis
 - macOS 14+ Apple Silicon. Swift 6 app + Metal Shading Language + C for PTY spawn **and** the VT/parser/grid hot path.
 - Truthful `TERM=xterm-256color` against stock `/usr/share/terminfo/78/xterm-256color`, plus user-required extras in [VT subset](#vt-subset).
 - 16-byte `Cell` as locked. Zero bits = empty default cell. Indexed and default colors stay tagged until **paint**.
-- UTF-8 PTY. Unicode in the cell. Wide East-Asian / emoji via a generated width table (Ghostty `codepointWidth` rules, no DEC 2027). Combining marks → grapheme store. CJK/emoji **paint** from system fallback faces + a BGRA atlas (the bundled Mono face has no CJK). CJK **input** via `NSTextInputClient`.
+- UTF-8 PTY. Unicode in the cell. Wide East-Asian / emoji via a generated width table (Ghostty `codepointWidth` rules, **no DEC 2027 in v1** — follow-on PR 34 adds the mode, default off). Combining marks → grapheme store. CJK/emoji **paint** from system fallback faces + a BGRA atlas (the bundled Mono face has no CJK). CJK **input** via `NSTextInputClient`.
 - Multi-window AppKit, one PTY per window, linux16term chrome (Cmd+N, close, hide, copy/paste/select all, zoom font size, fullscreen = more cells).
 - Sandbox **off**. `login -flp` needs a real TTY.
 - Config file only: `~/.config/jetty/config` (`XDG_CONFIG_HOME` honored), linux16term-style `key = value`.
 
 ### Non-Goals (explicit)
 
-| Capability | Why |
-| --- | --- |
-| libghostty-vt / Zig / `ghostty.h` / `CGhosttyVT` / `GHOSTTY_STATIC` | User constraint |
-| Fork ghosvt / dual-path inside linux16term / grow `l16_vt.c` | User constraint |
-| Kitty graphics, Kitty keyboard, `TERM=xterm-kitty` / `fullkbd` | Not implemented; do not advertise |
-| Sixel, iTerm2 inline images, tmux control mode | Out of scope |
-| DEC 2027 grapheme clustering | Terminal-typical widths in v1 |
-| Mouse UTF-8 1005, pixel 1016, urxvt 1015 | User: SGR 1006 or X10 only |
-| Full XTWINOPS (move, iconify, maximize, CSI 1–3 t, 21 t title report) | Ignore except CSI 14 t / 18 t |
-| Tabs, splits, `VtManager`, WebKit | Lightweight product surface |
-| Settings GUI | Config file only |
-| Scrollback compressor / byte cap | 50k **rows**, uncompressed |
-| IOSurface copy-forward / Ghostty span blit / Highway | User: linux16term `MTKView` |
-| 8-byte Ghostty style-table cell | User: 16-byte inline |
-| Ligatures (`liga` / `calt`) | Off in v1; shaper must still be able to grow |
-| Private terminfo overlay | Stock file is sufficient |
-| 8-bit C1 CSI (`0x9B`) as a control in UTF-8 | Bytes `≥ 0x80` go through the UTF-8 DFA; decoded C1 (U+0080–U+009F) is ignored |
-| Linux `CSI [[` F-key swallow | That is linux console, not xterm |
+v1 list. **Later** is HEAD, not a v1 reopen.
+
+| Capability | v1 | Later |
+| --- | --- | --- |
+| libghostty-vt / Zig / `ghostty.h` / `CGhosttyVT` / `GHOSTTY_STATIC` | User constraint | still out |
+| Fork ghosvt / dual-path inside linux16term / grow `l16_vt.c` | User constraint | still out |
+| Kitty graphics | Not implemented; do not advertise | **shipped** (`docs/DESIGN-kitty-graphics.md`). `TERM` stays `xterm-256color`. No `KITTY_WINDOW_ID`. |
+| Kitty keyboard / `TERM=xterm-kitty` / `fullkbd` | Not implemented; do not advertise | still out |
+| Sixel, iTerm2 inline images, tmux control mode | Out of scope | still out |
+| DEC 2027 grapheme clustering | Terminal-typical widths in v1 | **shipped** follow-on PR 34 (mode, default off) |
+| Mouse UTF-8 1005, pixel 1016, urxvt 1015 | User: SGR 1006 or X10 only | still out |
+| Full XTWINOPS (move, iconify, maximize, CSI 1–3 t, 21 t title report) | Ignore except CSI 14 t / 18 t | CSI **16 t** and **22/23 t** title stack shipped. CSI 21 t title report still out. |
+| Tabs, splits, `VtManager`, WebKit | Lightweight product surface | still out |
+| Settings GUI | Config file only | still out |
+| Scrollback compressor / byte cap | 50k **rows**, uncompressed | still 50k rows |
+| IOSurface copy-forward / Ghostty span blit / Highway | User: linux16term `MTKView` | still out |
+| 8-byte Ghostty style-table cell | User: 16-byte inline | still locked |
+| Ligatures (`liga` / `calt`) | Off in v1; shaper must still be able to grow | **shipped** follow-on PR 22; default `programming` |
+| Private terminfo overlay | Stock file is sufficient | still none |
+| 8-bit C1 CSI (`0x9B`) as a control in UTF-8 | Bytes `≥ 0x80` go through the UTF-8 DFA; decoded C1 (U+0080–U+009F) is ignored | still ignored as a control. APC 8-bit ST (`0x9C`) **does** end APC (Ghostty). |
+| Linux `CSI [[` F-key swallow | That is linux console, not xterm | still out |
 
 ---
 
@@ -183,6 +197,8 @@ Recorded 2026-08-21. Do not reopen.
 | Name vs Eclipse Jetty | Accept; bundle is `dev.jetty.app` |
 | maxterm | Ignore entirely |
 
+Do not treat later shipping as a reopen of these rows. Follow-on / Kitty docs: DEC 2027 (PR 34, default off); `CellInstance` 32 bytes (PR 23); ligatures default `programming` (PR 22); OSC 133 jump UI (PR 25); GPU dirty-skip (PR 20); CSI 16 t and 22/23 t title stack (not CSI 21 t report); Kitty graphics without `xterm-kitty`.
+
 ### Locked here (not reopened; engineering choices)
 
 | Choice | Lock |
@@ -200,8 +216,8 @@ Recorded 2026-08-21. Do not reopen.
 | Glyphs | Cell-boxed R8; reject ink-bearing quads in v1 |
 | IME | `NSTextInputClient`; reject Option-meta-only |
 | DECRQM | Implement; reject set/reset-only 2026 |
-| OSC 133 | Parse/store keyed by absolute line id; **no UI** in v1 |
-| GPU dirty-skip | Follow-on. v1 stores `dirty[]` and expands the visible viewport every frame |
+| OSC 133 | Parse/store keyed by absolute line id; **no UI** in v1 (jump is follow-on PR 25) |
+| GPU dirty-skip | Follow-on. v1 stores `dirty[]` and expands the visible viewport every frame (PR 20 shipped later) |
 | Width LUT | 2 bits × `0x110000` = **272 KiB** (`278_528` B), not 140 KiB |
 | Zoom step | 1 pt, clamp 8…72; Cmd+0 restores config `font-size` |
 | 8-bit C1 | Not executed; `≥ 0x80` is UTF-8; decoded C1 is ignored. APC 8-bit ST (`0x9C`) ends the string; OSC/DCS treat `0x9C` as payload |
@@ -599,10 +615,10 @@ DECSTR (`is2` / `rs2` `CSI ! p`): intermediate `!`, final `p`. Soft reset — mo
 | DECSCUSR | `Se=\E[2 q` `Ss=\E[%p1%d q` — 0/1 blink block, 2 steady block, 3/4 underline, 5/6 bar |
 | SM/RM ANSI | IRM `4` |
 | SM/RM DEC | [Modes](#modes) |
-| CSI `t` | **14** and **18** only (below) |
+| CSI `t` | **14** and **18** only in v1 (below). HEAD also **16** (cell px) and **22/23** (title stack). Still no 21 t title report. |
 | CSI `s`/`u` | location save/restore (not terminfo `sc`/`rc`) |
 
-**XTWINOPS:** `CSI 14 t` → `CSI 4 ; height_px ; width_px t` (`ghostty/src/terminal/size_report.zig` `csi_14_t`). `CSI 18 t` → `CSI 8 ; rows ; cols t`. Extra parameters → ignore (Ghostty `stream.zig` ~2261). CSI 16 t (cell px), 21 t (title report), 1–3 t, move/iconify/maximize: **ignore**. Never implement title report (injection).
+**XTWINOPS:** `CSI 14 t` → `CSI 4 ; height_px ; width_px t` (`ghostty/src/terminal/size_report.zig` `csi_14_t`). `CSI 18 t` → `CSI 8 ; rows ; cols t`. Extra parameters → ignore (Ghostty `stream.zig` ~2261). v1: CSI 16 t (cell px), 21 t (title report), 1–3 t, move/iconify/maximize: **ignore**. Never implement title report (injection). HEAD: 16 t replies `CSI 6 ; cell_h ; cell_w t`; 22/23 t push/pop window title (cap 8). 21 t report still ignored.
 
 **IL/DL** no-op outside `[scrollTop, scrollBottom]`. IND/RI only scroll at the region edge (linux16term golden: CUP below region + LF does not scroll the region). DECOM (`?6`): CUP relative to margins; v1 **implements** it (small, xterm-real). Default off.
 
@@ -631,7 +647,7 @@ From Ghostty `modes.zig` `entries` plus terminfo. Last-set mouse event mode wins
 | alt `?47` / `?1047` / save `?1048` / `?1049` | off | yes — `switchScreenMode` (47 persist; 1047 ED 2 on leave; 1049 DECSC+ED 2 enter) |
 | bracketed paste `?2004` | off | yes |
 | DEC 2026 | off | yes |
-| DEC 2027 | off | **ignore** |
+| DEC 2027 | off | **ignore in v1** (DECRPM 4). Follow-on PR 34: real mode, default off, DECRPM 1/2. |
 
 `rmm=\E[?1034l` / `smm=\E[?1034h` exist in terminfo; implementing 8-bit meta would corrupt UTF-8. No-op is the honest UTF-8 choice.
 
@@ -728,7 +744,7 @@ Terminate on BEL or ST (`ESC \`). Cap 4 KiB then ignore-until-ST.
 | 7 | cwd `file://…`. Store on the session; do not auto-`chdir`. |
 | 8 | Hyperlink `8;id=…;URI` / `8;;` end (`osc/parsers/hyperlink.zig`). `extra` + rare store. **Do not auto-open.** |
 | 52 | `Ms`. `52;c;<base64>` write; `52;c;?` read. Kinds `c` / `p` / `s` all map to **`NSPasteboard.general`** (one macOS pasteboard). Unknown kind → `c`. See [Security](#security--privacy-considerations). |
-| 133 | Semantic prompt (`osc/parsers/semantic_prompt.zig` actions L/A/N/P/B/I/C/D). **v1: parse and store, no UI** (no jump-to-prompt, no click, no copy-last-output). Marks are keyed by **absolute line id** `lines_scrolled + y`, not a live row index (IND/`sb_push` would stale a row table). Options `aid` and `cl` are stored as unparsed bytes on the mark; `click_events` is ignored. Cap 4096 marks, drop oldest on overflow. Not a cell field (Ghostty `semantic_content` does not exist here). Follow-on may add jump-to-prompt. |
+| 133 | Semantic prompt (`osc/parsers/semantic_prompt.zig` actions L/A/N/P/B/I/C/D). **v1: parse and store, no UI** (no jump-to-prompt, no click, no copy-last-output). Marks are keyed by **absolute line id** `lines_scrolled + y`, not a live row index (IND/`sb_push` would stale a row table). Options `aid` and `cl` are stored as unparsed bytes on the mark; `click_events` is ignored. Cap 4096 marks, drop oldest on overflow. Not a cell field (Ghostty `semantic_content` does not exist here). Follow-on PR 25: jump-to-prompt. Copy-last-output still out. |
 | 104 / 110 / 111 | Reset palette / default fg / default bg. |
 | unknown | Drain until BEL/ST. |
 
@@ -1121,7 +1137,7 @@ Do **not** require ghostty-bench in v1. A later `infocmp`/`tput` driven pass ove
 | Name collision with Eclipse Jetty | Low | Accept. Bundle `dev.jetty.app`. |
 | OSC 52 over ssh writes the local clipboard | **High** | Default write allow (Ghostty); document; `osc52-write = deny`. Read always asks. |
 | DEC 2026 stuck | Medium | 150 ms timeout applies the buffer and presents. |
-| Width table vs wcwidth / 2027 emoji ZWJ | Low | Document terminal-typical; no 2027. |
+| Width table vs wcwidth / 2027 emoji ZWJ | Low | v1: terminal-typical, no 2027. Follow-on PR 34: mode default off. |
 | Kakoune long SGR | Low | `MAX_PARAMS=24`. |
 | Mixing linux16term SGR by accident | **High** | New C files; tests that SGR 21 is double underline, SGR 1 does not OR 8 into the index. |
 | `kbs=^H` vs programs that expect DEL | Low | Stock terminfo; truthful. |
@@ -1136,8 +1152,8 @@ Do **not** require ghostty-bench in v1. A later `infocmp`/`tput` driven pass ove
 | OSC 52 write | Default **allow**. Config `osc52-write = deny`. Remote apps (tmux, ssh) can put data on the pasteboard — document. |
 | OSC 52 read | Default **ask**. Parse thread only flags + hops to main. `NSAlert` on main, **never** while holding `session.lock` or inside `jt_vt_feed`. Deny / timeout / `osc52-read = deny` → empty OSC 52 payload. Ghostty `clipboard-read = ask`, `clipboard-write = allow`. |
 | OSC 8 | Never auto-open. Cmd-click only. `LinkURL` **forks** ghosvt `UntrustedURL` policy and **tightens** it: allow `http`/`https` (host required) and `mailto` (path non-empty); **deny** `file:`; **deny** unknown schemes (no confirm panel). Deny C0/C1/bidi. Do not copy `UntrustedURL.swift` verbatim. |
-| OSC 0/2 title | Sanitize C0/C1/bidi; cap 1024 bytes. Do not implement CSI 21 t. |
-| XTWINOPS | Ignore all but 14/18 t. No resize/move from the PTY. |
+| OSC 0/2 title | Sanitize C0/C1/bidi; cap 1024 bytes. Do not implement CSI 21 t **title report**. CSI 22/23 t stack is not a report. |
+| XTWINOPS | v1: ignore all but 14/18 t. HEAD also replies 16 t and does 22/23 t stack. No resize/move from the PTY. |
 | Paste | Bracketed wrap when 2004 on; strip nested end-seq. `writePtyBlocking` so O_NONBLOCK cannot truncate into an unclosed 200~. |
 
 ---
@@ -1191,7 +1207,7 @@ No staged percentage rollout. Config keys default to the locked values so a brok
 
 ### 6. Advertise `xterm-kitty` in v1
 
-**Rejected.** Kitty keyboard and graphics are not implemented. Lying about `TERM` is the linux16term lesson in reverse.
+**Rejected.** Lying about `TERM` is the linux16term lesson in reverse. Kitty **graphics** later shipped under `TERM=xterm-256color` (`docs/DESIGN-kitty-graphics.md`). Kitty **keyboard** / `fullkbd` still out. Discovery is `a=q` then DA1.
 
 ### 7. Swift-only parser (original linux16term DESIGN.md)
 
@@ -1240,7 +1256,7 @@ No staged percentage rollout. Config keys default to the locked values so a brok
 
 ## PR Plan
 
-Each PR is independently reviewable and mergeable. No dual parser flags. No Ghostty linkage in any PR. Tests travel with the code they prove. **v1 is not done until ACS goldens and CJK fallback/IME goldens exist.**
+Each PR is independently reviewable and mergeable. No dual parser flags. No Ghostty linkage in any PR. Tests travel with the code they prove. **v1 PRs 1–17 shipped** (ACS goldens and CJK fallback/IME goldens exist).
 
 ### PR 1 — Repo skeleton + C PTY spawn (jetty identity)
 
@@ -1375,4 +1391,4 @@ Each PR is independently reviewable and mergeable. No dual parser flags. No Ghos
 - **Dependencies:** PR 10, PR 13
 - **Changes:** Host overlay. Copy joins wrap bits. Copy-on-select. Bracketed paste + `writePtyBlocking`. Focus `CSI I`/`O`. Select All.
 
-Follow-ons (not v1): ligatures, dirty-row GPU skip, ink-bearing quads, compact instances, jump-to-prompt, width-table Unicode bump, xcodeproj/notarization, DEC 2027.
+Follow-ons (not v1): `docs/DESIGN-follow-on.md` (18–37). Ligatures, dirty-row GPU skip, compact instances, jump-to-prompt, width-table Unicode bump, notarization, DEC 2027 **shipped**. Ink-bearing letter quads **withdrawn** (PR 21). Shell inject and secure input still later (26 remainder, 33). Kitty graphics: `docs/DESIGN-kitty-graphics.md` (38–45 shipped).
