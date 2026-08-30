@@ -44,12 +44,14 @@ enum DirtySkip {
         var preedit: Bool
         var imagesUnderText: Bool = false
         var imagesVirtual: Bool = false
+        var quitConfirm: Bool = false
     }
 
     static func fullRebuild(now: Key, last: Key?) -> Bool {
         guard let last else { return true }
         if now.imagesUnderText || last.imagesUnderText { return true }
         if now.imagesVirtual || last.imagesVirtual { return true }
+        if now.quitConfirm || last.quitConfirm { return true }
         if now.extra != 0 || now.contentOffset { return true }
         if now.integerRow != last.integerRow { return true }
         if now.inAlt != last.inAlt { return true }

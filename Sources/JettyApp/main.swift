@@ -22,6 +22,8 @@ final class TermWindow: NSObject, NSWindowDelegate {
     let view: MetalTerminalView
     let window: NSWindow
     var onClose: (() -> Void)?
+    var onShouldClose: ((TermWindow) -> Bool)?
+    var forceClose = false
 
     init(session: TerminalSession, view: MetalTerminalView, window: NSWindow) {
         self.session = session
@@ -39,7 +41,13 @@ final class TermWindow: NSObject, NSWindowDelegate {
         view.reportFocus(gained: false)
     }
 
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        if forceClose { return true }
+        return onShouldClose?(self) ?? true
+    }
+
     func windowWillClose(_ notification: Notification) {
+        view.abortQuitConfirm()
         session.stop()
         window.delegate = nil
         let done = onClose
@@ -57,6 +65,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var device: MTLDevice?
     var config: AppConfig?
     var terms: [TermWindow] = []
+    /// True after `terminateLater` until the quit panel replies.
+    private var quitTerminatePending = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let device = MTLCreateSystemDefaultDevice() else {
@@ -416,6 +426,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         term.onClose = { [weak self, weak term] in
             self?.terms.removeAll { $0 === term }
         }
+        term.onShouldClose = { [weak self] t in
+            self?.termShouldClose(t) ?? true
+        }
         session.onDeath = { [weak window] in
             DispatchQueue.main.async {
                 window?.close()
@@ -444,6 +457,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if quitTerminatePending {
+            return .terminateCancel
+        }
+        guard terms.contains(where: { $0.session.hasNonShellProcess }) else {
+            return .terminateNow
+        }
+        abortAllConfirms()
+        guard let host = confirmHost() else {
+            return .terminateNow
+        }
+        quitTerminatePending = true
+        host.window.makeKeyAndOrderFront(nil)
+        host.window.makeFirstResponder(host.view)
+        host.view.presentQuitConfirm(mode: .quit) { [weak self] confirmed in
+            guard let self else { return }
+            self.quitTerminatePending = false
+            NSApp.reply(toApplicationShouldTerminate: confirmed)
+        }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         securePoll?.invalidate()
         SecureInput.shutdown()
@@ -451,5 +486,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             term.session.stop()
         }
         terms.removeAll()
+    }
+
+    private func confirmHost() -> TermWindow? {
+        if let key = terms.first(where: { $0.window.isKeyWindow }) {
+            return key
+        }
+        return terms.first { $0.session.hasNonShellProcess } ?? terms.first
+    }
+
+    private func abortAllConfirms() {
+        for term in terms {
+            term.view.abortQuitConfirm()
+        }
+    }
+
+    private func termShouldClose(_ term: TermWindow) -> Bool {
+        if !term.session.hasNonShellProcess { return true }
+        if quitTerminatePending { return false }
+        if term.view.isQuitConfirmOpen { return false }
+        abortAllConfirms()
+        term.window.makeKeyAndOrderFront(nil)
+        term.window.makeFirstResponder(term.view)
+        term.view.presentQuitConfirm(mode: .close) { [weak term] confirmed in
+            guard let term, confirmed else { return }
+            term.forceClose = true
+            term.window.close()
+        }
+        return false
     }
 }

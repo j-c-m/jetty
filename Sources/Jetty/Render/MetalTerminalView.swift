@@ -64,6 +64,9 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var progressState: UInt8 = 0
     private var progressPercent: UInt8 = 0
     private var hostBinds = Keybinds.Table()
+    public private(set) var isQuitConfirmOpen = false
+    private var quitConfirmMode = QuitConfirm.Mode.quit
+    private var quitConfirmCompletion: ((Bool) -> Void)?
     private var progressBounceTimer: Timer?
     private var progressStaleTimer: Timer?
     private var progressBouncePos: CGFloat = 0
@@ -153,6 +156,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
 
     public override func viewWillMove(toWindow newWindow: NSWindow?) {
         if newWindow == nil {
+            abortQuitConfirm()
             stopProgressBounce()
             stopProgressStaleTimer()
         }
@@ -448,7 +452,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             searchSig: findSig,
             preedit: !preedit.isEmpty,
             imagesUnderText: (0..<Int(snapN)).contains { snaps[$0].z < 0 },
-            imagesVirtual: virtN > 0
+            imagesVirtual: virtN > 0,
+            quitConfirm: isQuitConfirmOpen
         )
         var skipExpand: [Bool]?
         if !forceFullRebuild,
@@ -507,8 +512,10 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let wantInk = config.ligatures != .off && (!ligaSpans.isEmpty || lastInk)
         let underText = skipKey.imagesUnderText
         if underText { skipExpand = nil }
-        let instCount = n + (underText ? n : 0) + (wantInk ? n : 0) + (showLock ? 1 : 0)
+        let chromeNeed = isQuitConfirmOpen ? QuitConfirm.instanceCount : 0
+        let instCount = n + (underText ? n : 0) + (wantInk ? n : 0) + (showLock ? 1 : 0) + chromeNeed
         var drewLock = false
+        var chromeN = 0
         if n > 0, let inst = renderer.prepareInstances(count: instCount) {
             rgb.withUnsafeMutableBufferPointer { pal in
                 palPacked.withUnsafeBufferPointer { packed in
@@ -759,6 +766,23 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                         )
                         drewLock = true
                     }
+                    if isQuitConfirmOpen, chromeNeed > 0 {
+                        let base = n + (underText ? n : 0) + (wantInk ? n : 0) + (drewLock ? 1 : 0)
+                        chromeN = QuitConfirm.write(
+                            dest: inst + base,
+                            mode: quitConfirmMode,
+                            cols: cols,
+                            rows: paintRows,
+                            cellW: cw,
+                            cellH: ch,
+                            originX: insetLeftPx,
+                            originY: insetTopPx,
+                            contentOffsetY: Float(visRows) * ch,
+                            fg: dfg,
+                            bg: dbg,
+                            atlas: renderer.atlas
+                        )
+                    }
                 }
                 }
             }
@@ -938,6 +962,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             imageBelowTextCount: imageBelowTextCount,
             imageOverCount: imageOverCount,
             cursorGlyphCount: drewLock ? 1 : 0,
+            chromeCount: chromeN,
             viewport: SIMD2(Float(dw), Float(dh)),
             contentOffsetY: Float(visRows) * ch
         )
@@ -1060,6 +1085,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     public override func keyDown(with event: NSEvent) {
+        if handleQuitConfirmKey(event) { return }
         if event.keyCode == UInt16(kVK_Escape), findAccessory != nil {
             endFind()
             return
@@ -1094,6 +1120,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     public override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.type == .keyDown, handleQuitConfirmKey(event) { return true }
         if event.type == .keyDown, handleHostKeybind(event) { return true }
         return super.performKeyEquivalent(with: event)
     }
@@ -1513,6 +1540,61 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         return true
     }
 
+    public func presentQuitConfirm(mode: QuitConfirm.Mode, completion: @escaping (Bool) -> Void) {
+        if isQuitConfirmOpen {
+            completion(false)
+            return
+        }
+        if hasMarkedText() {
+            inputContext?.discardMarkedText()
+            unmarkText()
+        }
+        isQuitConfirmOpen = true
+        quitConfirmMode = mode
+        quitConfirmCompletion = completion
+        forceFullRebuild = true
+        skipLast = nil
+        window?.makeFirstResponder(self)
+        needsDisplay = true
+    }
+
+    public func abortQuitConfirm() {
+        resolveQuitConfirm(false)
+    }
+
+    @discardableResult
+    func handleQuitConfirmKey(_ event: NSEvent) -> Bool {
+        guard isQuitConfirmOpen, event.type == .keyDown else { return false }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        switch QuitConfirm.reply(
+            keyCode: event.keyCode,
+            characters: event.charactersIgnoringModifiers,
+            command: flags.contains(.command)
+        ) {
+        case .ignore:
+            return true
+        case .yes:
+            resolveQuitConfirm(true)
+            return true
+        case .no:
+            resolveQuitConfirm(false)
+            return true
+        case .swallow:
+            return true
+        }
+    }
+
+    private func resolveQuitConfirm(_ confirmed: Bool) {
+        guard isQuitConfirmOpen else { return }
+        isQuitConfirmOpen = false
+        let done = quitConfirmCompletion
+        quitConfirmCompletion = nil
+        forceFullRebuild = true
+        skipLast = nil
+        needsDisplay = true
+        done?(confirmed)
+    }
+
     func applyHostAction(_ action: Keybinds.Action) {
         switch action {
         case .copy: copy(nil)
@@ -1633,6 +1715,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     public override func scrollWheel(with event: NSEvent) {
+        if isQuitConfirmOpen { return }
         session.lock.lock()
         let inAlt = session.screen.inAlt
         let sendAlt = session.screen.sendsAlternateScroll
@@ -1947,6 +2030,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     public override func mouseMoved(with event: NSEvent) {
+        if isQuitConfirmOpen { return }
         updateLinkHover(with: event)
         if event.modifierFlags.contains(.shift) { return }
         session.lock.lock()
@@ -2041,6 +2125,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if isQuitConfirmOpen { return false }
         let pb = sender.draggingPasteboard
         let files = pb.readObjects(
             forClasses: [NSURL.self],
@@ -2058,6 +2143,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     private func dropOperation(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if isQuitConfirmOpen { return [] }
         let types = sender.draggingPasteboard.types ?? []
         if types.contains(.fileURL) || types.contains(.string) { return .copy }
         return []
@@ -2093,6 +2179,12 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     private func handleMousePress(_ event: NSEvent, button: UInt8?) {
+        if isQuitConfirmOpen {
+            if inTitlebarStrip(event) {
+                window?.performDrag(with: event)
+            }
+            return
+        }
         if inTitlebarStrip(event) {
             if event.clickCount >= 2 {
                 window?.performZoom(nil)
@@ -2144,6 +2236,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     private func handleMouseDrag(_ event: NSEvent, button: UInt8?) {
+        if isQuitConfirmOpen { return }
         if mouseHostSelect {
             hostSelectDrag(event)
             return
@@ -2160,6 +2253,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     private func handleMouseRelease(_ event: NSEvent, button: UInt8?) {
+        if isQuitConfirmOpen { return }
         if mouseHostSelect {
             finishHostSelect(event)
             mouseHostSelect = false

@@ -147,6 +147,15 @@ public final class TerminalSession: @unchecked Sendable {
         return Self.existingDirectory(spawn) ?? ""
     }
 
+    /// True if the PTY child or a descendant is not login / a shell.
+    public var hasNonShellProcess: Bool {
+        lock.lock()
+        let pid = childPID
+        let fd = masterFD
+        lock.unlock()
+        return jt_pty_has_nonshell(fd, pid) != 0
+    }
+
     public var ttyName: String {
         lock.lock()
         let fd = masterFD

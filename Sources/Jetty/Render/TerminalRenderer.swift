@@ -255,6 +255,7 @@ public final class TerminalRenderer {
         imageBelowTextCount: Int = 0,
         imageOverCount: Int = 0,
         cursorGlyphCount: Int = 0,
+        chromeCount: Int = 0,
         viewport: SIMD2<Float>,
         contentOffsetY: Float = 0
     ) -> Bool {
@@ -382,6 +383,13 @@ public final class TerminalRenderer {
             enc.setFragmentSamplerState(sampler, index: 0)
             enc.drawPrimitives(
                 type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: cursorGlyphCount
+            )
+        }
+        if chromeCount > 0 {
+            drawCells(
+                offset: instanceCount + glyphCount + inkCount + cursorGlyphCount,
+                count: chromeCount,
+                state: pipeline
             )
         }
         enc.endEncoding()

@@ -206,18 +206,93 @@ static int is_login_proc(pid_t pid) {
     return strcmp(name, "login") == 0;
 }
 
+/* Darwin `proc_listchildpids` returns a pid count, not a byte length. */
+static int list_children(pid_t parent, pid_t *kids, int cap) {
+    if (parent <= 0 || !kids || cap <= 0)
+        return 0;
+    int n = proc_listchildpids(parent, kids, cap * (int)sizeof(pid_t));
+    if (n <= 0)
+        return 0;
+    if (n > cap)
+        n = cap;
+    return n;
+}
+
 static int cwd_of_children(pid_t parent, char *out, size_t cap) {
     pid_t kids[32];
-    int bytes = proc_listchildpids(parent, kids, sizeof kids);
-    if (bytes <= 0) return -1;
-    int n = bytes / (int)sizeof(pid_t);
-    if (n > 32) n = 32;
+    int n = list_children(parent, kids, 32);
     for (int i = 0; i < n; i++) {
         if (kids[i] > 0 && jt_pty_cwd(kids[i], out, cap) == 0) return 0;
     }
     return -1;
 }
 #endif
+
+int jt_pty_is_shell_name(const char *name) {
+    static const char *const names[] = {
+        "login",
+        "zsh", "bash", "sh", "dash", "ash",
+        "fish", "nu", "nushell",
+        "ksh", "mksh", "oksh", "tksh", "pdksh",
+        "tcsh", "csh",
+        "pwsh", "powershell",
+        "ion", "elvish", "xonsh",
+        "oil", "osh", "yash",
+        NULL
+    };
+    if (!name || !name[0])
+        return 0;
+    const char *base = strrchr(name, '/');
+    base = base ? base + 1 : name;
+    for (int i = 0; names[i]; i++) {
+        if (strcmp(base, names[i]) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+#if defined(__APPLE__)
+#define JT_PTY_WALK_MAX 256
+
+static int walk_nonshell(pid_t pid, int *left) {
+    if (pid <= 0 || *left <= 0)
+        return 0;
+    (*left)--;
+    char name[32];
+    memset(name, 0, sizeof name);
+    if (proc_name((int)pid, name, sizeof name) > 0 && !jt_pty_is_shell_name(name))
+        return 1;
+    pid_t kids[64];
+    int n = list_children(pid, kids, 64);
+    for (int i = 0; i < n; i++) {
+        if (kids[i] > 0 && kids[i] != pid && walk_nonshell(kids[i], left))
+            return 1;
+    }
+    return 0;
+}
+#endif
+
+int jt_pty_has_nonshell(int master_fd, pid_t child) {
+#if defined(__APPLE__)
+    int left = JT_PTY_WALK_MAX;
+    if (master_fd >= 0) {
+        pid_t pg = -1;
+        if (ioctl(master_fd, TIOCGPGRP, &pg) == 0 && pg > 1
+            && walk_nonshell(pg, &left))
+            return 1;
+        pg = tcgetpgrp(master_fd);
+        if (pg > 1 && walk_nonshell(pg, &left))
+            return 1;
+    }
+    if (child > 0 && walk_nonshell(child, &left))
+        return 1;
+    return 0;
+#else
+    (void)master_fd;
+    (void)child;
+    return 0;
+#endif
+}
 
 int jt_pty_session_cwd(int master_fd, pid_t child, char *out, size_t cap) {
     if (!out || cap == 0) return -1;
