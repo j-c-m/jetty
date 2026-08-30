@@ -379,7 +379,13 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
                     if (set) scr->mouse_event = 1003;
                     else if (scr->mouse_event == 1003) scr->mouse_event = 0;
                     break;
-                case 1004: scr->focus_event = (uint8_t)set; break;
+                case 1004: {
+                    scr->focus_event = (uint8_t)set;
+                    /* Report current focus on every enable (probes re-send 1004h). */
+                    if (set && h)
+                        write_str(h, h->window_focused ? "\033[I" : "\033[O");
+                    break;
+                }
                 case 1006: scr->mouse_sgr = (uint8_t)set; break;
                 case 1007: scr->mouse_alt_scroll = (uint8_t)set; break;
                 case 1036: scr->alt_esc = (uint8_t)set; break;

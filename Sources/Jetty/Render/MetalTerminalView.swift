@@ -166,6 +166,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         if let bar = progressTitlebar() {
             attachProgressChrome(to: bar)
         }
+        reportFocus(gained: window?.isKeyWindow == true)
         if progressState != 0 {
             armProgressStaleTimer()
         }
@@ -2071,6 +2072,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
 
     public func reportFocus(gained: Bool) {
         session.lock.lock()
+        session.parser.windowFocused = gained
         let on = session.screen.focusEvent
         session.lock.unlock()
         guard on else { return }

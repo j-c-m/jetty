@@ -20,6 +20,9 @@ public final class Parser {
     public var onHistoryCleared: (() -> Void)?
     public var onNotify: ((String, String) -> Void)?
     public var onProgress: ((UInt8, UInt8) -> Void)?
+    public var windowFocused = false {
+        didSet { host.window_focused = windowFocused ? 1 : 0 }
+    }
     public var notifies: [(String, String)] = []
     public var progress: [(UInt8, UInt8)] = []
     public var onTitle: ((String) -> Void)?

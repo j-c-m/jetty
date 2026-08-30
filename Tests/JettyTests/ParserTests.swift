@@ -308,6 +308,7 @@ final class ParserTests: XCTestCase {
         p.feed("\u{1B}[?2004;1004h")
         XCTAssertTrue(s.bracketedPaste)
         XCTAssertTrue(s.focusEvent)
+        p.writes.removeAll()
         p.feed("\u{1B}[?2004$p")
         XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?2004;1$y")
         p.writes.removeAll()
@@ -320,6 +321,24 @@ final class ParserTests: XCTestCase {
         p.feed("\u{1B}c")
         XCTAssertFalse(s.bracketedPaste)
         XCTAssertFalse(s.focusEvent)
+    }
+
+    func testFocusEnableReportsCSIIfFocused() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.windowFocused = true
+        p.feed("\u{1B}[?1004h")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[I")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?1004h")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[I")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?1004l")
+        p.windowFocused = false
+        p.feed("\u{1B}[?1004h")
+        XCTAssertTrue(s.focusEvent)
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[O")
     }
 
     func testOSCTitleAndST() {
