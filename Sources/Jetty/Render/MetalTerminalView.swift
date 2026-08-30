@@ -64,10 +64,11 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var progressState: UInt8 = 0
     private var progressPercent: UInt8 = 0
     private var hostBinds = Keybinds.Table()
-    private var progressAnimWidth: CGFloat = 0
+    private var progressBounceTimer: Timer?
+    private var progressStaleTimer: Timer?
+    private var progressBouncePos: CGFloat = 0
+    private var progressBounceDir: CGFloat = 1
     private let progressChrome = ProgressHairline()
-    private let progressTrackLayer = CALayer()
-    private let progressFillLayer = CALayer()
 
     public init(session: TerminalSession, config: AppConfig, device: MTLDevice, backingScale: CGFloat) {
         self.session = session
@@ -105,11 +106,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         }
         registerForDraggedTypes([.fileURL, .string])
         progressChrome.wantsLayer = true
+        progressChrome.layerContentsRedrawPolicy = .onSetNeedsDisplay
         progressChrome.layer?.masksToBounds = true
-        progressTrackLayer.anchorPoint = .zero
-        progressFillLayer.anchorPoint = .zero
-        progressChrome.layer?.addSublayer(progressTrackLayer)
-        progressChrome.layer?.addSublayer(progressFillLayer)
         progressChrome.isHidden = true
         progressChrome.autoresizingMask = [.width, .minYMargin]
         progressChrome.onLayout = { [weak self] in
@@ -120,6 +118,20 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 self?.setProgress(state: state, percent: percent)
             }
         }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(progressMotionPrefsChanged),
+            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(
+            self,
+            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil
+        )
     }
 
     required init(coder: NSCoder) { fatalError() }
@@ -139,12 +151,23 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     /// Grid clicks select.
     public override var mouseDownCanMoveWindow: Bool { false }
 
+    public override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil {
+            stopProgressBounce()
+            stopProgressStaleTimer()
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         applyChrome(session.screen.defaultBgRGB, reverse: false)
         refreshInsets()
         if let bar = progressTitlebar() {
             attachProgressChrome(to: bar)
+        }
+        if progressState != 0 {
+            armProgressStaleTimer()
         }
         if !syncBackingScale() {
             relayout()
@@ -1237,18 +1260,26 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             if progressState == 0 { return }
             progressState = 0
             progressPercent = 0
-            progressFillLayer.removeAnimation(forKey: "bounce")
-            progressAnimWidth = 0
+            stopProgressBounce()
+            stopProgressStaleTimer()
+            progressBouncePos = 0
+            progressBounceDir = 1
             progressChrome.isHidden = true
             return
         }
+        let wasBounce = progressIsBounce()
         progressState = state
         progressPercent = percent == 255 ? 255 : min(100, percent)
+        if progressIsBounce(), !wasBounce {
+            progressBouncePos = 0
+            progressBounceDir = 1
+        }
         if let bar = progressTitlebar() {
             attachProgressChrome(to: bar)
         }
         progressChrome.isHidden = false
         applyProgressAppearance()
+        armProgressStaleTimer()
     }
 
     private func progressIsBounce() -> Bool {
@@ -1294,47 +1325,85 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let r = CGFloat(ink.r) / 255
         let g = CGFloat(ink.g) / 255
         let b = CGFloat(ink.b) / 255
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
+        let fill = NSColor(srgbRed: r, green: g, blue: b, alpha: 1)
         if progressIsBounce() {
-            // 25% chunk, 1.2s ease-in-out bounce, track 0.3.
-            progressTrackLayer.backgroundColor = NSColor(srgbRed: r, green: g, blue: b, alpha: 0.3).cgColor
-            progressFillLayer.backgroundColor = NSColor(srgbRed: r, green: g, blue: b, alpha: 1).cgColor
-            let barW = w * 0.25
-            progressTrackLayer.frame = CGRect(x: 0, y: 0, width: w, height: h)
-            progressFillLayer.bounds = CGRect(x: 0, y: 0, width: barW, height: h)
-            progressFillLayer.position = .zero
-            CATransaction.commit()
-            if abs(progressAnimWidth - w) > 0.5 {
-                progressFillLayer.removeAnimation(forKey: "bounce")
-                progressAnimWidth = w
-            }
-            if progressFillLayer.animation(forKey: "bounce") == nil, w > barW {
-                let anim = CABasicAnimation(keyPath: "position.x")
-                anim.fromValue = 0
-                anim.toValue = w - barW
-                anim.duration = 1.2
-                anim.autoreverses = true
-                anim.repeatCount = .infinity
-                anim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                progressFillLayer.add(anim, forKey: "bounce")
+            progressChrome.trackColor = NSColor(srgbRed: r, green: g, blue: b, alpha: 0.3)
+            progressChrome.fillColor = fill
+            progressChrome.fillRect = ProgressBounce.fillFrame(
+                width: w,
+                height: h,
+                pos: progressBouncePos
+            )
+            if window != nil {
+                startProgressBounce()
             }
         } else {
-            progressFillLayer.removeAnimation(forKey: "bounce")
-            progressAnimWidth = 0
-            progressTrackLayer.backgroundColor = NSColor.clear.cgColor
-            progressFillLayer.backgroundColor = NSColor(srgbRed: r, green: g, blue: b, alpha: 1).cgColor
+            stopProgressBounce()
+            progressChrome.trackColor = .clear
+            progressChrome.fillColor = fill
             let pct: CGFloat
             if progressPercent == 255 {
                 pct = progressState == 4 ? 100 : 0
             } else {
                 pct = CGFloat(progressPercent)
             }
-            let sx = w * pct / 100
-            progressTrackLayer.frame = .zero
-            progressFillLayer.frame = CGRect(x: 0, y: 0, width: sx, height: h)
-            CATransaction.commit()
+            progressChrome.fillRect = CGRect(x: 0, y: 0, width: w * pct / 100, height: h)
         }
+        progressChrome.needsDisplay = true
+    }
+
+    private func startProgressBounce() {
+        let interval = ProgressBounce.tickInterval(
+            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        )
+        if progressBounceTimer != nil, progressBounceTimer?.timeInterval == interval {
+            return
+        }
+        stopProgressBounce()
+        let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.stepProgressBounce()
+            }
+        }
+        t.tolerance = interval * 0.3
+        RunLoop.main.add(t, forMode: .common)
+        progressBounceTimer = t
+    }
+
+    private func stopProgressBounce() {
+        progressBounceTimer?.invalidate()
+        progressBounceTimer = nil
+    }
+
+    private func armProgressStaleTimer() {
+        stopProgressStaleTimer()
+        let t = Timer(timeInterval: ProgressBounce.staleTimeout, repeats: false) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.setProgress(state: 0, percent: 0)
+            }
+        }
+        t.tolerance = 0.5
+        RunLoop.main.add(t, forMode: .common)
+        progressStaleTimer = t
+    }
+
+    private func stopProgressStaleTimer() {
+        progressStaleTimer?.invalidate()
+        progressStaleTimer = nil
+    }
+
+    private func stepProgressBounce() {
+        let next = ProgressBounce.advance(pos: progressBouncePos, dir: progressBounceDir)
+        progressBouncePos = next.pos
+        progressBounceDir = next.dir
+        let w = progressChrome.bounds.width
+        guard w > 0 else { return }
+        progressChrome.fillRect = ProgressBounce.fillFrame(width: w, height: 2, pos: progressBouncePos)
+    }
+
+    @objc private func progressMotionPrefsChanged() {
+        guard progressIsBounce(), window != nil else { return }
+        startProgressBounce()
     }
 
     private func pinLiveBottom() {
@@ -2442,13 +2511,62 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
 
 private final class ProgressHairline: NSView {
     var onLayout: (() -> Void)?
+    var trackColor = NSColor.clear
+    var fillColor = NSColor.clear
+    var fillRect = CGRect.zero {
+        didSet { needsDisplay = true }
+    }
 
     override func layout() {
         super.layout()
         onLayout?()
     }
 
+    override func draw(_ dirtyRect: NSRect) {
+        if trackColor.alphaComponent > 0 {
+            trackColor.setFill()
+            bounds.fill()
+        }
+        if fillColor.alphaComponent > 0, fillRect.intersects(dirtyRect) {
+            fillColor.setFill()
+            fillRect.fill()
+        }
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// Discrete OSC 9;4 indeterminate marquee. `pos` is 0...1 along the travel.
+enum ProgressBounce {
+    static let interval: TimeInterval = 0.125
+    static let reduceMotionInterval: TimeInterval = 1
+    static let chunk: CGFloat = 0.25
+    static let step: CGFloat = 0.1
+    /// Hide OSC 9;4 if no new report arrives within this interval.
+    static let staleTimeout: TimeInterval = 15
+
+    static func tickInterval(reduceMotion: Bool) -> TimeInterval {
+        reduceMotion ? reduceMotionInterval : interval
+    }
+
+    static func advance(pos: CGFloat, dir: CGFloat) -> (pos: CGFloat, dir: CGFloat) {
+        var p = pos + dir * step
+        var d = dir
+        if p >= 1 {
+            p = 1
+            d = -1
+        } else if p <= 0 {
+            p = 0
+            d = 1
+        }
+        return (p, d)
+    }
+
+    static func fillFrame(width: CGFloat, height: CGFloat, pos: CGFloat) -> CGRect {
+        let barW = width * chunk
+        let x = pos * max(0, width - barW)
+        return CGRect(x: x, y: 0, width: barW, height: height)
+    }
 }
 
 extension MetalTerminalView: @preconcurrency NSTextInputClient {
