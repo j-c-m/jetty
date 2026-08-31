@@ -1356,7 +1356,7 @@ static void dispatch(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
         if (b == 0x07) {
             finish_osc(p, scr, h);
             enter_ground(p);
-        } else if (p->osc_n >= 4096) p->state = JT_ST_OSC_IGNORE;
+        } else if (p->osc_n >= JT_OSC_CAP) p->state = JT_ST_OSC_IGNORE;
         else p->osc[p->osc_n++] = b;
         break;
     case JT_ST_OSC_IGNORE:
@@ -1388,7 +1388,7 @@ static void dispatch(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t b) {
         if (b == 0x07) {
             finish_dcs(p, scr, h);
             enter_ground(p);
-        } else if (p->osc_n < 4096) {
+        } else if (p->osc_n < JT_OSC_CAP) {
             p->osc[p->osc_n++] = b;
         }
         break;

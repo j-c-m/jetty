@@ -60,7 +60,7 @@ Pre-38 snapshot. HEAD is the Shipped table above.
 | `Cell` | 16 bytes (`jt_cell.h`). `extra` at offset 14 is the rare-store id (OSC 8 URI + SGR 58). Zero bits = default empty. |
 | `jt_scr.pool_cells` | Live count of cells with a grapheme or rare `extra`. When 0: `fill_row` is lazy `erased=1`, `store_ascii_cells` does not `release_cells`, `stamp_cell` is a plain assign (`jt_grid.c`). |
 | APC | `ESC _` / `ESC ^` / `ESC X` → `JT_ST_SOS_PM_APC`. Bytes dropped until BEL. ESC from APC goes to `JT_ST_ESCAPE`; `\` then `handle_esc` default (no-op) and `enter_ground`. **No payload, no `G` dispatch.** |
-| OSC/DCS buffer | `jt_vt.osc[4096]`. OSC overflow → `JT_ST_OSC_IGNORE`. DCS uses the same buffer (`finish_dcs`: XTGETTCAP `+q`, DECRQSS `$q`). |
+| OSC/DCS buffer | `jt_vt.osc[JT_OSC_CAP]` (`16384`). OSC overflow → `JT_ST_OSC_IGNORE`. DCS uses the same buffer (`finish_dcs`: XTGETTCAP `+q`, DECRQSS `$q`) and silently truncates. |
 | GPU | Opaque R8 **cell mix** (`cell_fragment`: bg **and** glyph in one instance, blend off) → optional blended `ink_fragment` for **liga overflow** (not a bg/glyph split) → blended overlay (UL / strike / cursor in **one** pass). 32-byte `CellInstance`. Dirty-row memcpy from last presented ring slot. |
 | Identity | `TERM=xterm-256color`, `COLORTERM=truecolor`, `TERM_PROGRAM=jetty`, `TERM_PROGRAM_VERSION` from `jt_version.h`. No `KITTY_WINDOW_ID`. |
 | Size | `TIOCSWINSZ` already sets `ws_xpixel` / `ws_ypixel` (`pty_spawn.c`). `CSI 14 t` / `16 t` / `18 t` already reply (`TerminalSession.replySizeReport`). |
@@ -471,7 +471,7 @@ ESC ^ / ESC X     → drain (unchanged)
 
 `finish_apc` only if `kitty_graphics`. Off: discard, no reply.
 
-**Do not use `osc[4096]`.** A chunk’s base64 payload is 4096 bytes plus control. DCS still owns `osc[]`.
+**Do not use `osc[JT_OSC_CAP]`.** A chunk’s base64 payload is 4096 bytes plus control. DCS still owns `osc[]`.
 
 Parser (port Ghostty `graphics_command.zig` `Parser` into C, not a paraphrase of the KV tricks):
 

@@ -5,6 +5,7 @@
 #include "jt_vt.h"
 
 #define JT_MAX_PARAMS 24
+#define JT_OSC_CAP 16384
 
 struct jt_vt {
     int state;
@@ -14,7 +15,7 @@ struct jt_vt {
     uint32_t param_acc;
     uint8_t inter[4];
     int ni;
-    uint8_t osc[4096];
+    uint8_t osc[JT_OSC_CAP];
     int osc_n;
     uint32_t utf8_acc;
     uint8_t utf8_st;

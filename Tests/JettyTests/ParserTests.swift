@@ -430,6 +430,92 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(p.osc52Reads.last, UInt8(ascii: "c"))
     }
 
+    func testOSC5522Split() {
+        let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.recordOsc5522 = true
+        p.feed("\u{1B}]5522;type=wdata:mime=dGV4dC9wbGFpbg==;aGVsbG8=\u{1B}\\")
+        XCTAssertEqual(p.osc5522Packets.count, 1)
+        XCTAssertEqual(
+            String(bytes: p.osc5522Packets[0].meta, encoding: .ascii),
+            "type=wdata:mime=dGV4dC9wbGFpbg=="
+        )
+        XCTAssertEqual(
+            String(bytes: p.osc5522Packets[0].payload, encoding: .ascii),
+            "aGVsbG8="
+        )
+
+        p.osc5522Packets.removeAll()
+        p.feed("\u{1B}]5522;type=write\u{07}")
+        XCTAssertEqual(p.osc5522Packets.count, 1)
+        XCTAssertEqual(String(bytes: p.osc5522Packets[0].meta, encoding: .ascii), "type=write")
+        XCTAssertEqual(p.osc5522Packets[0].payload, [])
+
+        p.osc5522Packets.removeAll()
+        p.feed("\u{1B}]5522;type=wdata;\u{1B}\\")
+        XCTAssertEqual(p.osc5522Packets.count, 1)
+        XCTAssertEqual(String(bytes: p.osc5522Packets[0].meta, encoding: .ascii), "type=wdata")
+        XCTAssertEqual(p.osc5522Packets[0].payload, [])
+    }
+
+    func testOSC5522CapDispatchesMaxChunkAndIgnoresOverflow() {
+        let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.recordOsc5522 = true
+        let chunk = [UInt8](repeating: UInt8(ascii: "A"), count: 5464)
+        var maxBody = Array("5522;type=wdata:mime=dGV4dC9wbGFpbg==;".utf8)
+        maxBody.append(contentsOf: chunk)
+        p.feed([0x1B, 0x5D] + maxBody + [0x1B, 0x5C])
+        XCTAssertEqual(p.osc5522Packets.count, 1)
+        XCTAssertEqual(p.osc5522Packets[0].payload.count, 5464)
+
+        p.osc5522Packets.removeAll()
+        var exact = Array("5522;type=write;".utf8)
+        exact.append(contentsOf: [UInt8](repeating: UInt8(ascii: "A"), count: 16384 - exact.count))
+        XCTAssertEqual(exact.count, 16384)
+        p.feed([0x1B, 0x5D] + exact + [0x07])
+        XCTAssertEqual(p.osc5522Packets.count, 1)
+
+        p.osc5522Packets.removeAll()
+        var over = Array("5522;type=write;".utf8)
+        over.append(contentsOf: [UInt8](repeating: UInt8(ascii: "A"), count: 16385 - over.count))
+        XCTAssertEqual(over.count, 16385)
+        p.feed([0x1B, 0x5D] + over + [0x07])
+        XCTAssertEqual(p.osc5522Packets.count, 0)
+    }
+
+    func testOSC5522NotRecordedByDefault() {
+        let p = Parser()
+        var got: ([UInt8], [UInt8])?
+        p.onOsc5522 = { got = ($0, $1) }
+        p.feed("\u{1B}]5522;type=write;xy\u{07}")
+        XCTAssertEqual(String(bytes: got?.0 ?? [], encoding: .ascii), "type=write")
+        XCTAssertEqual(String(bytes: got?.1 ?? [], encoding: .ascii), "xy")
+        XCTAssertEqual(p.osc5522Packets.count, 0)
+        p.recordOsc5522 = true
+        p.feed("\u{1B}]5522;type=write\u{07}")
+        XCTAssertEqual(p.osc5522Packets.count, 1)
+        p.reset()
+        XCTAssertFalse(p.recordOsc5522)
+        XCTAssertEqual(p.osc5522Packets.count, 0)
+        p.feed("\u{1B}]5522;type=write\u{07}")
+        XCTAssertEqual(p.osc5522Packets.count, 0)
+    }
+
+    func testDECRQM5522StillUnsupported() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?5522$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?5522;0$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?5522h")
+        p.feed("\u{1B}[?5522$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?5522;0$y")
+    }
+
     func testOSC8And7And133() {
         let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
         let p = Parser()

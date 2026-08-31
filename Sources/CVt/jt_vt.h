@@ -206,6 +206,8 @@ typedef struct jt_vt_host {
     void (*set_title)(void *ctx, const uint8_t *utf8, size_t n);
     void (*osc52_write)(void *ctx, uint8_t kind, const uint8_t *b64, size_t n);
     void (*osc52_read)(void *ctx, uint8_t kind);
+    void (*osc5522)(void *ctx, const uint8_t *meta, size_t nm,
+                    const uint8_t *payload, size_t np);
     void (*osc7)(void *ctx, const uint8_t *uri, size_t n);
     void (*osc133)(void *ctx, uint8_t action, const uint8_t *opts, size_t n);
     void (*palette_changed)(void *ctx);

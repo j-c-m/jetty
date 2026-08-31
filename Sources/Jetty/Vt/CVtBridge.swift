@@ -41,6 +41,23 @@ func jtHostOsc52Read(_ ctx: UnsafeMutableRawPointer?, _ kind: UInt8) {
     Unmanaged<ParserGlue>.fromOpaque(ctx).takeUnretainedValue().parser.handleOsc52Read(kind)
 }
 
+func jtHostOsc5522(
+    _ ctx: UnsafeMutableRawPointer?,
+    _ meta: UnsafePointer<UInt8>?,
+    _ nm: Int,
+    _ payload: UnsafePointer<UInt8>?,
+    _ np: Int
+) {
+    guard let ctx else { return }
+    let m: [UInt8]
+    if let meta, nm > 0 { m = Array(UnsafeBufferPointer(start: meta, count: nm)) }
+    else { m = [] }
+    let p: [UInt8]
+    if let payload, np > 0 { p = Array(UnsafeBufferPointer(start: payload, count: np)) }
+    else { p = [] }
+    Unmanaged<ParserGlue>.fromOpaque(ctx).takeUnretainedValue().parser.handleOsc5522(m, p)
+}
+
 func jtHostPaletteChanged(_ ctx: UnsafeMutableRawPointer?) {
     guard let ctx else { return }
     Unmanaged<ParserGlue>.fromOpaque(ctx).takeUnretainedValue().parser.handlePaletteChanged()

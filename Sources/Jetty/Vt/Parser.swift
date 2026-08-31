@@ -11,6 +11,8 @@ public final class Parser {
     public var titles: [String] = []
     public var osc52Writes: [(kind: UInt8, b64: [UInt8])] = []
     public var osc52Reads: [UInt8] = []
+    public var recordOsc5522 = false
+    public var osc5522Packets: [(meta: [UInt8], payload: [UInt8])] = []
     public var osc7: [String] = []
     public var osc133: [(UInt8, [UInt8])] = []
     public var ptyWriter: (([UInt8]) -> Void)?
@@ -28,6 +30,7 @@ public final class Parser {
     public var onTitle: ((String) -> Void)?
     public var onOsc52Write: ((UInt8, [UInt8]) -> Void)?
     public var onOsc52Read: ((UInt8) -> Void)?
+    public var onOsc5522: (([UInt8], [UInt8]) -> Void)?
     public var onPaletteChanged: (() -> Void)?
     public var unlockForIO: (() -> Void)?
     public var relock: (() -> Void)?
@@ -49,6 +52,7 @@ public final class Parser {
         host.set_title = jtHostSetTitle
         host.osc52_write = jtHostOsc52Write
         host.osc52_read = jtHostOsc52Read
+        host.osc5522 = jtHostOsc5522
         host.palette_changed = jtHostPaletteChanged
         host.osc7 = jtHostOsc7
         host.osc133 = jtHostOsc133
@@ -72,6 +76,8 @@ public final class Parser {
         titles.removeAll()
         osc52Writes.removeAll()
         osc52Reads.removeAll()
+        osc5522Packets.removeAll()
+        recordOsc5522 = false
         osc7.removeAll()
         osc133.removeAll()
         notifies.removeAll()
@@ -133,6 +139,11 @@ public final class Parser {
     func handleOsc52Read(_ kind: UInt8) {
         osc52Reads.append(kind)
         onOsc52Read?(kind)
+    }
+
+    func handleOsc5522(_ meta: [UInt8], _ payload: [UInt8]) {
+        if recordOsc5522 { osc5522Packets.append((meta, payload)) }
+        onOsc5522?(meta, payload)
     }
 
     func handlePaletteChanged() {

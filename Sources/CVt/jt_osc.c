@@ -302,6 +302,23 @@ static void osc52(const jt_vt_host *h, const uint8_t *p, int n, int i) {
     if (h->osc52_write) h->osc52_write(h->ctx, kind, p + i, (size_t)(n - i));
 }
 
+static void osc5522(const jt_vt_host *h, const uint8_t *p, int n, int i) {
+    if (!h || !h->osc5522) return;
+    const uint8_t *meta = p + i;
+    int mn = n - i;
+    const uint8_t *pay = NULL;
+    int pn = 0;
+    for (int k = 0; k < mn; k++) {
+        if (meta[k] == ';') {
+            mn = k;
+            pay = meta + k + 1;
+            pn = (n - i) - k - 1;
+            break;
+        }
+    }
+    h->osc5522(h->ctx, meta, (size_t)mn, pay, (size_t)pn);
+}
+
 void jt_osc_dispatch(jt_scr *s, const jt_vt_host *h, const uint8_t *p, int n) {
     if (!p || n <= 0) return;
     int i = 0;
@@ -367,6 +384,9 @@ void jt_osc_dispatch(jt_scr *s, const jt_vt_host *h, const uint8_t *p, int n) {
     case 52:
         osc52(h, p, n, i);
         break;
+    case 5522:
+        osc5522(h, p, n, i);
+        break;
     case 133:
         if (h && h->osc133 && i < n)
             h->osc133(h->ctx, p[i], p + i, (size_t)(n - i));
@@ -399,7 +419,6 @@ void jt_osc_dispatch(jt_scr *s, const jt_vt_host *h, const uint8_t *p, int n) {
     case 119:
     case 1337:
     case 3008:
-    case 5522:
         break;
     case 104:
         if (s) {

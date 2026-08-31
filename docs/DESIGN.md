@@ -540,7 +540,7 @@ New files. Do not compile `l16_vt.c` into jetty.
 
 Do **not** keep linux16term’s IBM/SGR 11 byte machine. `smacs=\E(0)` is charset GL, not SGR 11.
 
-**State machine** from vt100.net / Ghostty `Parser.State`: ground, escape, escape_intermediate, csi_entry, csi_param, csi_intermediate, csi_ignore, osc_string, osc_ignore, dcs_ignore, sos_pm_apc. **No** `csiLinuxFn`. CSI param accepts `';'` and `':'` (`parse_table.zig` comment: SGR colon). `params[24]`, `seps` bitset (bit i = colon after param i), `inter[4]`, `osc[4096]` then `osc_ignore` until BEL/ST/CAN (linux16term OSC overflow rule — do not print the tail).
+**State machine** from vt100.net / Ghostty `Parser.State`: ground, escape, escape_intermediate, csi_entry, csi_param, csi_intermediate, csi_ignore, osc_string, osc_ignore, dcs_ignore, sos_pm_apc. **No** `csiLinuxFn`. CSI param accepts `';'` and `':'` (`parse_table.zig` comment: SGR colon). `params[24]`, `seps` bitset (bit i = colon after param i), `inter[4]`, `osc[JT_OSC_CAP]` (`16384`) then `osc_ignore` until BEL/ST/CAN (linux16term OSC overflow rule — do not print the tail).
 
 UTF-8 errors: emit U+FFFD, consume-or-retry as Ghostty `UTF8Decoder.next` (reject of a non-first byte is not consumed).
 
