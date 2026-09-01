@@ -844,6 +844,27 @@ final class Osc5522Tests: XCTestCase {
         XCTAssertEqual(box.all(), [readReply(.ENOSYS, id: "p1")])
     }
 
+    func testPrimaryReadConsumesOTP() {
+        let pb = namedPasteboard()
+        pb.setString("hello", forType: .string)
+        let session = makeSession(pb)
+        let otp = session.installPasteOTP()
+        let box = attach(session)
+        sendRead(
+            session,
+            "type=read:loc=primary:id=p2:pw=\(fieldB64(otp)):name=\(fieldB64("app"))",
+            payload: mimeListPayload("text/plain")
+        )
+        XCTAssertEqual(box.all(), [readReply(.ENOSYS, id: "p2")])
+        XCTAssertTrue(session.osc5522Grants.entries.filter(\.oneTime).isEmpty)
+        sendRead(
+            session,
+            "type=read:id=p3:pw=\(fieldB64(otp)):name=\(fieldB64("app"))",
+            payload: mimeListPayload("text/plain")
+        )
+        XCTAssertTrue(box.all().contains(readReply(.EPERM, id: "p3")))
+    }
+
     func testInvalidReadPayloadIsDropped() {
         let pb = namedPasteboard()
         let session = makeSession(pb)

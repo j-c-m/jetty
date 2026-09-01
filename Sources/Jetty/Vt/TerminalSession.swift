@@ -618,6 +618,9 @@ public final class TerminalSession: @unchecked Sendable {
     private func handleOsc5522Read(_ p: Osc5522.Packet, skipPrompt: Bool = false) {
         guard let list = Osc5522.parseReadList(p.payload) else { return }
         if p.primary {
+            if !p.pw.isEmpty, !p.name.isEmpty {
+                _ = osc5522Grants.use(p.pw, .read, now: osc5522Now())
+            }
             emitOsc5522(Osc5522.Reply(op: .read, status: .ENOSYS, id: p.id).bytes())
             return
         }

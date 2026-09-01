@@ -63,7 +63,9 @@ public struct Osc5522StoredPasswords: Sendable, Equatable {
             map.removeValue(forKey: old)
         }
         return Osc5522StoredPasswords(
-            records: order.map { Record(name: $0, password: map[$0]!) }
+            records: order.compactMap { name in
+                map[name].map { Record(name: name, password: $0) }
+            }
         )
     }
 
