@@ -141,6 +141,10 @@ public struct AppConfig: Sendable {
         return URL(fileURLWithPath: base).appendingPathComponent("jetty/config")
     }
 
+    public static func clipboardPasswordsURL() -> URL {
+        configURL().deletingLastPathComponent().appendingPathComponent("clipboard-passwords")
+    }
+
     @discardableResult
     public static func ensureConfigFile(at url: URL = configURL()) -> URL {
         let fm = FileManager.default
@@ -150,6 +154,25 @@ public struct AppConfig: Sendable {
         if !fm.fileExists(atPath: url.path) {
             fm.createFile(atPath: url.path, contents: nil)
         }
+        return url
+    }
+
+    @discardableResult
+    public static func ensureClipboardPasswordsFile(
+        at url: URL = clipboardPasswordsURL()
+    ) -> URL {
+        let fm = FileManager.default
+        try? fm.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        if !fm.fileExists(atPath: url.path) {
+            fm.createFile(
+                atPath: url.path,
+                contents: Data(),
+                attributes: [.posixPermissions: 0o600]
+            )
+        }
+        try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         return url
     }
 

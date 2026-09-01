@@ -121,6 +121,13 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 self?.setProgress(state: state, percent: percent)
             }
         }
+        session.onOsc5522Prompt = { [weak self] prompt, reply in
+            guard let self else {
+                reply(.deny)
+                return
+            }
+            self.presentOsc5522Prompt(prompt, reply: reply)
+        }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(progressMotionPrefsChanged),
@@ -1638,6 +1645,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         }
         session.osc52WriteAllow = next.osc52Write == .allow
         session.osc52ReadAsk = next.osc52Read == .ask
+        Osc5522StoredPasswords.process = Osc5522StoredPasswords.load()
         session.desktopNotifications = next.desktopNotifications
         session.notifyOnCommandFinish = next.notifyOnCommandFinish
         session.notifyOnCommandFinishAfter = next.notifyOnCommandFinishAfter
@@ -2110,6 +2118,40 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     @objc public func paste(_ sender: Any?) {
         guard let str = Clipboard.pasteboardPayload() else { return }
         pasteText(str)
+    }
+
+    private func presentOsc5522Prompt(
+        _ prompt: Osc5522Prompt,
+        reply: @escaping (Osc5522Decision) -> Void
+    ) {
+        let alert = NSAlert()
+        alert.messageText = "Allow clipboard read?"
+        if !prompt.name.isEmpty {
+            alert.informativeText = prompt.name
+        }
+        alert.addButton(withTitle: "Deny")
+        alert.addButton(withTitle: "Allow")
+        if prompt.offersAlways {
+            alert.addButton(withTitle: "Always")
+            alert.addButton(withTitle: "Ban")
+        }
+        func decision(_ response: NSApplication.ModalResponse) -> Osc5522Decision {
+            let first = NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+            switch response.rawValue {
+            case first: return .deny
+            case first + 1: return .allow
+            case first + 2: return .always
+            case first + 3: return .ban
+            default: return .deny
+            }
+        }
+        if let window {
+            alert.beginSheetModal(for: window) { response in
+                reply(decision(response))
+            }
+        } else {
+            reply(decision(alert.runModal()))
+        }
     }
 
     public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {

@@ -49,6 +49,7 @@ let package = Package(
                 .linkedFramework("UserNotifications"),
                 .linkedFramework("ImageIO"),
                 .linkedFramework("Carbon"),
+                .linkedFramework("Security"),
             ]
         ),
         .executableTarget(

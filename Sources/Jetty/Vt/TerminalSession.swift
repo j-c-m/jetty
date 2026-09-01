@@ -26,6 +26,15 @@ public final class TerminalSession: @unchecked Sendable {
     private let osc5522Hop = OSAllocatedUnfairLock(uncheckedState: Osc5522HopQueue())
     let osc5522Writer = Osc5522Writer()
     var osc5522ReplySink: (([UInt8]) -> Void)?
+    var osc5522Grants = Osc5522Grants()
+    var storedPasswords: Osc5522StoredPasswords?
+    var osc5522Now: () -> Date = Date.init
+    var osc5522MaxReadBytes = Osc5522.maxReadBytes
+    var dataReplyInFlight = false
+    var dataReplyGen: UInt64 = 0
+    var osc5522PromptOpen = false
+    var osc5522PromptGen: UInt64 = 0
+    var onOsc5522Prompt: ((Osc5522Prompt, @escaping (Osc5522Decision) -> Void) -> Void)?
     public var onRedraw: (@Sendable () -> Void)?
     public var onDeath: (@Sendable () -> Void)?
     public var onTitle: (@Sendable (String) -> Void)?
@@ -352,6 +361,11 @@ public final class TerminalSession: @unchecked Sendable {
         if fd >= 0 { close(fd) }
         ptyOut.sync {}
         osc5522Writer.reset()
+        osc5522Grants.reset()
+        dataReplyGen += 1
+        dataReplyInFlight = false
+        osc5522PromptGen += 1
+        osc5522PromptOpen = false
         if pid > 0 {
             var status: Int32 = 0
             while waitpid(pid, &status, 0) < 0 && errno == EINTR {}
@@ -519,6 +533,12 @@ public final class TerminalSession: @unchecked Sendable {
         defer { releaseOsc5522Quantum(quantum) }
         if ptyOutStop.withLock({ $0 }) { return }
         osc5522Writer.writeAllow = osc52WriteAllow
+        if case .packet(let p) = Osc5522.ParseResult.parse(meta: meta, payload: payload),
+           p.op == .read
+        {
+            handleOsc5522Read(p)
+            return
+        }
         osc5522Writer.handle(meta: meta, payload: payload)
     }
 
@@ -526,13 +546,275 @@ public final class TerminalSession: @unchecked Sendable {
     func handleOsc5522Overflow() {
         defer { releaseOsc5522Quantum(Osc5522.queueQuantum) }
         if ptyOutStop.withLock({ $0 }) { return }
-        osc5522Writer.handleOverflow()
+        if osc5522Writer.phase == .accumulating {
+            osc5522Writer.handleOverflow()
+            return
+        }
+        if dataReplyInFlight {
+            emitOsc5522(Osc5522.Reply(op: .read, status: .EBUSY).bytes())
+        }
     }
 
     private func releaseOsc5522Quantum(_ quantum: Int) {
         osc5522Hop.withLock { q in
             q.queuedBytes = max(0, q.queuedBytes - quantum)
             if q.queuedBytes == 0 { q.overflowArmed = false }
+        }
+    }
+
+    @discardableResult
+    func installPasteOTP(
+        pw: String? = nil,
+        deadline: Date? = nil,
+        snapshot: [String: Data]? = nil
+    ) -> String {
+        let otp = pw ?? Osc5522.randomOTP()
+        osc5522Grants.replaceOTP(
+            pw: otp,
+            deadline: deadline ?? osc5522Now().addingTimeInterval(Osc5522.otpTimeout),
+            snapshot: snapshot
+        )
+        return otp
+    }
+
+    @discardableResult
+    func sendPasteEvent(from pb: NSPasteboard, snapshot: Bool) -> Bool {
+        if dataReplyInFlight { return false }
+        let mimes = Osc5522Pasteboard.available(pb)
+        var snap: [String: Data]?
+        if snapshot {
+            var remaining = osc5522MaxReadBytes
+            var captured: [String: Data] = [:]
+            for mime in mimes {
+                guard remaining > 0 else { break }
+                guard var d = Osc5522Pasteboard.data(pb, mime: mime), !d.isEmpty else { continue }
+                if d.count > remaining { d = d.prefix(remaining) }
+                remaining -= d.count
+                captured[mime] = d
+            }
+            snap = captured
+        }
+        let otp = Osc5522.randomOTP()
+        osc5522Grants.replaceOTP(
+            pw: otp,
+            deadline: osc5522Now().addingTimeInterval(Osc5522.otpTimeout),
+            snapshot: snap
+        )
+        let payload = Osc5522.listingPayload(mimes)
+        emitOsc5522(Osc5522.Reply(op: .read, status: .OK, pw: otp).bytes())
+        emitOsc5522(
+            Osc5522.Reply(op: .read, status: .DATA, mime: Osc5522.targetsMime, pw: otp, payload: payload)
+                .bytes()
+        )
+        emitOsc5522(Osc5522.Reply(op: .read, status: .DONE, pw: otp).bytes())
+        return true
+    }
+
+    func clearDataReplyIfCurrent(gen: UInt64) {
+        if dataReplyGen == gen { dataReplyInFlight = false }
+    }
+
+    @MainActor
+    private func handleOsc5522Read(_ p: Osc5522.Packet, skipPrompt: Bool = false) {
+        guard let list = Osc5522.parseReadList(p.payload) else { return }
+        if p.primary {
+            emitOsc5522(Osc5522.Reply(op: .read, status: .ENOSYS, id: p.id).bytes())
+            return
+        }
+        if !osc52ReadAsk {
+            emitOsc5522(Osc5522.Reply(op: .read, status: .EPERM, id: p.id).bytes())
+            return
+        }
+        if list.wantListing && list.mimes.isEmpty {
+            serveOsc5522Listing(id: p.id)
+            return
+        }
+        let now = osc5522Now()
+        if !p.pw.isEmpty, osc5522Grants.isBanned(p.pw, .read, now: now) {
+            emitOsc5522(Osc5522.Reply(op: .read, status: .EPERM, id: p.id).bytes())
+            return
+        }
+        if dataReplyInFlight {
+            emitOsc5522(Osc5522.Reply(op: .read, status: .EBUSY, id: p.id).bytes())
+            return
+        }
+        if skipPrompt {
+            serveOsc5522Read(p, list: list, snapshot: nil)
+            return
+        }
+        if !p.pw.isEmpty, osc5522Grants.hasAlways(p.pw, .read, now: now) {
+            serveOsc5522Read(p, list: list, snapshot: nil)
+            return
+        }
+        if (storedPasswords ?? Osc5522StoredPasswords.process)
+            .match(name: p.name, password: p.pw)
+        {
+            serveOsc5522Read(p, list: list, snapshot: nil)
+            return
+        }
+        if !p.pw.isEmpty, !p.name.isEmpty {
+            let used = osc5522Grants.use(p.pw, .read, now: now)
+            if used.ok {
+                serveOsc5522Read(p, list: list, snapshot: used.snapshot)
+                return
+            }
+        }
+        if osc5522PromptOpen {
+            emitOsc5522(Osc5522.Reply(op: .read, status: .EBUSY, id: p.id).bytes())
+            return
+        }
+        presentOsc5522ReadPrompt(p)
+    }
+
+    @MainActor
+    private func presentOsc5522ReadPrompt(_ p: Osc5522.Packet) {
+        guard let promptFn = onOsc5522Prompt else {
+            emitOsc5522(Osc5522.Reply(op: .read, status: .EPERM, id: p.id).bytes())
+            return
+        }
+        osc5522PromptOpen = true
+        osc5522PromptGen += 1
+        let gen = osc5522PromptGen
+        let prompt = Osc5522Prompt(
+            direction: .read,
+            name: Osc5522.sanitizeName(p.name),
+            offersAlways: !p.pw.isEmpty && !p.name.isEmpty
+        )
+        promptFn(prompt) { [weak self] decision in
+            let run = {
+                self?.finishOsc5522ReadPrompt(gen: gen, packet: p, decision: decision)
+            }
+            if Thread.isMainThread {
+                MainActor.assumeIsolated(run)
+            } else {
+                DispatchQueue.main.async { MainActor.assumeIsolated(run) }
+            }
+        }
+    }
+
+    @MainActor
+    private func finishOsc5522ReadPrompt(
+        gen: UInt64,
+        packet: Osc5522.Packet,
+        decision: Osc5522Decision
+    ) {
+        guard gen == osc5522PromptGen else { return }
+        osc5522PromptOpen = false
+        switch decision {
+        case .deny:
+            emitOsc5522(Osc5522.Reply(op: .read, status: .EPERM, id: packet.id).bytes())
+        case .ban:
+            osc5522Grants.ban(packet.pw, .read)
+            emitOsc5522(Osc5522.Reply(op: .read, status: .EPERM, id: packet.id).bytes())
+        case .always:
+            osc5522Grants.grantAlways(packet.pw, .read)
+            handleOsc5522Read(packet, skipPrompt: true)
+        case .allow:
+            handleOsc5522Read(packet, skipPrompt: true)
+        }
+    }
+
+    @MainActor
+    private func serveOsc5522Listing(id: String) {
+        let mimes = Osc5522Pasteboard.available(osc5522Writer.pasteboard)
+        let payload = Osc5522.listingPayload(mimes)
+        emitOsc5522(Osc5522.Reply(op: .read, status: .OK, id: id).bytes())
+        emitOsc5522(
+            Osc5522.Reply(
+                op: .read, status: .DATA, id: id, mime: Osc5522.targetsMime, payload: payload
+            ).bytes()
+        )
+        emitOsc5522(Osc5522.Reply(op: .read, status: .DONE, id: id).bytes())
+    }
+
+    @MainActor
+    private func serveOsc5522Read(
+        _ p: Osc5522.Packet,
+        list: Osc5522.ReadList,
+        snapshot: [String: Data]?
+    ) {
+        var remaining = osc5522MaxReadBytes
+        let pb = osc5522Writer.pasteboard
+        var listing: Data?
+        if list.wantListing {
+            let names = Osc5522Pasteboard.available(pb)
+            listing = Data(Osc5522.listingPayload(names))
+        }
+        var parts: [(mime: String, data: Data)] = []
+        for mime in list.mimes {
+            guard remaining > 0 else { break }
+            let raw: Data?
+            if let snapshot {
+                raw = snapshot[mime]
+            } else {
+                raw = Osc5522Pasteboard.data(pb, mime: mime)
+            }
+            guard let raw, !raw.isEmpty else { continue }
+            let slice: Data = raw.count > remaining ? raw.prefix(remaining) : raw
+            remaining -= slice.count
+            parts.append((mime, slice))
+        }
+        dataReplyGen += 1
+        let gen = dataReplyGen
+        dataReplyInFlight = true
+        let id = p.id
+        emitOsc5522Encoded {
+            Osc5522.Reply(op: .read, status: .OK, id: id).bytes()
+        }
+        if list.wantListing {
+            let listing = listing ?? Data()
+            emitOsc5522Encoded {
+                Osc5522.Reply(
+                    op: .read,
+                    status: .DATA,
+                    id: id,
+                    mime: Osc5522.targetsMime,
+                    payload: [UInt8](listing)
+                ).bytes()
+            }
+        }
+        for part in parts {
+            var off = 0
+            while off < part.data.count {
+                let end = min(off + Osc5522.readChunk, part.data.count)
+                let chunk = part.data.subdata(in: off..<end)
+                emitOsc5522Encoded {
+                    Osc5522.Reply(
+                        op: .read, status: .DATA, id: id, mime: part.mime, payload: [UInt8](chunk)
+                    ).bytes()
+                }
+                off = end
+            }
+        }
+        emitOsc5522Encoded {
+            Osc5522.Reply(op: .read, status: .DONE, id: id).bytes()
+        }
+        ptyOut.async { [weak self] in
+            DispatchQueue.main.async {
+                self?.clearDataReplyIfCurrent(gen: gen)
+            }
+        }
+    }
+
+    private func emitOsc5522(_ bytes: [UInt8]) {
+        guard !bytes.isEmpty else { return }
+        osc5522ReplySink?(bytes)
+        writeToPty(bytes)
+    }
+
+    private func emitOsc5522Encoded(_ make: @escaping @Sendable () -> [UInt8]) {
+        if ptyOutStop.withLock({ $0 }) { return }
+        ptyOut.async { [weak self] in
+            guard let self else { return }
+            if self.ptyOutStop.withLock({ $0 }) { return }
+            let bytes = make()
+            guard !bytes.isEmpty else { return }
+            self.osc5522ReplySink?(bytes)
+            self.lock.lock()
+            let fd = self.masterFD
+            self.lock.unlock()
+            guard fd >= 0 else { return }
+            _ = writePtyBlocking(fd: fd, bytes)
         }
     }
 

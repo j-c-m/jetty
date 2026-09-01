@@ -76,6 +76,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         self.device = device
         self.config = AppConfig.load()
+        AppConfig.ensureClipboardPasswordsFile()
+        Osc5522StoredPasswords.process = Osc5522StoredPasswords.load()
         EmbeddedFonts.registerIfNeeded()
         DesktopNotify.install()
 

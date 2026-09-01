@@ -498,4 +498,519 @@ final class Osc5522Tests: XCTestCase {
         session.stop()
         session.writeToPty(Array("y".utf8))
     }
+
+    private final class PacketBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var packets: [[UInt8]] = []
+        func add(_ p: [UInt8]) {
+            lock.lock()
+            packets.append(p)
+            lock.unlock()
+        }
+        func all() -> [[UInt8]] {
+            lock.lock()
+            defer { lock.unlock() }
+            return packets
+        }
+    }
+
+    private func makeSession(_ pb: NSPasteboard) -> TerminalSession {
+        let session = TerminalSession(
+            cols: 10, rows: 2, cellWidthPx: 8, cellHeightPx: 16, scrollbackCapRows: 0
+        )
+        session.osc5522Writer.pasteboard = pb
+        session.storedPasswords = Osc5522StoredPasswords()
+        return session
+    }
+
+    private func runOnMain(_ body: @escaping @MainActor () -> Void) {
+        let exp = expectation(description: "main")
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                body()
+            }
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 2)
+    }
+
+    private func attach(_ session: TerminalSession) -> PacketBox {
+        let box = PacketBox()
+        session.osc5522ReplySink = { box.add($0) }
+        return box
+    }
+
+    private func sendRead(_ session: TerminalSession, _ meta: String, payload: String) {
+        runOnMain {
+            session.handleOsc5522(
+                meta: Array(meta.utf8), payload: Array(payload.utf8), quantum: 4096
+            )
+        }
+    }
+
+    private func readReply(
+        _ status: Osc5522.Status,
+        id: String = "",
+        mime: String? = nil,
+        payload: [UInt8] = []
+    ) -> [UInt8] {
+        Osc5522.Reply(op: .read, status: status, id: id, mime: mime, payload: payload).bytes()
+    }
+
+    private func mimeListPayload(_ s: String) -> String {
+        Data(s.utf8).base64EncodedString()
+    }
+
+    private func fieldB64(_ s: String) -> String {
+        Data(s.utf8).base64EncodedString()
+    }
+
+    private func waitContains(
+        _ box: PacketBox,
+        _ packet: [UInt8],
+        timeout: TimeInterval = 2
+    ) {
+        let exp = expectation(description: "packet")
+        exp.assertForOverFulfill = false
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if box.all().contains(packet) {
+                exp.fulfill()
+                wait(for: [exp], timeout: 0.1)
+                return
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTFail("missing packet, got \(box.all().count)")
+    }
+
+    func testReadListingNoPrompt() {
+        let pb = namedPasteboard()
+        pb.setString("hello", forType: .string)
+        let session = makeSession(pb)
+        var prompted = false
+        session.onOsc5522Prompt = { _, reply in
+            prompted = true
+            reply(.deny)
+        }
+        let box = attach(session)
+        sendRead(session, "type=read:id=l1", payload: mimeListPayload("."))
+        XCTAssertFalse(prompted)
+        let listing = Osc5522.listingPayload(Osc5522Pasteboard.available(pb))
+        XCTAssertEqual(box.all().first, readReply(.OK, id: "l1"))
+        XCTAssertTrue(
+            box.all().contains(
+                readReply(.DATA, id: "l1", mime: ".", payload: listing)
+            )
+        )
+        XCTAssertEqual(box.all().last, readReply(.DONE, id: "l1"))
+    }
+
+    func testEmptyListingSendsDATAWithoutPayload() {
+        let pb = namedPasteboard()
+        let session = makeSession(pb)
+        var prompted = false
+        session.onOsc5522Prompt = { _, _ in prompted = true }
+        let box = attach(session)
+        sendRead(session, "type=read", payload: mimeListPayload("."))
+        XCTAssertFalse(prompted)
+        XCTAssertTrue(box.all().contains(readReply(.DATA, mime: ".")))
+        XCTAssertEqual(box.all().last, readReply(.DONE))
+    }
+
+    func testReadDataPromptAllow() {
+        let pb = namedPasteboard()
+        pb.setString("hello", forType: .string)
+        let session = makeSession(pb)
+        var prompted = 0
+        session.onOsc5522Prompt = { prompt, reply in
+            prompted += 1
+            XCTAssertEqual(prompt.direction, .read)
+            XCTAssertEqual(prompt.name, "app")
+            XCTAssertTrue(prompt.offersAlways)
+            reply(.allow)
+        }
+        let box = attach(session)
+        sendRead(
+            session,
+            "type=read:id=r1:pw=\(fieldB64("secret")):name=\(fieldB64("app"))",
+            payload: mimeListPayload("text/plain")
+        )
+        XCTAssertEqual(prompted, 1)
+        waitContains(box, readReply(.DONE, id: "r1"))
+        XCTAssertTrue(box.all().contains(readReply(.OK, id: "r1")))
+        XCTAssertTrue(
+            box.all().contains(
+                readReply(.DATA, id: "r1", mime: "text/plain", payload: Array("hello".utf8))
+            )
+        )
+    }
+
+    func testReadDenyConfigEPERM() {
+        let pb = namedPasteboard()
+        pb.setString("hello", forType: .string)
+        let session = makeSession(pb)
+        session.osc52ReadAsk = false
+        var prompted = false
+        session.onOsc5522Prompt = { _, _ in prompted = true }
+        let box = attach(session)
+        sendRead(session, "type=read:id=d1", payload: mimeListPayload("text/plain"))
+        XCTAssertFalse(prompted)
+        XCTAssertEqual(box.all(), [readReply(.EPERM, id: "d1")])
+    }
+
+    func testOTPDoesNotBypassDeny() {
+        let pb = namedPasteboard()
+        pb.setString("hello", forType: .string)
+        let session = makeSession(pb)
+        session.osc52ReadAsk = false
+        let otp = session.installPasteOTP()
+        let box = attach(session)
+        sendRead(
+            session,
+            "type=read:id=d2:pw=\(fieldB64(otp)):name=\(fieldB64("app"))",
+            payload: mimeListPayload("text/plain")
+        )
+        XCTAssertEqual(box.all(), [readReply(.EPERM, id: "d2")])
+        XCTAssertEqual(session.osc5522Grants.entries.filter(\.oneTime).count, 1)
+    }
+
+    func testOnOsc5522PromptNilIsEPERM() {
+        let pb = namedPasteboard()
+        pb.setString("hello", forType: .string)
+        let session = makeSession(pb)
+        let box = attach(session)
+        sendRead(session, "type=read:id=n1", payload: mimeListPayload("text/plain"))
+        XCTAssertEqual(box.all(), [readReply(.EPERM, id: "n1")])
+    }
+
+    func testSecondUnauthenticatedReadDuringPromptIsEBUSY() {
+        let pb = namedPasteboard()
+        pb.setString("hello", forType: .string)
+        let session = makeSession(pb)
+        var pending: ((Osc5522Decision) -> Void)?
+        session.onOsc5522Prompt = { _, reply in pending = reply }
+        let box = attach(session)
+        sendRead(session, "type=read:id=a", payload: mimeListPayload("text/plain"))
+        sendRead(session, "type=read:id=b", payload: mimeListPayload("text/plain"))
+        XCTAssertEqual(box.all(), [readReply(.EBUSY, id: "b")])
+        runOnMain { pending?(.deny) }
+        XCTAssertTrue(box.all().contains(readReply(.EPERM, id: "a")))
+    }
+
+    func testOTPDuringDataReplyInFlightIsEBUSY() {
+        let pb = namedPasteboard()
+        pb.setString("hello", forType: .string)
+        let session = makeSession(pb)
+        let otp = session.installPasteOTP()
+        let box = attach(session)
+        let meta = "type=read:id=busy:pw=\(fieldB64(otp)):name=\(fieldB64("app"))"
+        let payload = mimeListPayload("text/plain")
+        runOnMain {
+            session.dataReplyGen = 1
+            session.dataReplyInFlight = true
+            session.handleOsc5522(
+                meta: Array(meta.utf8),
+                payload: Array(payload.utf8),
+                quantum: 4096
+            )
+        }
+        XCTAssertEqual(box.all(), [readReply(.EBUSY, id: "busy")])
+        XCTAssertEqual(session.osc5522Grants.entries.filter(\.oneTime).count, 1)
+    }
+
+    func testOTPDuringOpenSheetIdleIOAllows() {
+        let pb = namedPasteboard()
+        pb.setString("hello", forType: .string)
+        let session = makeSession(pb)
+        var pending: ((Osc5522Decision) -> Void)?
+        session.onOsc5522Prompt = { _, reply in pending = reply }
+        let box = attach(session)
+        sendRead(session, "type=read:id=sheet", payload: mimeListPayload("text/plain"))
+        XCTAssertNotNil(pending)
+        XCTAssertTrue(session.osc5522PromptOpen)
+        let otp = session.installPasteOTP()
+        sendRead(
+            session,
+            "type=read:id=otp:pw=\(fieldB64(otp)):name=\(fieldB64("app"))",
+            payload: mimeListPayload("text/plain")
+        )
+        waitContains(box, readReply(.DONE, id: "otp"))
+        XCTAssertTrue(session.osc5522PromptOpen)
+        XCTAssertTrue(session.osc5522Grants.entries.filter(\.oneTime).isEmpty)
+        runOnMain { pending?(.deny) }
+        XCTAssertTrue(box.all().contains(readReply(.EPERM, id: "sheet")))
+    }
+
+    func testListingNotWrittenWhileDataInFlight() {
+        let pb = namedPasteboard()
+        pb.setString("hello", forType: .string)
+        let session = makeSession(pb)
+        let box = attach(session)
+        session.dataReplyGen = 1
+        session.dataReplyInFlight = true
+        XCTAssertFalse(session.sendPasteEvent(from: pb, snapshot: false))
+        XCTAssertTrue(box.all().isEmpty)
+    }
+
+    func testStaleGenClearKeepsInFlight() {
+        let session = makeSession(namedPasteboard())
+        runOnMain {
+            session.dataReplyGen = 2
+            session.dataReplyInFlight = true
+            session.clearDataReplyIfCurrent(gen: 1)
+            XCTAssertTrue(session.dataReplyInFlight)
+            session.clearDataReplyIfCurrent(gen: 2)
+            XCTAssertFalse(session.dataReplyInFlight)
+        }
+    }
+
+    func testSheetAllowAfterOTPStartedDATAIsEBUSY() {
+        let pb = namedPasteboard()
+        pb.setString("hello", forType: .string)
+        let session = makeSession(pb)
+        var pending: ((Osc5522Decision) -> Void)?
+        session.onOsc5522Prompt = { _, reply in pending = reply }
+        let box = attach(session)
+        let payload = mimeListPayload("text/plain")
+        runOnMain {
+            session.handleOsc5522(
+                meta: Array("type=read:id=sheet".utf8),
+                payload: Array(payload.utf8),
+                quantum: 4096
+            )
+            let otp = session.installPasteOTP()
+            let otpMeta = "type=read:id=otp:pw=\(Data(otp.utf8).base64EncodedString()):name=\(Data("app".utf8).base64EncodedString())"
+            session.handleOsc5522(
+                meta: Array(otpMeta.utf8),
+                payload: Array(payload.utf8),
+                quantum: 4096
+            )
+            pending?(.allow)
+        }
+        waitContains(box, readReply(.EBUSY, id: "sheet"))
+        waitContains(box, readReply(.DONE, id: "otp"))
+    }
+
+    func testOTPConsumeTimeoutAndNamelessIgnored() {
+        let pb = namedPasteboard()
+        pb.setString("hello", forType: .string)
+        let session = makeSession(pb)
+        let box = attach(session)
+        let otp = session.installPasteOTP()
+        sendRead(
+            session,
+            "type=read:pw=\(fieldB64(otp))",
+            payload: mimeListPayload("text/plain")
+        )
+        XCTAssertEqual(box.all(), [readReply(.EPERM)])
+        XCTAssertEqual(session.osc5522Grants.entries.filter(\.oneTime).count, 1)
+
+        sendRead(
+            session,
+            "type=read:id=once:pw=\(fieldB64(otp)):name=\(fieldB64("app"))",
+            payload: mimeListPayload("text/plain")
+        )
+        waitContains(box, readReply(.DONE, id: "once"))
+        XCTAssertTrue(session.osc5522Grants.entries.filter(\.oneTime).isEmpty)
+
+        sendRead(
+            session,
+            "type=read:id=again:pw=\(fieldB64(otp)):name=\(fieldB64("app"))",
+            payload: mimeListPayload("text/plain")
+        )
+        XCTAssertTrue(box.all().contains(readReply(.EPERM, id: "again")))
+
+        session.installPasteOTP(deadline: Date.distantPast)
+        let expired = session.osc5522Grants.entries.first { $0.oneTime }?.pw ?? ""
+        sendRead(
+            session,
+            "type=read:id=exp:pw=\(fieldB64(expired)):name=\(fieldB64("app"))",
+            payload: mimeListPayload("text/plain")
+        )
+        XCTAssertTrue(box.all().contains(readReply(.EPERM, id: "exp")))
+        XCTAssertTrue(session.osc5522Grants.entries.filter(\.oneTime).isEmpty)
+    }
+
+    func testPrimaryReadIsENOSYS() {
+        let pb = namedPasteboard()
+        pb.setString("hello", forType: .string)
+        let session = makeSession(pb)
+        var prompted = false
+        session.onOsc5522Prompt = { _, _ in prompted = true }
+        let box = attach(session)
+        sendRead(session, "type=read:loc=primary:id=p1", payload: mimeListPayload("."))
+        XCTAssertFalse(prompted)
+        XCTAssertEqual(box.all(), [readReply(.ENOSYS, id: "p1")])
+    }
+
+    func testInvalidReadPayloadIsDropped() {
+        let pb = namedPasteboard()
+        let session = makeSession(pb)
+        let box = attach(session)
+        sendRead(session, "type=read:id=bad", payload: "!!!")
+        sendRead(session, "type=read:id=bad2", payload: "/w==")
+        XCTAssertTrue(box.all().isEmpty)
+    }
+
+    func testStoredFileParseLastNameWinsAndMatch() {
+        let stored = Osc5522StoredPasswords.parse("""
+            # comment
+            name = neovim
+            password = first
+
+            name = drop
+
+            name = neovim
+            password = 550e8400-e29b-41d4-a716-446655440000
+
+            name = yazi
+            password = 7c9e6679-7425-40de-944b-e07fc1f90ae7
+            """)
+        XCTAssertEqual(stored.records.map(\.name), ["neovim", "yazi"])
+        XCTAssertEqual(stored.records[0].password, "550e8400-e29b-41d4-a716-446655440000")
+        XCTAssertTrue(
+            stored.match(name: "neovim", password: "550e8400-e29b-41d4-a716-446655440000")
+        )
+        XCTAssertFalse(stored.match(name: "neovim", password: "first"))
+        XCTAssertFalse(stored.match(name: "other", password: "550e8400-e29b-41d4-a716-446655440000"))
+        XCTAssertFalse(stored.match(name: "neovim", password: "wrong"))
+        XCTAssertFalse(stored.match(name: "", password: "550e8400-e29b-41d4-a716-446655440000"))
+    }
+
+    func testStoredMatchNeedsNameAndPwOnRead() {
+        let pb = namedPasteboard()
+        pb.setString("hello", forType: .string)
+        let session = makeSession(pb)
+        session.storedPasswords = Osc5522StoredPasswords.parse("""
+            name = neovim
+            password = secret-pw
+            """)
+        var prompted = false
+        session.onOsc5522Prompt = { _, reply in
+            prompted = true
+            reply(.deny)
+        }
+        let box = attach(session)
+        sendRead(
+            session,
+            "type=read:id=s1:pw=\(fieldB64("secret-pw")):name=\(fieldB64("neovim"))",
+            payload: mimeListPayload("text/plain")
+        )
+        XCTAssertFalse(prompted)
+        waitContains(box, readReply(.DONE, id: "s1"))
+
+        sendRead(
+            session,
+            "type=read:id=s2:pw=\(fieldB64("secret-pw")):name=\(fieldB64("other"))",
+            payload: mimeListPayload("text/plain")
+        )
+        XCTAssertTrue(prompted)
+        XCTAssertTrue(box.all().contains(readReply(.EPERM, id: "s2")))
+    }
+
+    func testDenyBeatsStored() {
+        let pb = namedPasteboard()
+        pb.setString("hello", forType: .string)
+        let session = makeSession(pb)
+        session.osc52ReadAsk = false
+        session.storedPasswords = Osc5522StoredPasswords.parse("""
+            name = neovim
+            password = secret-pw
+            """)
+        let box = attach(session)
+        sendRead(
+            session,
+            "type=read:id=s3:pw=\(fieldB64("secret-pw")):name=\(fieldB64("neovim"))",
+            payload: mimeListPayload("text/plain")
+        )
+        XCTAssertEqual(box.all(), [readReply(.EPERM, id: "s3")])
+    }
+
+    func testBanBeatsStored() {
+        let pb = namedPasteboard()
+        pb.setString("hello", forType: .string)
+        let session = makeSession(pb)
+        session.storedPasswords = Osc5522StoredPasswords.parse("""
+            name = neovim
+            password = secret-pw
+            """)
+        session.osc5522Grants.ban("secret-pw", .read)
+        var prompted = false
+        session.onOsc5522Prompt = { _, _ in prompted = true }
+        let box = attach(session)
+        sendRead(
+            session,
+            "type=read:id=s4:pw=\(fieldB64("secret-pw")):name=\(fieldB64("neovim"))",
+            payload: mimeListPayload("text/plain")
+        )
+        XCTAssertFalse(prompted)
+        XCTAssertEqual(box.all(), [readReply(.EPERM, id: "s4")])
+    }
+
+    func testEnsureClipboardPasswordsFileIs0600() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jetty-pw-\(UUID().uuidString)")
+        let url = dir.appendingPathComponent("clipboard-passwords")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let got = AppConfig.ensureClipboardPasswordsFile(at: url)
+        XCTAssertEqual(got, url)
+        let perms = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber
+        XCTAssertEqual((perms?.uint16Value ?? 0) & 0o777, 0o600)
+        let parsed = Osc5522StoredPasswords.load(from: url)
+        XCTAssertTrue(parsed.records.isEmpty)
+    }
+
+    func testDataUsesPasteboardTypeNotRawMime() {
+        let pb = namedPasteboard()
+        XCTAssertTrue(Osc5522Pasteboard.write(pb, contents: [
+            ("application/x-foo", Data("x".utf8)),
+        ]))
+        XCTAssertEqual(Osc5522Pasteboard.data(pb, mime: "application/x-foo"), Data("x".utf8))
+        XCTAssertNil(pb.data(forType: .init("application/x-foo")))
+        XCTAssertEqual(
+            pb.data(forType: Osc5522Pasteboard.pasteboardType(forMime: "application/x-foo")),
+            Data("x".utf8)
+        )
+    }
+
+    func testDataFileOnlyPlainTextIsUnquotedPaths() {
+        let pb = namedPasteboard()
+        pb.writeObjects([URL(fileURLWithPath: "/tmp/osc5522 path") as NSURL])
+        XCTAssertEqual(
+            Osc5522Pasteboard.data(pb, mime: "text/plain"),
+            Data("/tmp/osc5522 path".utf8)
+        )
+        let uri = Osc5522Pasteboard.data(pb, mime: "text/uri-list")
+        XCTAssertEqual(uri, Data("file:///tmp/osc5522%20path\r\n".utf8))
+    }
+
+    func testReadChunkAt4096() {
+        let pb = namedPasteboard()
+        let text = String(repeating: "a", count: Osc5522.readChunk + 1)
+        pb.setString(text, forType: .string)
+        let session = makeSession(pb)
+        session.onOsc5522Prompt = { _, reply in reply(.allow) }
+        let box = attach(session)
+        sendRead(session, "type=read:id=big", payload: mimeListPayload("text/plain"))
+        waitContains(box, readReply(.DONE, id: "big"))
+        let first = Array(repeating: UInt8(ascii: "a"), count: Osc5522.readChunk)
+        let second: [UInt8] = [UInt8(ascii: "a")]
+        XCTAssertTrue(
+            box.all().contains(readReply(.DATA, id: "big", mime: "text/plain", payload: first))
+        )
+        XCTAssertTrue(
+            box.all().contains(readReply(.DATA, id: "big", mime: "text/plain", payload: second))
+        )
+    }
+
+    func testSanitizeNameStripsControlsAndBidi() {
+        XCTAssertEqual(Osc5522.sanitizeName("ok"), "ok")
+        XCTAssertEqual(Osc5522.sanitizeName("a\u{0001}b\u{202E}c"), "abc")
+        XCTAssertTrue(Osc5522.timingSafeEqual("pw", "pw"))
+        XCTAssertFalse(Osc5522.timingSafeEqual("pw", "pq"))
+        let otp = Osc5522.randomOTP()
+        XCTAssertEqual(otp.count, Osc5522.otpLength)
+        XCTAssertTrue(otp.utf8.allSatisfy { Osc5522.otpAlphabet.contains($0) })
+    }
 }

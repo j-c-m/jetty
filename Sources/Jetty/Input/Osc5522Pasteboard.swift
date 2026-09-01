@@ -93,6 +93,34 @@ public enum Osc5522Pasteboard {
         }
         return pb.writeObjects(items)
     }
+
+    public static func data(_ pb: NSPasteboard, mime: String) -> Data? {
+        let mime = normalizeMime(mime)
+        switch mime {
+        case "text/plain":
+            return plainText(pb)
+        case "text/html":
+            return pb.data(forType: .html)
+        case "text/rtf":
+            return pb.data(forType: .rtf)
+        case "text/rtfd":
+            return pb.data(forType: .rtfd)
+        case "image/png":
+            if let png = pb.data(forType: .png) { return png }
+            if let tiff = pb.data(forType: .tiff) { return Clipboard.pngFromTIFF(tiff) }
+            return nil
+        case "image/tiff":
+            return pb.data(forType: .tiff)
+        case "image/jpeg":
+            return pb.data(forType: jpegType)
+        case "application/pdf":
+            return pb.data(forType: .pdf)
+        case "text/uri-list":
+            return uriList(pb)
+        default:
+            return pb.data(forType: pasteboardType(forMime: mime))
+        }
+    }
 }
 
 extension Osc5522Pasteboard {
@@ -214,5 +242,60 @@ extension Osc5522Pasteboard {
             urls.append(url)
         }
         return urls
+    }
+
+    private static let utf8PlainType = NSPasteboard.PasteboardType("public.utf8-plain-text")
+
+    private static func isPlainTextType(_ type: NSPasteboard.PasteboardType) -> Bool {
+        switch type.rawValue {
+        case NSPasteboard.PasteboardType.string.rawValue,
+             "public.utf8-plain-text",
+             "public.utf16-plain-text",
+             "NSStringPboardType",
+             "com.apple.traditional-mac-plain-text":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func isFileURLType(_ type: NSPasteboard.PasteboardType) -> Bool {
+        switch type.rawValue {
+        case NSPasteboard.PasteboardType.fileURL.rawValue, "public.file-url", "NSFilenamesPboardType":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func fileURLs(_ pb: NSPasteboard) -> [URL] {
+        (pb.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL]) ?? []
+    }
+
+    private static func plainText(_ pb: NSPasteboard) -> Data? {
+        let types = pb.types ?? []
+        let fromText = types.contains(where: isPlainTextType)
+        let fromFile = types.contains(where: isFileURLType)
+        if fromFile && !fromText {
+            let urls = fileURLs(pb)
+            if urls.isEmpty { return nil }
+            return Data(urls.map(\.path).joined(separator: "\n").utf8)
+        }
+        if let s = pb.string(forType: .string) {
+            return Data(s.utf8)
+        }
+        return pb.data(forType: utf8PlainType)
+    }
+
+    private static func uriList(_ pb: NSPasteboard) -> Data? {
+        let urls = fileURLs(pb)
+        if !urls.isEmpty {
+            let body = urls.map(\.absoluteString).joined(separator: "\r\n") + "\r\n"
+            return Data(body.utf8)
+        }
+        return pb.data(forType: pasteboardType(forMime: "text/uri-list"))
     }
 }

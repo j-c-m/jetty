@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Security
 
 public enum Osc5522 {
     public static let maxWriteBytes = 64 * 1024 * 1024
@@ -198,6 +199,90 @@ public enum Osc5522 {
         guard let out = try? d.feed(input) else { return nil }
         guard (try? d.finish()) != nil else { return nil }
         return out
+    }
+
+    public struct ReadList: Equatable {
+        public var wantListing: Bool
+        public var mimes: [String]
+    }
+
+    /// Invalid base64 / UTF-8 → nil (silent drop). `.` is listing, not a data type.
+    public static func parseReadList(_ payload: [UInt8]) -> ReadList? {
+        if payload.isEmpty { return ReadList(wantListing: false, mimes: []) }
+        guard let decoded = strictDecode(payload) else { return nil }
+        guard let text = String(bytes: decoded, encoding: .utf8) else { return nil }
+        var wantListing = false
+        var mimes: [String] = []
+        var seen = Set<String>()
+        for part in text.split(whereSeparator: \.isWhitespace) {
+            let raw = String(part)
+            if raw == targetsMime {
+                wantListing = true
+                continue
+            }
+            let mime = Osc5522Pasteboard.normalizeMime(raw)
+            guard !mime.isEmpty, seen.insert(mime).inserted else { continue }
+            if mimes.count >= maxReadMimes { continue }
+            mimes.append(mime)
+        }
+        return ReadList(wantListing: wantListing, mimes: mimes)
+    }
+
+    public static func listingPayload(_ mimes: [String]) -> [UInt8] {
+        if mimes.isEmpty { return [] }
+        return Array((mimes.joined(separator: " ") + "\n").utf8)
+    }
+
+    public static func sanitizeName(_ s: String) -> String {
+        var out = ""
+        out.reserveCapacity(s.count)
+        for sc in s.unicodeScalars {
+            let v = sc.value
+            if v < 0x20 { continue }
+            if v >= 0x7F && v < 0xA0 { continue }
+            if v >= 0x202A && v <= 0x2069 { continue }
+            out.unicodeScalars.append(sc)
+        }
+        if out.utf8.count <= maxNameLen { return out }
+        var bytes = Array(out.utf8.prefix(maxNameLen))
+        while !bytes.isEmpty, String(bytes: bytes, encoding: .utf8) == nil {
+            bytes.removeLast()
+        }
+        return String(bytes: bytes, encoding: .utf8) ?? ""
+    }
+
+    public static func timingSafeEqual(_ a: String, _ b: String) -> Bool {
+        let ab = Array(a.utf8)
+        let bb = Array(b.utf8)
+        let n = max(ab.count, bb.count)
+        var diff: UInt8 = ab.count == bb.count ? 0 : 1
+        var i = 0
+        while i < n {
+            let x = i < ab.count ? ab[i] : 0
+            let y = i < bb.count ? bb[i] : 0
+            diff |= x ^ y
+            i += 1
+        }
+        return diff == 0
+    }
+
+    public static let otpAlphabet = Array(
+        "23456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ".utf8
+    )
+    public static let otpLength = 22
+
+    public static func randomOTP() -> String {
+        var raw = [UInt8](repeating: 0, count: otpLength)
+        let status = SecRandomCopyBytes(kSecRandomDefault, raw.count, &raw)
+        if status != errSecSuccess {
+            for i in raw.indices { raw[i] = UInt8.random(in: 0...255) }
+        }
+        let alpha = otpAlphabet
+        var out = [UInt8](repeating: 0, count: otpLength)
+        for i in raw.indices {
+            out[i] = alpha[Int(raw[i]) % alpha.count]
+        }
+        return String(bytes: out, encoding: .ascii) ?? ""
     }
 }
 
@@ -571,5 +656,139 @@ final class Osc5522Writer {
 
     private func reply(_ status: Osc5522.Status, id: String) {
         onReply?(Osc5522.Reply(op: .write, status: status, id: id))
+    }
+}
+
+enum Osc5522Decision {
+    case allow, always, deny, ban
+}
+
+struct Osc5522Prompt {
+    var direction: Osc5522Grants.Direction
+    var name: String
+    var offersAlways: Bool
+}
+
+struct Osc5522Grants {
+    enum Direction {
+        case read, write
+    }
+
+    struct Entry {
+        var pw: String
+        var read = false
+        var write = false
+        var readBan = false
+        var writeBan = false
+        var oneTime = false
+        var deadline: Date?
+        var snapshot: [String: Data]?
+    }
+
+    static let maxEntries = 32
+    var entries: [Entry] = []
+
+    mutating func reset() {
+        entries.removeAll()
+    }
+
+    mutating func grantAlways(_ pw: String, _ dir: Direction) {
+        guard !pw.isEmpty else { return }
+        if let i = index(of: pw, oneTime: false) {
+            if dir == .read {
+                entries[i].read = true
+                entries[i].readBan = false
+            } else {
+                entries[i].write = true
+                entries[i].writeBan = false
+            }
+            return
+        }
+        evictIfNeeded()
+        var e = Entry(pw: pw)
+        if dir == .read { e.read = true } else { e.write = true }
+        entries.append(e)
+    }
+
+    mutating func ban(_ pw: String, _ dir: Direction) {
+        guard !pw.isEmpty else { return }
+        if let i = index(of: pw, oneTime: false) {
+            if dir == .read {
+                entries[i].readBan = true
+                entries[i].read = false
+            } else {
+                entries[i].writeBan = true
+                entries[i].write = false
+            }
+            return
+        }
+        evictIfNeeded()
+        var e = Entry(pw: pw)
+        if dir == .read { e.readBan = true } else { e.writeBan = true }
+        entries.append(e)
+    }
+
+    mutating func replaceOTP(pw: String, deadline: Date, snapshot: [String: Data]? = nil) {
+        entries.removeAll { $0.oneTime }
+        guard !pw.isEmpty else { return }
+        evictIfNeeded()
+        entries.append(
+            Entry(pw: pw, read: true, oneTime: true, deadline: deadline, snapshot: snapshot)
+        )
+    }
+
+    func isBanned(_ pw: String, _ dir: Direction, now _: Date) -> Bool {
+        guard !pw.isEmpty else { return false }
+        for e in entries {
+            guard Osc5522.timingSafeEqual(e.pw, pw) else { continue }
+            if e.oneTime { continue }
+            return dir == .read ? e.readBan : e.writeBan
+        }
+        return false
+    }
+
+    func hasAlways(_ pw: String, _ dir: Direction, now _: Date) -> Bool {
+        guard !pw.isEmpty else { return false }
+        for e in entries {
+            guard Osc5522.timingSafeEqual(e.pw, pw) else { continue }
+            if e.oneTime { continue }
+            if dir == .read { return e.read && !e.readBan }
+            return e.write && !e.writeBan
+        }
+        return false
+    }
+
+    mutating func use(_ pw: String, _ dir: Direction, now: Date) -> (ok: Bool, snapshot: [String: Data]?) {
+        guard !pw.isEmpty, let i = index(of: pw) else { return (false, nil) }
+        let e = entries[i]
+        if let deadline = e.deadline, now >= deadline {
+            entries.remove(at: i)
+            return (false, nil)
+        }
+        if e.oneTime {
+            entries.remove(at: i)
+            let ok: Bool
+            if dir == .read {
+                ok = e.read && !e.readBan
+            } else {
+                ok = e.write && !e.writeBan
+            }
+            return (ok, ok ? e.snapshot : nil)
+        }
+        return (false, nil)
+    }
+
+    private mutating func evictIfNeeded() {
+        while entries.count >= Self.maxEntries {
+            entries.removeFirst()
+        }
+    }
+
+    private func index(of pw: String, oneTime: Bool? = nil) -> Int? {
+        for (i, e) in entries.enumerated() {
+            if let oneTime, e.oneTime != oneTime { continue }
+            if Osc5522.timingSafeEqual(e.pw, pw) { return i }
+        }
+        return nil
     }
 }
