@@ -1529,7 +1529,6 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         case .bottom:
             scrollPhysics.seekExtreme(direction: -1, holdCount: 1, viewportRows: vp, maxOffset: maxO)
         }
-        clearIdleSelection()
         kickScroll()
     }
 
@@ -1786,13 +1785,11 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 began: event.phase.contains(.began),
                 ended: ended
             )
-            if abs(deltaRows) >= 1e-4 { clearIdleSelection() }
             kickScroll()
             return
         }
         if abs(deltaRows) < 1e-4 { return }
         scrollPhysics.applyImpulse(deltaRows: deltaRows)
-        clearIdleSelection()
         kickScroll()
     }
 
@@ -1852,7 +1849,6 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         } else {
             scrollPhysics.smoothTo(offset: Double(doc), maxOffset: maxO)
         }
-        clearIdleSelection()
         kickScroll()
     }
 
@@ -2006,7 +2002,6 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         } else {
             scrollPhysics.smoothTo(offset: Double(hit.docRow), maxOffset: maxO)
         }
-        clearIdleSelection()
         kickScroll()
     }
 
