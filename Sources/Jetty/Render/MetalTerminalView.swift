@@ -251,6 +251,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 newRows = Double(produced - lastLinesScrolled)
             }
             lastLinesScrolled = produced
+            if newRows > 0.5 { clearIdleSelection() }
             let grown = max(0, maxO - Double(lastSbCount))
             let trim = max(0, newRows - grown)
             lastSbCount = sbCount
@@ -1528,6 +1529,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         case .bottom:
             scrollPhysics.seekExtreme(direction: -1, holdCount: 1, viewportRows: vp, maxOffset: maxO)
         }
+        clearIdleSelection()
         kickScroll()
     }
 
@@ -1784,11 +1786,13 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 began: event.phase.contains(.began),
                 ended: ended
             )
+            if abs(deltaRows) >= 1e-4 { clearIdleSelection() }
             kickScroll()
             return
         }
         if abs(deltaRows) < 1e-4 { return }
         scrollPhysics.applyImpulse(deltaRows: deltaRows)
+        clearIdleSelection()
         kickScroll()
     }
 
@@ -1848,6 +1852,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         } else {
             scrollPhysics.smoothTo(offset: Double(doc), maxOffset: maxO)
         }
+        clearIdleSelection()
         kickScroll()
     }
 
@@ -2001,6 +2006,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         } else {
             scrollPhysics.smoothTo(offset: Double(hit.docRow), maxOffset: maxO)
         }
+        clearIdleSelection()
         kickScroll()
     }
 
@@ -2447,6 +2453,16 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private func selectionCells() -> (x0: Int, y0: Int, x1: Int, y1: Int)? {
         guard let a = selAnchor, let b = selEnd else { return nil }
         return (a.x, a.y, b.x, b.y)
+    }
+
+    private func clearIdleSelection() {
+        if selecting { return }
+        if selAnchor == nil, selEnd == nil { return }
+        selAnchor = nil
+        selEnd = nil
+        selRect = false
+        pendingSelect = nil
+        pendingRect = false
     }
 
     private func selectedText(_ s: (x0: Int, y0: Int, x1: Int, y1: Int)) -> String {
