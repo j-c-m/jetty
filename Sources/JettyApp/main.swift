@@ -409,6 +409,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         session.osc52WriteAllow = config.osc52Write == .allow
         session.osc52ReadAsk = config.osc52Read == .ask
         session.screen.setKittyGraphics(config.kittyGraphics)
+        session.screen.setOsc52ReadAsk(session.osc52ReadAsk)
         session.desktopNotifications = config.desktopNotifications
         session.notifyOnCommandFinish = config.notifyOnCommandFinish
         session.notifyOnCommandFinishAfter = config.notifyOnCommandFinishAfter

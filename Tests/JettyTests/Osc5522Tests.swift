@@ -747,10 +747,113 @@ final class Osc5522Tests: XCTestCase {
         pb.setString("hello", forType: .string)
         let session = makeSession(pb)
         let box = attach(session)
+        let otp = session.installPasteOTP()
         session.dataReplyGen = 1
         session.dataReplyInFlight = true
         XCTAssertFalse(session.sendPasteEvent(from: pb, snapshot: false))
         XCTAssertTrue(box.all().isEmpty)
+        XCTAssertEqual(session.osc5522Grants.entries.first { $0.oneTime }?.pw, otp)
+    }
+
+    func testSendPasteEventEmptyListingHasPwNoId() {
+        let pb = namedPasteboard()
+        pb.clearContents()
+        let session = makeSession(pb)
+        let box = attach(session)
+        XCTAssertTrue(session.sendPasteEvent(from: pb, snapshot: false))
+        let otp = session.osc5522Grants.entries.first { $0.oneTime }?.pw ?? ""
+        XCTAssertFalse(otp.isEmpty)
+        XCTAssertEqual(
+            box.all(),
+            [
+                Osc5522.Reply(op: .read, status: .OK, pw: otp).bytes(),
+                Osc5522.Reply(op: .read, status: .DATA, mime: ".", pw: otp).bytes(),
+                Osc5522.Reply(op: .read, status: .DONE, pw: otp).bytes(),
+            ]
+        )
+        let joined = String(bytes: box.all().flatMap { $0 }, encoding: .utf8) ?? ""
+        XCTAssertFalse(joined.contains(":id="))
+        XCTAssertFalse(joined.contains("loc="))
+    }
+
+    func testSendPasteEventReplacesOTP() {
+        let pb = namedPasteboard()
+        pb.setString("hello", forType: .string)
+        let session = makeSession(pb)
+        XCTAssertTrue(session.sendPasteEvent(from: pb, snapshot: false))
+        let otp1 = session.osc5522Grants.entries.first { $0.oneTime }?.pw ?? ""
+        XCTAssertTrue(session.sendPasteEvent(from: pb, snapshot: false))
+        let otp2 = session.osc5522Grants.entries.first { $0.oneTime }?.pw ?? ""
+        XCTAssertNotEqual(otp1, otp2)
+        XCTAssertEqual(session.osc5522Grants.entries.filter(\.oneTime).count, 1)
+        let box = attach(session)
+        sendRead(
+            session,
+            "type=read:id=old:pw=\(fieldB64(otp1)):name=\(fieldB64("app"))",
+            payload: mimeListPayload("text/plain")
+        )
+        XCTAssertEqual(box.all(), [readReply(.EPERM, id: "old")])
+        sendRead(
+            session,
+            "type=read:id=new:pw=\(fieldB64(otp2)):name=\(fieldB64("app"))",
+            payload: mimeListPayload("text/plain")
+        )
+        waitContains(box, readReply(.DONE, id: "new"))
+        XCTAssertTrue(
+            box.all().contains(
+                readReply(.DATA, id: "new", mime: "text/plain", payload: Array("hello".utf8))
+            )
+        )
+    }
+
+    func testDropOTPServesSnapshotNotGeneral() {
+        let drop = namedPasteboard()
+        drop.setString("from-drop", forType: .string)
+        let live = namedPasteboard()
+        live.setString("from-live", forType: .string)
+        let session = makeSession(live)
+        XCTAssertTrue(session.sendPasteEvent(from: drop, snapshot: true))
+        let otp = session.osc5522Grants.entries.first { $0.oneTime }?.pw ?? ""
+        let box = attach(session)
+        sendRead(
+            session,
+            "type=read:id=drop:pw=\(fieldB64(otp)):name=\(fieldB64("app"))",
+            payload: mimeListPayload("text/plain")
+        )
+        waitContains(box, readReply(.DONE, id: "drop"))
+        XCTAssertTrue(
+            box.all().contains(
+                readReply(.DATA, id: "drop", mime: "text/plain", payload: Array("from-drop".utf8))
+            )
+        )
+        XCTAssertFalse(
+            box.all().contains(
+                readReply(.DATA, id: "drop", mime: "text/plain", payload: Array("from-live".utf8))
+            )
+        )
+    }
+
+    func testReadWithoutDropOTPCannotReadSnapshot() {
+        let drop = namedPasteboard()
+        drop.setString("from-drop", forType: .string)
+        let live = namedPasteboard()
+        live.setString("from-live", forType: .string)
+        let session = makeSession(live)
+        session.onOsc5522Prompt = { _, reply in reply(.allow) }
+        XCTAssertTrue(session.sendPasteEvent(from: drop, snapshot: true))
+        let box = attach(session)
+        sendRead(session, "type=read:id=live", payload: mimeListPayload("text/plain"))
+        waitContains(box, readReply(.DONE, id: "live"))
+        XCTAssertTrue(
+            box.all().contains(
+                readReply(.DATA, id: "live", mime: "text/plain", payload: Array("from-live".utf8))
+            )
+        )
+        XCTAssertFalse(
+            box.all().contains(
+                readReply(.DATA, id: "live", mime: "text/plain", payload: Array("from-drop".utf8))
+            )
+        )
     }
 
     func testStaleGenClearKeepsInFlight() {

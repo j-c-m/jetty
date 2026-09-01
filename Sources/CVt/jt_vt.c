@@ -299,6 +299,10 @@ static int dec_mode_state(const jt_scr *s, uint16_t mode) {
     case 1034: on = 0; break;
     case 1036: on = !s || s->alt_esc; break;
     case 2004: on = s && s->bracketed_paste; break;
+    case 5522:
+        if (!s || !s->osc52_read_ask) { known = 0; break; } /* DECRPM 0 */
+        on = s->paste_events;
+        break;
     case 2031: on = s && s->report_theme; break;
     case 2033: on = s && s->report_vis; break;
     case 2048: on = s && s->inband_size; break;
@@ -395,6 +399,14 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
                     else jt_scr_decrc(scr);
                     break;
                 case 2004: scr->bracketed_paste = (uint8_t)set; break;
+                case 5522:
+                    if (set) {
+                        if (scr->osc52_read_ask) scr->paste_events = 1;
+                        /* else no-op: stays 0, DECRPM stays 0 */
+                    } else {
+                        scr->paste_events = 0;
+                    }
+                    break;
                 case 2026:
                     if (p->sync_applying) break;
                     jt_sync_set(scr, set);

@@ -504,16 +504,62 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(p.osc5522Packets.count, 0)
     }
 
-    func testDECRQM5522StillUnsupported() {
+    func testDECRQM5522PasteEvents() {
         let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
         let p = Parser()
         p.screen = s
+        XCTAssertFalse(s.pasteEvents)
+        p.feed("\u{1B}[?5522$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?5522;2$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?5522h")
+        XCTAssertTrue(s.pasteEvents)
+        p.feed("\u{1B}[?5522$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?5522;1$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?5522l")
+        XCTAssertFalse(s.pasteEvents)
+        p.feed("\u{1B}[?5522$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?5522;2$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?5522h")
+        XCTAssertTrue(s.pasteEvents)
+        p.feed("\u{1B}c")
+        XCTAssertFalse(s.pasteEvents)
+        p.feed("\u{1B}[?5522$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?5522;2$y")
+    }
+
+    func testDECRQM5522DenyAtLaunch() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        s.setOsc52ReadAsk(false)
+        p.feed("\u{1B}[?5522h")
+        XCTAssertFalse(s.pasteEvents)
         p.feed("\u{1B}[?5522$p")
         XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?5522;0$y")
         p.writes.removeAll()
+        p.feed("\u{1B}c")
         p.feed("\u{1B}[?5522h")
         p.feed("\u{1B}[?5522$p")
         XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?5522;0$y")
+    }
+
+    func testSetOsc52ReadAskClearsPasteEvents() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?5522h")
+        XCTAssertTrue(s.pasteEvents)
+        s.setOsc52ReadAsk(false)
+        XCTAssertFalse(s.pasteEvents)
+        p.feed("\u{1B}[?5522$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?5522;0$y")
+        p.writes.removeAll()
+        s.setOsc52ReadAsk(true)
+        p.feed("\u{1B}[?5522$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?5522;2$y")
     }
 
     func testOSC8And7And133() {

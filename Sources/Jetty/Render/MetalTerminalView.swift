@@ -101,7 +101,9 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         session.cellWidthPx = UInt32(metrics.cellWidthPx)
         session.cellHeightPx = UInt32(metrics.cellHeightPx)
         session.screen.setCellPx(width: session.cellWidthPx, height: session.cellHeightPx)
+        session.osc52ReadAsk = config.osc52Read == .ask
         session.screen.setKittyGraphics(config.kittyGraphics)
+        session.screen.setOsc52ReadAsk(session.osc52ReadAsk)
         session.onRedraw = { @Sendable [weak self] in
             MainActor.assumeIsolated {
                 self?.needsDisplay = true
@@ -1657,6 +1659,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         session.lock.lock()
         session.screen.setPaletteOverlay(next.paletteOverlay, mask: next.paletteOverlayMask)
         session.screen.setKittyGraphics(next.kittyGraphics)
+        session.screen.setOsc52ReadAsk(session.osc52ReadAsk)
         session.lock.unlock()
         let bs = max(window?.backingScaleFactor ?? lastBackingScale, 1)
         lastBackingScale = bs
@@ -2116,8 +2119,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     @objc public func paste(_ sender: Any?) {
-        guard let str = Clipboard.pasteboardPayload() else { return }
-        pasteText(str)
+        session.pasteFromPasteboard(.general)
     }
 
     private func presentOsc5522Prompt(
@@ -2168,20 +2170,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
 
     public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         if isQuitConfirmOpen { return false }
-        let pb = sender.draggingPasteboard
-        let files = pb.readObjects(
-            forClasses: [NSURL.self],
-            options: [.urlReadingFileURLsOnly: true]
-        ) as? [URL]
-        if let files, !files.isEmpty {
-            pasteText(Clipboard.droppedPaths(files.map(\.path)))
-            return true
-        }
-        if let str = pb.string(forType: .string), !str.isEmpty {
-            pasteText(str)
-            return true
-        }
-        return false
+        return session.dropFromPasteboard(sender.draggingPasteboard)
     }
 
     private func dropOperation(_ sender: NSDraggingInfo) -> NSDragOperation {
@@ -2189,13 +2178,6 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let types = sender.draggingPasteboard.types ?? []
         if types.contains(.fileURL) || types.contains(.string) { return .copy }
         return []
-    }
-
-    private func pasteText(_ str: String) {
-        session.lock.lock()
-        let bracketed = session.screen.bracketedPaste
-        session.lock.unlock()
-        session.writeToPty(Clipboard.pasteBytes(Array(str.utf8), bracketed: bracketed))
     }
 
     public func reportFocus(gained: Bool) {

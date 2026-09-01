@@ -26,6 +26,7 @@ public final class TerminalSession: @unchecked Sendable {
     private let osc5522Hop = OSAllocatedUnfairLock(uncheckedState: Osc5522HopQueue())
     let osc5522Writer = Osc5522Writer()
     var osc5522ReplySink: (([UInt8]) -> Void)?
+    var ptyWriteSink: (([UInt8]) -> Void)?
     var osc5522Grants = Osc5522Grants()
     var storedPasswords: Osc5522StoredPasswords?
     var osc5522Now: () -> Date = Date.init
@@ -482,6 +483,7 @@ public final class TerminalSession: @unchecked Sendable {
 
     public func writeToPty(_ bytes: [UInt8]) {
         guard !bytes.isEmpty else { return }
+        ptyWriteSink?(bytes)
         if ptyOutStop.withLock({ $0 }) { return }
         let copy = bytes
         ptyOut.async { [weak self] in
@@ -575,6 +577,48 @@ public final class TerminalSession: @unchecked Sendable {
             snapshot: snapshot
         )
         return otp
+    }
+
+    func pasteFromPasteboard(_ pb: NSPasteboard) {
+        lock.lock()
+        let mimePaste = screen.pasteEvents
+        let bracketed = screen.bracketedPaste
+        lock.unlock()
+        if mimePaste, sendPasteEvent(from: pb, snapshot: false) {
+            return
+        }
+        guard let str = Clipboard.pasteboardPayload(pb) else { return }
+        writeToPty(Clipboard.pasteBytes(Array(str.utf8), bracketed: bracketed))
+    }
+
+    func dropFromPasteboard(_ pb: NSPasteboard) -> Bool {
+        lock.lock()
+        let mimePaste = screen.pasteEvents
+        let bracketed = screen.bracketedPaste
+        lock.unlock()
+        if mimePaste {
+            if sendPasteEvent(from: pb, snapshot: true) {
+                return true
+            }
+        }
+        let files = pb.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL]
+        if let files, !files.isEmpty {
+            writeToPty(
+                Clipboard.pasteBytes(
+                    Array(Clipboard.droppedPaths(files.map(\.path)).utf8),
+                    bracketed: bracketed
+                )
+            )
+            return true
+        }
+        if let str = pb.string(forType: .string), !str.isEmpty {
+            writeToPty(Clipboard.pasteBytes(Array(str.utf8), bracketed: bracketed))
+            return true
+        }
+        return false
     }
 
     @discardableResult

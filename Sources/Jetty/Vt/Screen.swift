@@ -16,6 +16,7 @@ public final class Screen {
     public var mouseSgr: Bool { implPtr.pointee.mouse_sgr != 0 }
     public var tracksMouse: Bool { mouseEvent != 0 }
     public var bracketedPaste: Bool { implPtr.pointee.bracketed_paste != 0 }
+    public var pasteEvents: Bool { implPtr.pointee.paste_events != 0 }
     public var focusEvent: Bool { implPtr.pointee.focus_event != 0 }
 
     public func codepointWidth(_ scalar: UInt32) -> Int {
@@ -111,6 +112,10 @@ public final class Screen {
 
     public func setKittyGraphics(_ on: Bool) {
         jt_scr_set_kitty_graphics(implPtr, on ? 1 : 0)
+    }
+
+    public func setOsc52ReadAsk(_ on: Bool) {
+        jt_scr_set_osc52_read_ask(implPtr, on ? 1 : 0)
     }
 
     public var imgLiveN: Int { Int(jt_img_live_n(implPtr)) }

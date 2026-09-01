@@ -1567,6 +1567,7 @@ void jt_scr_init(jt_scr *s, int32_t cols, int32_t rows, int32_t sb_cap) {
     s->active = &s->primary;
     sb_alloc(s, cap, cols, rows);
     s->kitty_graphics = 1;
+    s->osc52_read_ask = 1;
     s->cell_w_px = 12;
     s->cell_h_px = 24;
     s->img_primary = (jt_img_store *)calloc(1, sizeof(jt_img_store));
@@ -1598,6 +1599,12 @@ void jt_scr_deinit(jt_scr *s) {
     }
     s->img_live_n = 0;
     jt_pools_deinit(s);
+}
+
+void jt_scr_set_osc52_read_ask(jt_scr *s, int on) {
+    if (!s) return;
+    s->osc52_read_ask = on ? 1 : 0;
+    if (!s->osc52_read_ask) s->paste_events = 0;
 }
 
 void jt_scr_ris(jt_scr *s) {
@@ -1637,6 +1644,7 @@ void jt_scr_ris(jt_scr *s) {
     s->mouse_alt_scroll = 1;
     s->focus_event = 0;
     s->bracketed_paste = 0;
+    s->paste_events = 0;
     jt_sync_timeout_clear(s);
     s->reverse_video = 0;
     s->primary.scroll_top = 0;
