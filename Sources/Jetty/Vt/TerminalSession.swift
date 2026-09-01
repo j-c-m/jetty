@@ -4,6 +4,7 @@ import CVt
 import CoreFoundation
 import Darwin
 import Foundation
+import os
 
 public final class TerminalSession: @unchecked Sendable {
     public let lock = NSLock()
@@ -16,6 +17,15 @@ public final class TerminalSession: @unchecked Sendable {
     public var cellHeightPx: UInt32
 
     private var pipeline: PtyPipeline?
+    private let ptyOut = DispatchQueue(label: "dev.jetty.pty.out", qos: .userInteractive)
+    private let ptyOutStop = OSAllocatedUnfairLock(uncheckedState: false)
+    private struct Osc5522HopQueue {
+        var queuedBytes = 0
+        var overflowArmed = false
+    }
+    private let osc5522Hop = OSAllocatedUnfairLock(uncheckedState: Osc5522HopQueue())
+    let osc5522Writer = Osc5522Writer()
+    var osc5522ReplySink: (([UInt8]) -> Void)?
     public var onRedraw: (@Sendable () -> Void)?
     public var onDeath: (@Sendable () -> Void)?
     public var onTitle: (@Sendable (String) -> Void)?
@@ -80,6 +90,14 @@ public final class TerminalSession: @unchecked Sendable {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { self?.askOsc52Read(kind) }
             }
+        }
+        osc5522Writer.onReply = { [weak self] reply in
+            let bytes = reply.bytes()
+            self?.osc5522ReplySink?(bytes)
+            self?.writeToPty(bytes)
+        }
+        parser.onOsc5522 = { [weak self] meta, payload in
+            self?.hopOsc5522(meta: meta, payload: payload)
         }
         parser.onPaletteChanged = { [weak self] in
             self?.scheduleRedraw()
@@ -311,6 +329,7 @@ public final class TerminalSession: @unchecked Sendable {
         childPID = pid
         spawnDirectory = remembered
         lock.unlock()
+        ptyOutStop.withLock { $0 = false }
         let pipe = PtyPipeline(masterFD: fd, onParse: { [weak self] ptr, len in
             self?.parseBatch(ptr, len)
         }, onDeath: { [weak self] in
@@ -323,14 +342,16 @@ public final class TerminalSession: @unchecked Sendable {
     public func stop() {
         pipeline?.stop()
         pipeline = nil
+        ptyOutStop.withLock { $0 = true }
         lock.lock()
-        if masterFD >= 0 {
-            close(masterFD)
-            masterFD = -1
-        }
+        let fd = masterFD
+        masterFD = -1
         let pid = childPID
         childPID = 0
         lock.unlock()
+        if fd >= 0 { close(fd) }
+        ptyOut.sync {}
+        osc5522Writer.reset()
         if pid > 0 {
             var status: Int32 = 0
             while waitpid(pid, &status, 0) < 0 && errno == EINTR {}
@@ -446,9 +467,73 @@ public final class TerminalSession: @unchecked Sendable {
     }
 
     public func writeToPty(_ bytes: [UInt8]) {
-        let fd = masterFD
-        guard fd >= 0, !bytes.isEmpty else { return }
-        _ = writePtyBlocking(fd: fd, bytes)
+        guard !bytes.isEmpty else { return }
+        if ptyOutStop.withLock({ $0 }) { return }
+        let copy = bytes
+        ptyOut.async { [weak self] in
+            guard let self else { return }
+            if self.ptyOutStop.withLock({ $0 }) { return }
+            self.lock.lock()
+            let fd = self.masterFD
+            self.lock.unlock()
+            guard fd >= 0 else { return }
+            _ = writePtyBlocking(fd: fd, copy)
+        }
+    }
+
+    private func hopOsc5522(meta: [UInt8], payload: [UInt8]) {
+        enum Hop {
+            case drop
+            case overflow
+            case packet(Int)
+        }
+        let hop: Hop = osc5522Hop.withLock { q in
+            if q.overflowArmed { return .drop }
+            let quantum = max(meta.count + payload.count, Osc5522.queueQuantum)
+            if q.queuedBytes + quantum > Osc5522.maxQueuedBytes {
+                q.overflowArmed = true
+                q.queuedBytes += Osc5522.queueQuantum
+                return .overflow
+            }
+            q.queuedBytes += quantum
+            return .packet(quantum)
+        }
+        switch hop {
+        case .drop:
+            return
+        case .overflow:
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated { self?.handleOsc5522Overflow() }
+            }
+        case .packet(let quantum):
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.handleOsc5522(meta: meta, payload: payload, quantum: quantum)
+                }
+            }
+        }
+    }
+
+    @MainActor
+    func handleOsc5522(meta: [UInt8], payload: [UInt8], quantum: Int) {
+        defer { releaseOsc5522Quantum(quantum) }
+        if ptyOutStop.withLock({ $0 }) { return }
+        osc5522Writer.writeAllow = osc52WriteAllow
+        osc5522Writer.handle(meta: meta, payload: payload)
+    }
+
+    @MainActor
+    func handleOsc5522Overflow() {
+        defer { releaseOsc5522Quantum(Osc5522.queueQuantum) }
+        if ptyOutStop.withLock({ $0 }) { return }
+        osc5522Writer.handleOverflow()
+    }
+
+    private func releaseOsc5522Quantum(_ quantum: Int) {
+        osc5522Hop.withLock { q in
+            q.queuedBytes = max(0, q.queuedBytes - quantum)
+            if q.queuedBytes == 0 { q.overflowArmed = false }
+        }
     }
 
     public func lockDemand() {

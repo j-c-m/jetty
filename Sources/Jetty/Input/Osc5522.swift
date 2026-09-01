@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 public enum Osc5522 {
@@ -314,5 +315,261 @@ extension Osc5522.StreamingBase64 {
             UInt8(((v1 & 0x0F) << 4) | (v2 >> 2)),
             UInt8(((v2 & 0x03) << 6) | v3),
         ]
+    }
+}
+
+final class Osc5522WriteState {
+    enum Error: Swift.Error { case invalid, tooLarge }
+
+    let id: String
+    let primary: Bool
+    let pw: String
+    let name: String
+    var spool: [UInt8] = []
+    var entries: [(mime: String, start: Int, len: Int)] = []
+    var aliases: [(alias: String, target: String)] = []
+    var current: Int?
+    var decoder = Osc5522.StreamingBase64()
+    let maxSize: Int
+
+    init(id: String, primary: Bool, pw: String, name: String, maxSize: Int) {
+        self.id = id
+        self.primary = primary
+        self.pw = pw
+        self.name = name
+        self.maxSize = maxSize
+    }
+
+    func data(mime: String, payload: [UInt8]) throws {
+        if let idx = current {
+            if entries[idx].mime == mime {
+                try append(payload)
+                return
+            }
+            try finishCurrent()
+        }
+        if let idx = entries.firstIndex(where: { $0.mime == mime }) {
+            entries[idx].start = spool.count
+            entries[idx].len = 0
+            current = idx
+            try append(payload)
+            return
+        }
+        if entries.count >= Osc5522.maxWriteMimes {
+            current = nil
+            return
+        }
+        entries.append((mime: mime, start: spool.count, len: 0))
+        current = entries.count - 1
+        try append(payload)
+    }
+
+    func alias(mime: String, payload: [UInt8]) throws {
+        guard let decoded = Osc5522.strictDecode(payload) else { throw Error.invalid }
+        guard let text = String(bytes: decoded, encoding: .utf8) else { throw Error.invalid }
+        let names = text.split { $0.isWhitespace }.compactMap { part -> String? in
+            let s = String(part)
+            guard !s.isEmpty, s.utf8.count <= Osc5522.maxMimeLen else { return nil }
+            return s
+        }
+        guard !names.isEmpty else { return }
+        for name in names {
+            if let i = aliases.firstIndex(where: { $0.alias == name }) {
+                aliases[i].target = mime
+            } else if aliases.count >= Osc5522.maxWriteAliases {
+                return
+            } else {
+                aliases.append((alias: name, target: mime))
+            }
+        }
+    }
+
+    func commit() throws -> [(mime: String, data: Data)] {
+        if current != nil {
+            try finishCurrent()
+            current = nil
+        }
+        var contents: [(mime: String, data: Data)] = entries.map { e in
+            let end = e.start + e.len
+            let slice = spool[e.start..<end]
+            return (e.mime, Data(slice))
+        }
+        for a in aliases {
+            guard let target = contents.first(where: { $0.mime == a.target }) else { continue }
+            if let i = contents.firstIndex(where: { $0.mime == a.alias }) {
+                contents[i].data = target.data
+            } else {
+                contents.append((a.alias, target.data))
+            }
+        }
+        return contents
+    }
+
+    private func finishCurrent() throws {
+        try decoder.finish()
+        if let idx = current {
+            entries[idx].len = spool.count - entries[idx].start
+        }
+    }
+
+    private func append(_ payload: [UInt8]) throws {
+        let decoded: [UInt8]
+        do {
+            decoded = try decoder.feed(payload)
+        } catch {
+            throw Error.invalid
+        }
+        if spool.count + decoded.count > maxSize { throw Error.tooLarge }
+        spool.append(contentsOf: decoded)
+    }
+}
+
+final class Osc5522Writer {
+    enum Phase {
+        case idle
+        case accumulating
+        case ignoringWrites
+    }
+
+    private(set) var phase = Phase.idle
+    private(set) var state: Osc5522WriteState?
+    var writeAllow = true
+    var pasteboard: NSPasteboard
+    var maxWriteBytes = Osc5522.maxWriteBytes
+    var onReply: ((Osc5522.Reply) -> Void)?
+
+    init(pasteboard: NSPasteboard = .general) {
+        self.pasteboard = pasteboard
+    }
+
+    func reset() {
+        state = nil
+        phase = .idle
+    }
+
+    func handleOverflow() {
+        if phase == .accumulating {
+            fail(.EFBIG)
+        }
+    }
+
+    func handle(meta: [UInt8], payload: [UInt8]) {
+        switch Osc5522.ParseResult.parse(meta: meta, payload: payload) {
+        case .drop:
+            return
+        case .invalid(let op, _):
+            handleInvalid(op: op)
+        case .packet(let packet):
+            handlePacket(packet)
+        }
+    }
+
+    private func handleInvalid(op: Osc5522.Op?) {
+        guard phase == .accumulating else { return }
+        switch op {
+        case .wdata, .walias:
+            fail(.EINVAL)
+        default:
+            break
+        }
+    }
+
+    private func handlePacket(_ p: Osc5522.Packet) {
+        switch p.op {
+        case .read:
+            return
+        case .write:
+            beginWrite(p)
+        case .wdata:
+            handleWdata(p)
+        case .walias:
+            handleWalias(p)
+        }
+    }
+
+    private func beginWrite(_ p: Osc5522.Packet) {
+        state = nil
+        if p.primary {
+            phase = .ignoringWrites
+            reply(.ENOSYS, id: p.id)
+            return
+        }
+        if !writeAllow {
+            phase = .ignoringWrites
+            reply(.EPERM, id: p.id)
+            return
+        }
+        state = Osc5522WriteState(
+            id: p.id,
+            primary: p.primary,
+            pw: p.pw,
+            name: p.name,
+            maxSize: maxWriteBytes
+        )
+        phase = .accumulating
+    }
+
+    private func handleWdata(_ p: Osc5522.Packet) {
+        guard phase == .accumulating, let st = state else { return }
+        if p.mime.isEmpty {
+            commit(st)
+            return
+        }
+        do {
+            try st.data(mime: p.mime, payload: p.payload)
+        } catch Osc5522WriteState.Error.tooLarge {
+            fail(.EFBIG)
+        } catch {
+            fail(.EINVAL)
+        }
+    }
+
+    private func handleWalias(_ p: Osc5522.Packet) {
+        guard phase == .accumulating, let st = state else { return }
+        if p.mime.isEmpty {
+            fail(.EINVAL)
+            return
+        }
+        do {
+            try st.alias(mime: p.mime, payload: p.payload)
+        } catch {
+            fail(.EINVAL)
+        }
+    }
+
+    private func commit(_ st: Osc5522WriteState) {
+        let contents: [(mime: String, data: Data)]
+        do {
+            contents = try st.commit()
+        } catch {
+            fail(.EINVAL)
+            return
+        }
+        if !writeAllow {
+            fail(.EPERM)
+            return
+        }
+        if st.primary {
+            fail(.ENOSYS)
+            return
+        }
+        if !Osc5522Pasteboard.write(pasteboard, contents: contents) {
+            fail(.EIO)
+            return
+        }
+        state = nil
+        phase = .idle
+        reply(.DONE, id: st.id)
+    }
+
+    private func fail(_ status: Osc5522.Status) {
+        let id = state?.id ?? ""
+        state = nil
+        phase = .ignoringWrites
+        reply(status, id: id)
+    }
+
+    private func reply(_ status: Osc5522.Status, id: String) {
+        onReply?(Osc5522.Reply(op: .write, status: status, id: id))
     }
 }
