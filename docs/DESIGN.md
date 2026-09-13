@@ -5,8 +5,8 @@
 | Document | Design (v1 lock) |
 | Author | TBD |
 | Date | 2026-08-21 |
-| Updated | 2026-08-29 |
-| Status | **Shipped.** PRs 1–17 on `master`. Later product: `docs/DESIGN-follow-on.md`, `docs/DESIGN-kitty-graphics.md` |
+| Updated | 2026-09-13 |
+| Status | **Shipped.** PRs 1–17 on `master`. Later product: `docs/DESIGN-follow-on.md`, `docs/DESIGN-kitty-graphics.md`, `docs/DESIGN-osc-5522.md` |
 | Bundle ID | `dev.jetty.app` |
 | Audience | Senior engineers familiar with linux16term / Ghostty / ghosvt |
 
@@ -22,6 +22,7 @@ linux16term is frozen. Copy selected files into jetty; do not submodule it. Do n
 | --- | --- | --- |
 | Daily-driver follow-on | `docs/DESIGN-follow-on.md` 18–36 | — |
 | Kitty graphics | `docs/DESIGN-kitty-graphics.md` 38–45 | Kitty keyboard, `TERM=xterm-kitty`, Sixel |
+| OSC 5522 clipboard | `docs/DESIGN-osc-5522.md` 1–4 | `loc=primary` (ENOSYS); no silent write-allow |
 | Extra VT / host on the same tree | CSI 16 t, 22/23 t title stack, DSR 996/998, XTGETTCAP, DECRQSS, reverse-wrap 1045, AppleScript, Cmd+N cwd inherit | CSI 21 t **title report** (injection) |
 
 ---

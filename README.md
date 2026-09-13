@@ -40,7 +40,8 @@ JETTY_SIGN_IDENTITY=... JETTY_NOTARY_PROFILE=... ./scripts/notarize.sh
 
 `~/.config/jetty/config`. Keys and internals: [docs/DESIGN.md](docs/DESIGN.md),
 [docs/DESIGN-follow-on.md](docs/DESIGN-follow-on.md),
-[docs/DESIGN-kitty-graphics.md](docs/DESIGN-kitty-graphics.md).
+[docs/DESIGN-kitty-graphics.md](docs/DESIGN-kitty-graphics.md),
+[docs/DESIGN-osc-5522.md](docs/DESIGN-osc-5522.md).
 
 AppleScript is on unless `macos-applescript = false`. Command names match
 Ghostty for windows and terminals. No tabs or splits.

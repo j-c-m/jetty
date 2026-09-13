@@ -5,7 +5,7 @@
 | Document | Design (follow-on) |
 | Author | TBD |
 | Date | 2026-08-22 |
-| Updated | 2026-08-29 |
+| Updated | 2026-09-13 |
 | Status | **Shipped.** PRs 18–36 done (21 withdrawn, 37 skipped). |
 | Bundle ID | `dev.jetty.app` |
 | Baseline | v1 DESIGN `docs/DESIGN.md`; this plan started at HEAD `573cf05` |
@@ -25,6 +25,7 @@ Ghostty (`https://github.com/ghostty-org/ghostty`) is the **parity baseline** fo
 | 33 secure input | **done.** Menu **Secure Keyboard Entry**. Auto when Darwin master `tcgetattr` is ICANON && !ECHO and `macos-auto-secure-input`. No in-grid badge. |
 | 37 xcodeproj | **skipped** (notarization did not need it) |
 | Kitty graphics | **out of this document.** Shipped in `docs/DESIGN-kitty-graphics.md` (38–45). Kitty keyboard / `TERM=xterm-kitty` still out. |
+| OSC 5522 clipboard | **out of this document.** Shipped in `docs/DESIGN-osc-5522.md` (1–4). |
 | Extra on `master` (not numbered here) | AppleScript; XTGETTCAP / DECRQSS; CSI 16 t and 22/23 t title stack; DSR 996/998; inband 2048; reverse-wrap 1045; XTVERSION; `progress-style`; Cmd+V clipboard PNG; 16K-aligned grid; Metal `maximumDrawableCount = 2`; Ghostty-like ScrollPhysics coast; DEC 2026 hold-parse like Alacritty |
 
 ---

@@ -5,10 +5,9 @@
 | Document | Design (OSC 5522) |
 | Author | TBD |
 | Date | 2026-08-31 |
-| Updated | 2026-08-31 (open questions resolved) |
-| Status | **Draft** |
+| Updated | 2026-09-13 |
+| Status | **Shipped.** PRs 1–4 on `master` (parse, write, read, DEC mode 5522 paste events). |
 | Bundle ID | `dev.jetty.app` |
-| Branch | `osc-5522` (from `master`) |
 | Baseline | v1 `docs/DESIGN.md`; follow-on `docs/DESIGN-follow-on.md`; Kitty graphics `docs/DESIGN-kitty-graphics.md` |
 | Spec | https://sw.kovidgoyal.net/kitty/clipboard/ |
 | Ancillary | https://rockorager.dev/misc/bracketed-paste-mime/ (mode 5522 paste events) |
@@ -18,7 +17,17 @@ This is the Kitty clipboard protocol plan. It does **not** reopen v1 locks: 16-b
 
 Kitty (`kitty/clipboard.py`) is the **reference implementation**. Ghostty (`src/terminal/kitty/clipboard*.zig`) is prior art for semantics where the prose spec is silent. Neither is a library.
 
-HEAD today: `jt_osc.c` `case 5522:` is an explicit no-op (same ignore list as OSC 1337). OSC 52 write-allow / read-ask already ships. Private mode 5522 is unknown (`dec_mode_state` default `known = 0` → DECRPM `Ps=0`).
+### HEAD vs this plan
+
+Proposed Design below is the original spec. **Do not treat the start-of-plan clipboard snapshot as current code.**
+
+| Slice | HEAD |
+| --- | --- |
+| 1 Parse OSC 5522 + 16 KiB OSC cap | **done** |
+| 2 Write (`wdata` / `walias` / pasteboard) | **done** |
+| 3 Read + session grants + stored passwords | **done** |
+| 4 DEC mode 5522 paste events | **done.** DECRPM `1`/`2` under `osc52-read=ask`; `0` under deny. 5522 wins over 2004. Drag-drop is a paste event. |
+| Still out | `loc=primary` (ENOSYS); Kitty keyboard / `TERM=xterm-kitty`; silent write-allow |
 
 ---
 
@@ -34,13 +43,15 @@ Jetty implements the **full** protocol on macOS:
 4. Never touch `jt_scr_index` / `fill_row` / ASCII `print_run`. `loc=primary` is **ENOSYS** (macOS has no primary selection).
 5. `osc52-read=deny` is a complete OSC-read off switch: 5522 **queries** get EPERM; `CSI ? 5522 h` is ignored so DECRPM stays **0** (not `1`); Cmd+V / drop is host paste / quoted-path. MIME paste requires the default `ask`.
 
-Work happens on git branch **`osc-5522`** cut from `master`. Four stacked PRs; each is independently reviewable.
+Shipped on `master`. Four stacked PRs; each was independently reviewable.
 
 ---
 
 ## Background & Motivation
 
-### Current clipboard machine (HEAD)
+### Current clipboard machine at the start of this plan
+
+Pre-1 snapshot. HEAD is the Shipped table above.
 
 | Piece | File | Behavior |
 | --- | --- | --- |
