@@ -38,7 +38,7 @@ public enum XtermKeyEncoder {
         }
 
         if event.keyCode == UInt16(kVK_Tab) {
-            if other, mod != 0, mod != 1 { return csi27(mod: mod, code: 9) }
+            if other, mod != 0 { return csi27(mod: mod, code: 9) }
             if flags.contains(.shift) { return [0x1B, 0x5B, 0x5A] }
             return [0x09]
         }
@@ -249,6 +249,8 @@ public enum XtermKeyEncoder {
         if flags.contains(.command) { return false }
         if flags.contains(.option), altSendsEscape { return true }
         if modifyOtherKeys == 2, flags.contains(.control) { return true }
+        if modifyOtherKeys == 2, flags.contains(.shift),
+           event.keyCode == UInt16(kVK_Space) { return true }
         if flags.contains(.shift), isReturn(event.keyCode) { return true }
         return false
     }

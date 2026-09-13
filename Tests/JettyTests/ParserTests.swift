@@ -1332,8 +1332,13 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(s.cursorY, 0)
         p.feed("\u{1B}[4;1H")
         p.feed("\n")
+        XCTAssertEqual(s.glyph(2, 1), UInt32(UInt8(ascii: "c")))
+        XCTAssertEqual(s.glyph(2, 3), UInt32(UInt8(ascii: "m")))
+        p.feed("\r")
+        XCTAssertEqual(s.cursorX, 0)
+        p.feed("\u{1B}[4;4H")
+        p.feed("\n")
         XCTAssertEqual(s.glyph(0, 0), UInt32(UInt8(ascii: "0")))
-        XCTAssertEqual(s.glyph(2, 0), UInt32(UInt8(ascii: "2")))
         XCTAssertEqual(s.glyph(1, 1), UInt32(UInt8(ascii: "b")))
         XCTAssertEqual(s.glyph(2, 1), UInt32(UInt8(ascii: "C")))
         XCTAssertEqual(s.glyph(6, 1), UInt32(UInt8(ascii: "G")))
@@ -1346,6 +1351,48 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(s.glyph(7, 3), UInt32(UInt8(ascii: "r")))
         p.feed("\r")
         XCTAssertEqual(s.cursorX, 2)
+    }
+
+    func testDecslrmPrintPastRightMargin() {
+        let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("0123456789")
+        p.feed("\u{1B}[?69h")
+        p.feed("\u{1B}[3;7s")
+        p.feed("\u{1B}[1;10H")
+        p.feed("X")
+        XCTAssertEqual(s.glyph(9, 0), UInt32(UInt8(ascii: "X")))
+        XCTAssertEqual(s.glyph(6, 0), UInt32(UInt8(ascii: "6")))
+    }
+
+    func testDecslrmUtf8WrapsAtRightMargin() {
+        let s = Screen(cols: 10, rows: 2, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?69h")
+        p.feed("\u{1B}[3;5s")
+        p.feed("\u{1B}[1;3H")
+        p.feed("éééé")
+        XCTAssertEqual(s.glyph(2, 0), UInt32(0xE9))
+        XCTAssertEqual(s.glyph(4, 0), UInt32(0xE9))
+        XCTAssertEqual(s.cursorY, 1)
+        XCTAssertEqual(s.cursorX, 3)
+        XCTAssertEqual(s.glyph(2, 1), UInt32(0xE9))
+    }
+
+    func testVPAKeepsAbsoluteColumnWithDecslrm() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?69h")
+        p.feed("\u{1B}[?6h")
+        p.feed("\u{1B}[3;8s")
+        XCTAssertEqual(s.cursorX, 2)
+        XCTAssertEqual(s.cursorY, 0)
+        p.feed("\u{1B}[3d")
+        XCTAssertEqual(s.cursorX, 2)
+        XCTAssertEqual(s.cursorY, 2)
     }
 
     func testDecslrmIdleOffDoesNotClip() {

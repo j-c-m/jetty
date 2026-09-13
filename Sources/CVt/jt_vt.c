@@ -604,9 +604,20 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
     case 'f':
         jt_scr_cup(scr, pdef(p->params, p->np, 0, 1) - 1, pdef(p->params, p->np, 1, 1) - 1);
         break;
-    case 'd':
-        jt_scr_cup(scr, pdef(p->params, p->np, 0, 1) - 1, scr->active->cx);
+    case 'd': {
+        jt_buf *b = scr->active;
+        b->pending_wrap = 0;
+        int y0 = 0, y1 = scr->rows - 1;
+        if (scr->origin_mode) {
+            y0 = b->scroll_top;
+            y1 = b->scroll_bottom;
+        }
+        int y = y0 + pdef(p->params, p->np, 0, 1) - 1;
+        if (y < y0) y = y0;
+        if (y > y1) y = y1;
+        b->cy = y;
         break;
+    }
     case 'J': {
         int mode = pdef(p->params, p->np, 0, 0);
         jt_scr_ed(scr, mode);

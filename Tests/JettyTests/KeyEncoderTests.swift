@@ -159,6 +159,18 @@ final class KeyEncoderTests: XCTestCase {
         XCTAssertTrue(XtermKeyEncoder.insertTextDefersToEncoder(
             composing: false, event: ctrlP, modifyOtherKeys: 2
         ))
+        XCTAssertTrue(XtermKeyEncoder.insertTextDefersToEncoder(
+            composing: false, event: shiftSpace, modifyOtherKeys: 2
+        ))
+        let shiftTab = keyEvent(flags: .shift, characters: "\t", ignoring: "\t", keyCode: kVK_Tab)
+        XCTAssertEqual(
+            XtermKeyEncoder.bytes(for: shiftTab, options: opts),
+            Array("\u{1B}[27;2;9~".utf8)
+        )
+        XCTAssertEqual(
+            XtermKeyEncoder.bytes(for: shiftTab, applicationCursor: false),
+            [0x1B, 0x5B, 0x5A]
+        )
     }
 
     private func keyEvent(

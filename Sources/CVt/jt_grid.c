@@ -477,6 +477,20 @@ static int32_t right_col(const jt_scr *s) {
     return s->active->scroll_right;
 }
 
+/* Wrap/print edge: screen right if the cursor is already past the right margin. */
+static int32_t wrap_last(const jt_scr *s) {
+    if (!s->lr_margin) return s->cols > 0 ? s->cols - 1 : 0;
+    if (s->active->cx > s->active->scroll_right)
+        return s->cols > 0 ? s->cols - 1 : 0;
+    return s->active->scroll_right;
+}
+
+static int in_lr(const jt_scr *s) {
+    if (!s->lr_margin) return 1;
+    int32_t x = s->active->cx;
+    return x >= s->active->scroll_left && x <= s->active->scroll_right;
+}
+
 static int lr_partial(const jt_scr *s) {
     if (!s->lr_margin) return 0;
     jt_buf *b = s->active;
@@ -567,7 +581,7 @@ void jt_scr_index(jt_scr *s) {
     jt_buf *b = s->active;
     b->pending_wrap = 0;
     if (b->cy == b->scroll_bottom) {
-        scroll_up(s);
+        if (in_lr(s)) scroll_up(s);
         return;
     }
     if (b->cy < s->rows - 1) b->cy++;
@@ -577,15 +591,18 @@ void jt_scr_ri(jt_scr *s) {
     jt_buf *b = s->active;
     b->pending_wrap = 0;
     if (b->cy == b->scroll_top) {
-        scroll_down(s);
+        if (in_lr(s)) scroll_down(s);
         return;
     }
     if (b->cy > 0) b->cy--;
 }
 
 void jt_scr_cr(jt_scr *s) {
-    s->active->pending_wrap = 0;
-    s->active->cx = left_col(s);
+    jt_buf *b = s->active;
+    b->pending_wrap = 0;
+    if (s->origin_mode) b->cx = left_col(s);
+    else if (s->lr_margin && b->cx >= b->scroll_left) b->cx = b->scroll_left;
+    else b->cx = 0;
 }
 
 void jt_scr_nel(jt_scr *s) {
@@ -683,8 +700,8 @@ static void consume_wrap(jt_scr *s) {
     *wrap_at(s, y) = 1;
     mark_row(s, y);
     b->pending_wrap = 0;
-    b->cx = left_col(s);
     jt_scr_index(s);
+    b->cx = left_col(s);
 }
 
 static void place_graphic(jt_scr *s, uint32_t content) {
@@ -698,7 +715,7 @@ static void place_graphic(jt_scr *s, uint32_t content) {
     neu.extra = s->pen.extra;
     stamp_cell(s, row_at(s, b->cy) + b->cx, neu);
     mark_row(s, b->cy);
-    int32_t last = right_col(s);
+    int32_t last = wrap_last(s);
     if (b->cx >= last) {
         b->cx = last;
         b->pending_wrap = s->auto_wrap;
@@ -878,7 +895,7 @@ static void print_wide(jt_scr *s, uint32_t scalar) {
     jt_buf *b = s->active;
     consume_wrap(s);
     if (s->insert_mode) jt_scr_ich(s, 2);
-    int32_t last = right_col(s);
+    int32_t last = wrap_last(s);
     int32_t room = last + 1 - b->cx;
     if (room < 2) {
         if (s->auto_wrap) {
@@ -931,7 +948,8 @@ void jt_scr_print_wide_run(jt_scr *s, const uint32_t *cps, int n) {
     int i = 0;
     while (i < n) {
         if (b->pending_wrap) consume_wrap(s);
-        int32_t room = s->cols - b->cx;
+        int32_t last = wrap_last(s);
+        int32_t room = last + 1 - b->cx;
         if (room < 2) {
             if (s->auto_wrap) {
                 place_graphic(s, content_scalar(0, WIDE_HEAD));
@@ -966,8 +984,8 @@ void jt_scr_print_wide_run(jt_scr *s, const uint32_t *cps, int n) {
         mark_row(s, b->cy);
         i += pairs;
         int32_t used = pairs * 2;
-        if (b->cx + used >= s->cols) {
-            b->cx = s->cols - 1;
+        if (b->cx + used > last) {
+            b->cx = last;
             b->pending_wrap = s->auto_wrap;
         } else {
             b->cx += used;
@@ -989,13 +1007,14 @@ void jt_scr_print_narrow_run(jt_scr *s, const uint32_t *cps, int n) {
     int32_t marked_y = -1;
     while (off < n) {
         consume_wrap(s);
-        int32_t room = s->cols - b->cx;
+        int32_t last = wrap_last(s);
+        int32_t room = last + 1 - b->cx;
         if (room <= 0) {
-            b->cx = s->cols > 0 ? s->cols - 1 : 0;
+            b->cx = last;
             room = 1;
         }
         int take = (n - off) < room ? (n - off) : room;
-        if (row_erased(s, b->cy) && b->cx == 0 && take == s->cols)
+        if (row_erased(s, b->cy) && b->cx == 0 && !s->lr_margin && take == s->cols)
             *erased_at(s, b->cy) = 0;
         else
             materialize_row(s, b->cy);
@@ -1015,8 +1034,8 @@ void jt_scr_print_narrow_run(jt_scr *s, const uint32_t *cps, int n) {
             marked_y = b->cy;
         }
         off += take;
-        if (b->cx + take >= s->cols) {
-            b->cx = s->cols - 1;
+        if (b->cx + take > last) {
+            b->cx = last;
             b->pending_wrap = s->auto_wrap;
         } else {
             b->cx += take;
@@ -1087,7 +1106,7 @@ void jt_scr_print_run(jt_scr *s, const uint8_t *p, size_t n) {
     jt_buf *b = s->active;
     while (i < n) {
         consume_wrap(s);
-        int32_t last = right_col(s);
+        int32_t last = wrap_last(s);
         int32_t room = last + 1 - b->cx;
         if (room <= 0) {
             b->cx = last;
@@ -1170,6 +1189,7 @@ void jt_scr_ech(jt_scr *s, int n) {
 void jt_scr_il(jt_scr *s, int n) {
     jt_buf *b = s->active;
     if (b->cy < b->scroll_top || b->cy > b->scroll_bottom) return;
+    if (!in_lr(s)) return;
     int nn = n < 1 ? 1 : n;
     int32_t top = b->cy, bot = b->scroll_bottom;
     int32_t save_top = b->scroll_top;
@@ -1188,6 +1208,7 @@ void jt_scr_il(jt_scr *s, int n) {
 void jt_scr_dl(jt_scr *s, int n) {
     jt_buf *b = s->active;
     if (b->cy < b->scroll_top || b->cy > b->scroll_bottom) return;
+    if (!in_lr(s)) return;
     int nn = n < 1 ? 1 : n;
     int32_t top = b->cy, bot = b->scroll_bottom;
     int32_t save_top = b->scroll_top;
