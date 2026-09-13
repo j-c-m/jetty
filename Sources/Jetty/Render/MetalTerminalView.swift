@@ -225,6 +225,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let inAlt = session.screen.inAlt
         if inAlt != lastInAlt {
             lastInAlt = inAlt
+            forceFullRebuild = true
             altScrollPending = 0
             mouseWheelPending = 0
             lastMouseCell = nil

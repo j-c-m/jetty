@@ -83,7 +83,7 @@ public final class TerminalSession: @unchecked Sendable {
         screen.setCellPx(width: cellWidthPx, height: cellHeightPx)
         parser.screen = screen
         parser.ptyWriter = { [weak self] bytes in
-            self?.writeToPty(bytes)
+            self?.writePtyReply(bytes)
         }
         parser.onTitle = { [weak self] title in
             self?.windowTitle = title
@@ -495,6 +495,15 @@ public final class TerminalSession: @unchecked Sendable {
             guard fd >= 0 else { return }
             _ = writePtyBlocking(fd: fd, copy)
         }
+    }
+
+    /// DA / DSR / DECRPM. Immediate; drop on EAGAIN. Keys stay on the blocking queue.
+    private func writePtyReply(_ bytes: [UInt8]) {
+        guard !bytes.isEmpty else { return }
+        ptyWriteSink?(bytes)
+        let fd = masterFD
+        guard fd >= 0 else { return }
+        _ = writePtyNonBlocking(fd: fd, bytes)
     }
 
     private func hopOsc5522(meta: [UInt8], payload: [UInt8]) {
@@ -925,13 +934,14 @@ public final class TerminalSession: @unchecked Sendable {
     private func syncAfterFeed() {
         let on = screen.syncOutput
         let ep = jt_sync_epoch(screen.implPtr)
-        if on {
-            if ep != lastSyncEpoch {
+        if parser.syncBytes > 0 {
+            if ep != lastSyncEpoch || syncTimeoutWork == nil {
                 lastSyncEpoch = ep
                 armSyncTimeout(epoch: ep)
             }
-        } else if lastSyncOn {
+        } else {
             cancelSyncTimeout()
+            if lastSyncOn { scheduleRedraw() }
         }
         lastSyncOn = on
     }
@@ -954,8 +964,13 @@ public final class TerminalSession: @unchecked Sendable {
     }
 
     private func syncTimeoutFired(epoch: UInt32) {
-        lock.lock()
-        let fire = jt_sync_epoch(screen.implPtr) == epoch && screen.syncOutput
+        guard lock.`try`() else {
+            armSyncTimeout(epoch: epoch)
+            return
+        }
+        let held = parser.syncBytes > 0
+        let same = jt_sync_epoch(screen.implPtr) == epoch
+        let fire = held && (same || !screen.syncOutput)
         if fire {
             parser.syncTimeout()
             lastSyncOn = false

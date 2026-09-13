@@ -69,6 +69,12 @@ final class ParserTests: XCTestCase {
         let p = Parser()
         p.feed("\u{1B}[c")
         XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?1;2c")
+        p.writes.removeAll()
+        p.feed("\u{1B}[0c")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?1;2c")
+        p.writes.removeAll()
+        p.feed("\u{1B}[32;3c")
+        XCTAssertEqual(p.writes, [], "DA1 is CSI c / CSI 0 c, not leftover CUP params + c")
     }
 
     func testDA2() {
@@ -112,6 +118,38 @@ final class ParserTests: XCTestCase {
         p.writes.removeAll()
         p.feed("\u{1B}[?2026$p")
         XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?2026;2$y")
+    }
+
+    func testDec2026LReleasesHoldAndPrintsTail() {
+        let s = Screen(cols: 20, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?2026hHELLO")
+        XCTAssertTrue(s.syncOutput)
+        XCTAssertEqual(s.plainString(), "")
+        p.feed("\u{1B}[?2026lWORLD")
+        XCTAssertFalse(s.syncOutput)
+        XCTAssertEqual(p.syncBytes, 0)
+        XCTAssertTrue(s.plainString().contains("HELLO"))
+        XCTAssertTrue(s.plainString().contains("WORLD"))
+    }
+
+    func testDec2026TimeoutAppliesAfterSyncFlagCleared() {
+        let s = Screen(cols: 20, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?2026hSECRET")
+        XCTAssertTrue(s.syncOutput)
+        XCTAssertGreaterThan(p.syncBytes, 0)
+        jt_sync_timeout_clear(s.implPtr)
+        XCTAssertFalse(s.syncOutput)
+        p.feed("WORLD")
+        XCTAssertGreaterThan(p.syncBytes, 0)
+        p.syncTimeout()
+        XCTAssertFalse(s.syncOutput)
+        XCTAssertEqual(p.syncBytes, 0)
+        XCTAssertTrue(s.plainString().contains("SECRET"))
+        XCTAssertTrue(s.plainString().contains("WORLD"))
     }
 
     func testDec2026HoldTimeoutNs() {
@@ -323,22 +361,19 @@ final class ParserTests: XCTestCase {
         XCTAssertFalse(s.focusEvent)
     }
 
-    func testFocusEnableReportsCSIIfFocused() {
+    func testFocusEnableDoesNotInjectCSI() {
         let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
         let p = Parser()
         p.screen = s
         p.windowFocused = true
         p.feed("\u{1B}[?1004h")
-        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[I")
-        p.writes.removeAll()
-        p.feed("\u{1B}[?1004h")
-        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[I")
-        p.writes.removeAll()
-        p.feed("\u{1B}[?1004l")
-        p.windowFocused = false
-        p.feed("\u{1B}[?1004h")
         XCTAssertTrue(s.focusEvent)
-        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[O")
+        XCTAssertEqual(p.writes, [])
+        p.feed("\u{1B}[?1004h")
+        XCTAssertEqual(p.writes, [])
+        p.feed("\u{1B}[?1004l")
+        XCTAssertFalse(s.focusEvent)
+        XCTAssertEqual(p.writes, [])
     }
 
     func testOSCTitleAndST() {

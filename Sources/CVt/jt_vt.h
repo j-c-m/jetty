@@ -223,7 +223,7 @@ typedef struct jt_vt_host {
     /* malloc RGBA8; return 0 on success. */
     int (*png_decode)(void *ctx, const uint8_t *png, size_t n,
                       uint8_t **out_rgba, uint32_t *w, uint32_t *h);
-    /* Host window key. Off→on 1004 writes CSI I when set. */
+    /* Host window key for DECSET 1004. */
     uint8_t window_focused;
 } jt_vt_host;
 

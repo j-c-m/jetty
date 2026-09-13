@@ -66,3 +66,13 @@ public func writePtyBlocking(fd: Int32, _ bytes: [UInt8]) -> Int {
         return writePtyBlocking(fd: fd, bytes: p, len: buf.count)
     }
 }
+
+@discardableResult
+public func writePtyNonBlocking(fd: Int32, _ bytes: [UInt8]) -> Int {
+    guard !bytes.isEmpty else { return 0 }
+    return bytes.withUnsafeBufferPointer { buf in
+        guard let p = buf.baseAddress else { return 0 }
+        let n = jt_pty_write(fd, p, buf.count)
+        return n > 0 ? Int(n) : 0
+    }
+}

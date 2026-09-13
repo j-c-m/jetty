@@ -77,6 +77,13 @@ void jt_vt_reset(jt_vt *p) {
 int jt_vt_state(const jt_vt *p) { return p->state; }
 
 static void write_str(const jt_vt_host *h, const char *s);
+static void sync_apply(jt_vt *p, jt_scr *scr, const jt_vt_host *h, size_t off);
+
+static int is_da1(const jt_vt *p, uint8_t priv) {
+    if (priv != 0) return 0;
+    if (p->np <= 0) return 1;
+    return p->np == 1 && p->params[0] == 0;
+}
 
 static void finish_osc(jt_vt *p, jt_scr *scr, const jt_vt_host *h) {
     if (p->osc_n > 0) jt_osc_dispatch(scr, h, p->osc, p->osc_n);
@@ -340,7 +347,7 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
     }
     if (!scr) {
         if ((final == 'c' || final == 'n' || final == 'q') && h && h->write_pty) {
-            if (final == 'c' && priv == 0) write_str(h, "\033[?1;2c");
+            if (final == 'c' && is_da1(p, priv)) write_str(h, "\033[?1;2c");
             if (final == 'c' && priv == '>') write_str(h, "\033[>0;0;0c");
             if (final == 'q' && priv == '>') write_xtversion(h);
         }
@@ -383,13 +390,9 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
                     if (set) scr->mouse_event = 1003;
                     else if (scr->mouse_event == 1003) scr->mouse_event = 0;
                     break;
-                case 1004: {
+                case 1004:
                     scr->focus_event = (uint8_t)set;
-                    /* Report current focus on every enable (probes re-send 1004h). */
-                    if (set && h)
-                        write_str(h, h->window_focused ? "\033[I" : "\033[O");
                     break;
-                }
                 case 1006: scr->mouse_sgr = (uint8_t)set; break;
                 case 1007: scr->mouse_alt_scroll = (uint8_t)set; break;
                 case 1036: scr->alt_esc = (uint8_t)set; break;
@@ -408,8 +411,17 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
                     break;
                 case 2026:
                     if (p->sync_applying) break;
-                    jt_sync_set(scr, set);
-                    if (set) p->syncing = 1;
+                    if (set) {
+                        jt_sync_set(scr, 1);
+                        p->syncing = 1;
+                    } else {
+                        if (p->sync_n) sync_apply(p, scr, h, p->sync_n);
+                        else {
+                            p->syncing = 0;
+                            p->sync_n = 0;
+                            jt_sync_set(scr, 0);
+                        }
+                    }
                     break;
                 case 2027: jt_scr_set_mode_2027(scr, set); break;
                 case 2031: scr->report_theme = (uint8_t)set; break;
@@ -606,7 +618,7 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
         break;
     }
     case 'c':
-        if (priv == 0) write_str(h, "\033[?1;2c");
+        if (is_da1(p, priv)) write_str(h, "\033[?1;2c");
         break;
     case 'n':
         if (pdef(p->params, p->np, 0, 0) == 5) write_str(h, "\033[0n");
@@ -692,6 +704,10 @@ static void handle_esc(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
         case 'c':
             utf8_reset(p);
             jt_img_abort_loading(&p->load);
+            if (!p->sync_applying) {
+                p->sync_n = 0;
+                p->syncing = 0;
+            }
             jt_scr_ris(scr);
             if (h && h->history_cleared) h->history_cleared(h->ctx);
             break;
@@ -1467,7 +1483,6 @@ static int sync_ensure(jt_vt *p) {
     return 1;
 }
 
-static void sync_apply(jt_vt *p, jt_scr *scr, const jt_vt_host *h, size_t off);
 static void sync_buf_in(jt_vt *p, jt_scr *scr, const jt_vt_host *h,
                        const uint8_t *bytes, size_t n);
 
