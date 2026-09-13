@@ -246,6 +246,9 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         var visRows = 0.0
         if !inAlt {
             let maxO = Double(sbCount)
+            if maxO == 0 {
+                scrollPhysics.pinBottom(maxOffset: 0)
+            }
             var newRows = 0.0
             if produced >= lastLinesScrolled {
                 newRows = Double(produced - lastLinesScrolled)

@@ -259,8 +259,7 @@ public final class ScrollPhysics {
         }
 
         if fingerDown {
-            if position < 0 { position = 0 }
-            else if position > maxO { position = maxO }
+            _ = clampToRange(maxO)
             return false
         }
 
@@ -351,6 +350,10 @@ public final class ScrollPhysics {
         }
         velocity = 0
         clearAccel()
+        if maxO == 0 {
+            pinBottom(maxOffset: 0)
+            return
+        }
         if position <= 0 {
             position = 0
         } else if position >= maxO - settlePos, !towardHistory, !lastPreciseTowardHistory {
@@ -368,6 +371,10 @@ public final class ScrollPhysics {
     /// Returns true if an edge was hit.
     @discardableResult
     private func clampToRange(_ maxO: Double) -> Bool {
+        if maxO == 0 {
+            pinBottom(maxOffset: 0)
+            return true
+        }
         if position <= 0 {
             position = 0
             return true

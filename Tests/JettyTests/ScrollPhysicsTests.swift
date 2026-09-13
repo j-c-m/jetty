@@ -247,6 +247,40 @@ final class ScrollPhysicsTests: XCTestCase {
         XCTAssertEqual(p.position, 100, accuracy: 1e-9)
     }
 
+    func testTowardLivePreciseAtPromptRepinsAndFollows() {
+        let p = ScrollPhysics()
+        p.pinBottom(maxOffset: 100)
+        p.applyPreciseDelta(deltaRows: -1, ended: false)
+        XCTAssertFalse(p.step(dt: 1.0 / 60.0, maxOffset: 100, viewportRows: 20))
+        XCTAssertTrue(p.pinnedToBottom)
+        XCTAssertEqual(p.position, 100, accuracy: 1e-9)
+        p.followBottomIfPinned(maxOffset: 110)
+        XCTAssertTrue(p.pinnedToBottom)
+        XCTAssertEqual(p.position, 110, accuracy: 1e-9)
+    }
+
+    func testTowardLivePreciseOnEmptyScrollbackRepins() {
+        let p = ScrollPhysics()
+        p.pinBottom(maxOffset: 0)
+        p.applyPreciseDelta(deltaRows: -1, ended: false)
+        XCTAssertFalse(p.step(dt: 1.0 / 60.0, maxOffset: 0, viewportRows: 20))
+        XCTAssertTrue(p.pinnedToBottom)
+        XCTAssertEqual(p.position, 0, accuracy: 1e-9)
+        p.followBottomIfPinned(maxOffset: 5)
+        XCTAssertEqual(p.position, 5, accuracy: 1e-9)
+        XCTAssertTrue(p.pinnedToBottom)
+    }
+
+    func testHistoryWipeAtZeroPins() {
+        let p = ScrollPhysics()
+        p.pinBottom(maxOffset: 80)
+        p.applyPreciseDelta(deltaRows: 20, ended: true)
+        XCTAssertFalse(p.pinnedToBottom)
+        XCTAssertFalse(p.step(dt: 1.0 / 60.0, maxOffset: 0, viewportRows: 20))
+        XCTAssertTrue(p.pinnedToBottom)
+        XCTAssertEqual(p.position, 0, accuracy: 1e-9)
+    }
+
     func testPreciseZeroDeltaDoesNotUnpin() {
         let p = ScrollPhysics()
         p.pinBottom(maxOffset: 100)
