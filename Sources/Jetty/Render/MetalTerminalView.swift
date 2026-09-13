@@ -1781,7 +1781,19 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             let ended = event.phase.contains(.ended)
                 || event.momentumPhase.contains(.ended)
                 || !phased
-            if abs(deltaRows) < 1e-4, !ended { return }
+            if abs(deltaRows) < 1e-4 {
+                let gestureEnded = event.phase.contains(.ended)
+                    || event.momentumPhase.contains(.ended)
+                if gestureEnded {
+                    scrollPhysics.applyPreciseDelta(
+                        deltaRows: 0,
+                        ended: true,
+                        momentum: momentum
+                    )
+                    kickScroll()
+                }
+                return
+            }
             scrollPhysics.applyPreciseDelta(
                 deltaRows: deltaRows,
                 ended: ended,

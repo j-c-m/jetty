@@ -41,6 +41,8 @@ public final class ScrollPhysics {
     private var fingerDown = false
     /// Drop leftover trackpad momentum after a key, pin, discrete wheel, or brake.
     private var ignoreMomentum = false
+    /// Last non-zero precise delta was toward history. A short lift off the prompt must not re-pin.
+    private var lastPreciseTowardHistory = false
 
     /// Integer row for `GHOSTTY_SCROLL_VIEWPORT_ROW` (clamped into range).
     func integerRow(maxOffset: Double) -> UInt64 {
@@ -63,6 +65,7 @@ public final class ScrollPhysics {
     func applyImpulse(deltaRows: Double) {
         if abs(deltaRows) < 1e-9 { return }
         ignoreMomentum = true
+        lastPreciseTowardHistory = false
         clearFingerTracking()
         resetAccelIfIdleOrChase()
         seekTarget = nil
@@ -76,14 +79,17 @@ public final class ScrollPhysics {
         lastTickAt = now()
     }
 
-    /// Trackpad / precision-wheel motion. Position follows the delta 1:1.
-    /// Inertia is AppKit `momentumPhase` (more deltas), not a synthetic coast.
+    /// Position follows the delta 1:1. AppKit supplies inertia as further deltas.
     func applyPreciseDelta(
         deltaRows: Double,
         ended: Bool,
         momentum: Bool = false
     ) {
         if momentum, ignoreMomentum { return }
+        if abs(deltaRows) < 1e-4 {
+            if ended { fingerDown = false }
+            return
+        }
         if !momentum { ignoreMomentum = false }
         resetAccelIfIdleOrChase()
         seekTarget = nil
@@ -91,9 +97,8 @@ public final class ScrollPhysics {
         seekFollowsTop = false
         pinnedToBottom = false
         pageCoast = false
-        if abs(deltaRows) >= 1e-9 {
-            position -= deltaRows
-        }
+        position -= deltaRows
+        lastPreciseTowardHistory = deltaRows > 0
         velocity = 0
         fingerDown = !ended
     }
@@ -106,6 +111,7 @@ public final class ScrollPhysics {
         seekFollowsTop = false
         pageCoast = false
         ignoreMomentum = true
+        lastPreciseTowardHistory = false
         clearFingerTracking()
         clearAccel()
     }
@@ -114,6 +120,7 @@ public final class ScrollPhysics {
     func applyPageImpulse(direction: Double, viewportRows: Double) {
         if abs(direction) < 1e-9 { return }
         ignoreMomentum = true
+        lastPreciseTowardHistory = false
         clearFingerTracking()
         resetAccelIfIdleOrChase()
         seekTarget = nil
@@ -136,6 +143,7 @@ public final class ScrollPhysics {
     ) {
         if abs(direction) < 1e-9 { return }
         ignoreMomentum = true
+        lastPreciseTowardHistory = false
         clearFingerTracking()
         resetAccelIfIdleOrChase()
         seekTarget = nil
@@ -157,6 +165,7 @@ public final class ScrollPhysics {
         seekFollowsTop = false
         pageCoast = false
         ignoreMomentum = true
+        lastPreciseTowardHistory = false
         clearFingerTracking()
         clearAccel()
         position = 0
@@ -172,6 +181,7 @@ public final class ScrollPhysics {
         seekFollowsTop = false
         pageCoast = false
         ignoreMomentum = true
+        lastPreciseTowardHistory = false
         clearFingerTracking()
         clearAccel()
         position = maxO
@@ -184,6 +194,7 @@ public final class ScrollPhysics {
         let maxO = max(0, maxOffset)
         let goal = min(max(offset, 0), maxO)
         ignoreMomentum = true
+        lastPreciseTowardHistory = false
         clearFingerTracking()
         pinnedToBottom = false
         seekFollowsBottom = false
@@ -248,7 +259,8 @@ public final class ScrollPhysics {
         }
 
         if fingerDown {
-            _ = clampToRange(maxO)
+            if position < 0 { position = 0 }
+            else if position > maxO { position = maxO }
             return false
         }
 
@@ -341,7 +353,7 @@ public final class ScrollPhysics {
         clearAccel()
         if position <= 0 {
             position = 0
-        } else if position >= maxO - settlePos, !towardHistory {
+        } else if position >= maxO - settlePos, !towardHistory, !lastPreciseTowardHistory {
             pinBottom(maxOffset: maxO)
         }
     }
@@ -361,7 +373,7 @@ public final class ScrollPhysics {
             return true
         }
         // A short first frame from the prompt must not re-pin a history fling.
-        if position >= maxO - settlePos, velocity >= 0 {
+        if position >= maxO - settlePos, velocity >= 0, !lastPreciseTowardHistory {
             pinBottom(maxOffset: maxO)
             return true
         }
