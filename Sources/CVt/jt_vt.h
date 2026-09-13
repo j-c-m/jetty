@@ -31,6 +31,7 @@ typedef struct jt_buf {
     int32_t grid_rows;
     int32_t cx, cy, pending_wrap;
     int32_t scroll_top, scroll_bottom;
+    int32_t scroll_left, scroll_right;
     uint8_t *tabstops;
     uint8_t *dirty;
     uint8_t *wrap;
@@ -59,13 +60,16 @@ typedef struct jt_scr {
     uint32_t default_fg, default_bg, cursor_color;
     uint16_t mouse_event;
     uint8_t mouse_sgr;
+    uint8_t mouse_sgr_pixels;
     uint8_t mouse_alt_scroll;
     uint8_t focus_event, bracketed_paste, paste_events, osc52_read_ask, sync_output;
     uint8_t reverse_video, cursor_visible, cursor_blink;
     uint8_t cursor_style;
     uint8_t decckm, deckpam;
     uint8_t reverse_wrap, reverse_wrap_ext, linefeed_nl;
-    uint8_t alt_esc, report_theme, report_vis, inband_size, mode_2027;
+    uint8_t alt_esc, alt_sends_escape, backarrow;
+    uint8_t lr_margin, modify_other_keys;
+    uint8_t report_theme, report_vis, inband_size, mode_2027;
     uint16_t xtsave_valid;
     uint8_t xtsave[16];
     void *gp;
@@ -130,6 +134,7 @@ void jt_scr_dch(jt_scr *s, int n);
 void jt_scr_il(jt_scr *s, int n);
 void jt_scr_dl(jt_scr *s, int n);
 void jt_scr_decstbm(jt_scr *s, int top, int bot);
+void jt_scr_decslrm(jt_scr *s, int left, int right);
 
 void jt_scr_switch_screen_mode(jt_scr *s, int mode, int enabled);
 void jt_scr_cursor_copy(jt_buf *dst, const jt_buf *src);
@@ -223,6 +228,7 @@ typedef struct jt_vt_host {
     /* malloc RGBA8; return 0 on success. */
     int (*png_decode)(void *ctx, const uint8_t *png, size_t n,
                       uint8_t **out_rgba, uint32_t *w, uint32_t *h);
+    void (*mouse_shape)(void *ctx, const uint8_t *utf8, size_t n);
     /* Host window key for DECSET 1004. */
     uint8_t window_focused;
 } jt_vt_host;

@@ -44,6 +44,7 @@ public final class TerminalSession: @unchecked Sendable {
     public var desktopNotifications = true
     public var isNotifyFocused: (@Sendable () -> Bool)?
     public var onProgress: (@Sendable (UInt8, UInt8) -> Void)?
+    public var onMouseShape: (@Sendable (String) -> Void)?
     public var notifyOnCommandFinish: AppConfig.NotifyWhen = .never
     public var notifyOnCommandFinishAfter: TimeInterval = 5
     public var notifyOnCommandFinishBell = true
@@ -133,6 +134,11 @@ public final class TerminalSession: @unchecked Sendable {
         parser.onProgress = { [weak self] state, percent in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { self?.onProgress?(state, percent) }
+            }
+        }
+        parser.onMouseShape = { [weak self] name in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.onMouseShape?(name) }
             }
         }
         parser.onNotify = { [weak self] title, body in

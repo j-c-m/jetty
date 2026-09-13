@@ -36,6 +36,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var lastInAlt = false
     private var altScrollPending: Double = 0
     private var lastMouseCell: (x: Int, y: Int)?
+    private var lastMousePixel: (x: Int, y: Int)?
+    private var appMouseCursor = NSCursor.arrow
     private var mouseWheelPending: Double = 0
     private var mouseHostSelect = false
     private var markedText = NSMutableAttributedString()
@@ -121,6 +123,11 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         session.onProgress = { @Sendable [weak self] state, percent in
             MainActor.assumeIsolated {
                 self?.setProgress(state: state, percent: percent)
+            }
+        }
+        session.onMouseShape = { @Sendable [weak self] name in
+            MainActor.assumeIsolated {
+                self?.applyMouseShape(name)
             }
         }
         session.onOsc5522Prompt = { [weak self] prompt, reply in
@@ -229,6 +236,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             altScrollPending = 0
             mouseWheelPending = 0
             lastMouseCell = nil
+            lastMousePixel = nil
             mouseHostSelect = false
             selAnchor = nil
             selEnd = nil
@@ -1123,9 +1131,14 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             return
         }
         session.lock.lock()
-        let appCursor = session.screen.decckm
+        let keyOpts = XtermKeyEncoder.Options(
+            applicationCursor: session.screen.decckm,
+            modifyOtherKeys: session.screen.modifyOtherKeys,
+            altSendsEscape: session.screen.altSendsEscape,
+            backarrow: session.screen.backarrow
+        )
         session.lock.unlock()
-        guard let bytes = XtermKeyEncoder.bytes(for: event, applicationCursor: appCursor) else {
+        guard let bytes = XtermKeyEncoder.bytes(for: event, options: keyOpts) else {
             super.keyDown(with: event)
             return
         }
@@ -2107,7 +2120,9 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         }
         session.lock.unlock()
         if mode == 0 || cmd {
-            if hand { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
+            if hand { NSCursor.pointingHand.set() } else { appMouseCursor.set() }
+        } else {
+            appMouseCursor.set()
         }
         setAutoURLHit(cmd ? hit : nil)
     }
@@ -2377,14 +2392,29 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private func reportMouse(_ event: NSEvent, action: MouseReport.Action, button: UInt8?) -> Bool {
         session.lock.lock()
         let mode = session.screen.mouseEvent
-        let sgr = session.screen.mouseSgr
+        let sgr = session.screen.mouseSgr || session.screen.mouseSgrPixels
+        let pixels = session.screen.mouseSgrPixels
         let cols = session.screen.cols
         let rows = session.screen.rows
         session.lock.unlock()
         guard mode != 0 else { return false }
         let cell = viewportCell(event, cols: cols, rows: rows)
-        if action == .motion, lastMouseCell?.x == cell.x, lastMouseCell?.y == cell.y {
-            return false
+        let x: Int
+        let y: Int
+        if pixels {
+            let px = viewportPixel(event)
+            if action == .motion, lastMousePixel?.x == px.x, lastMousePixel?.y == px.y {
+                return false
+            }
+            lastMousePixel = px
+            x = px.x
+            y = px.y
+        } else {
+            if action == .motion, lastMouseCell?.x == cell.x, lastMouseCell?.y == cell.y {
+                return false
+            }
+            x = cell.x + 1
+            y = cell.y + 1
         }
         let flags = event.modifierFlags
         guard let bytes = MouseReport.packet(
@@ -2392,8 +2422,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             sgr: sgr,
             action: action,
             button: button,
-            x: cell.x + 1,
-            y: cell.y + 1,
+            x: x,
+            y: y,
             shift: flags.contains(.shift),
             meta: flags.contains(.option),
             ctrl: flags.contains(.control)
@@ -2425,6 +2455,22 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         for _ in 0..<count {
             _ = reportMouse(event, action: .press, button: btn)
         }
+    }
+
+    private func applyMouseShape(_ name: String) {
+        if let cursor = MouseShape.cursor(named: name) {
+            appMouseCursor = cursor
+            appMouseCursor.set()
+        }
+    }
+
+    private func viewportPixel(_ event: NSEvent) -> (x: Int, y: Int) {
+        let p = convert(event.locationInWindow, from: nil)
+        let bs = max(window?.backingScaleFactor ?? 1, 1)
+        let sa = safeAreaInsets
+        let x = Int(((p.x - padPt - sa.left) * bs).rounded())
+        let y = Int(((bounds.height - p.y - padPt - sa.top) * bs).rounded())
+        return (x, y)
     }
 
     private func viewportCell(_ event: NSEvent, cols: Int, rows: Int) -> (x: Int, y: Int) {
@@ -2797,7 +2843,16 @@ extension MetalTerminalView: @preconcurrency NSTextInputClient {
         }
         let composing = hasMarkedText()
         unmarkText()
-        if XtermKeyEncoder.insertTextDefersToEncoder(composing: composing, event: NSApp.currentEvent) {
+        session.lock.lock()
+        let altEsc = session.screen.altSendsEscape
+        let modify = session.screen.modifyOtherKeys
+        session.lock.unlock()
+        if XtermKeyEncoder.insertTextDefersToEncoder(
+            composing: composing,
+            event: NSApp.currentEvent,
+            altSendsEscape: altEsc,
+            modifyOtherKeys: modify
+        ) {
             return
         }
         writeInsert(text, composing: composing)

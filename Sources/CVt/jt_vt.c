@@ -187,6 +187,14 @@ static void finish_dcs(jt_vt *p, jt_scr *scr, const jt_vt_host *h) {
             int top = scr->active->scroll_top + 1;
             int bot = scr->active->scroll_bottom + 1;
             w = snprintf(buf, sizeof buf, "\033P1$r%d;%dr\033\\", top, bot);
+        } else if (qn == 1 && q[0] == 's') {
+            if (scr->lr_margin) {
+                int left = scr->active->scroll_left + 1;
+                int right = scr->active->scroll_right + 1;
+                w = snprintf(buf, sizeof buf, "\033P1$r%d;%ds\033\\", left, right);
+            } else {
+                w = snprintf(buf, sizeof buf, "\033P0$r\033\\");
+            }
         } else if (qn == 2 && q[0] == ' ' && q[1] == 'q') {
             w = snprintf(buf, sizeof buf, "\033P1$r%d q\033\\", (int)scr->cursor_style);
         } else {
@@ -286,6 +294,8 @@ static int dec_mode_state(const jt_scr *s, uint16_t mode) {
     case 7: on = !s || s->auto_wrap; break;
     case 45: on = s && s->reverse_wrap; break;
     case 66: on = s && s->deckpam; break;
+    case 67: on = s && s->backarrow; break;
+    case 69: on = s && s->lr_margin; break;
     case 1045: on = s && s->reverse_wrap_ext; break;
     case 9: on = s && s->mouse_event == 9; break;
     case 12: on = s && s->cursor_blink; break;
@@ -302,9 +312,10 @@ static int dec_mode_state(const jt_scr *s, uint16_t mode) {
     case 1005: perm_reset = 1; break;
     case 1006: on = s && s->mouse_sgr; break;
     case 1007: on = !s || s->mouse_alt_scroll; break;
-    case 1016: perm_reset = 1; break;
+    case 1016: on = s && s->mouse_sgr_pixels; break;
     case 1034: on = 0; break;
     case 1036: on = !s || s->alt_esc; break;
+    case 1039: on = !s || s->alt_sends_escape; break;
     case 2004: on = s && s->bracketed_paste; break;
     case 5522:
         if (!s || !s->osc52_read_ask) { known = 0; break; }
@@ -367,6 +378,17 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
                 case 7: scr->auto_wrap = set; break;
                 case 45: scr->reverse_wrap = (uint8_t)set; break;
                 case 66: scr->deckpam = (uint8_t)set; break;
+                case 67: scr->backarrow = (uint8_t)set; break;
+                case 69:
+                    scr->lr_margin = (uint8_t)set;
+                    if (!set) {
+                        int32_t r = scr->cols > 0 ? scr->cols - 1 : 0;
+                        scr->primary.scroll_left = 0;
+                        scr->primary.scroll_right = r;
+                        scr->alt.scroll_left = 0;
+                        scr->alt.scroll_right = r;
+                    }
+                    break;
                 case 12: scr->cursor_blink = (uint8_t)set; break;
                 case 25: scr->cursor_visible = (uint8_t)set; break;
                 case 47:
@@ -393,9 +415,17 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
                 case 1004:
                     scr->focus_event = (uint8_t)set;
                     break;
-                case 1006: scr->mouse_sgr = (uint8_t)set; break;
+                case 1006:
+                    scr->mouse_sgr = (uint8_t)set;
+                    if (set) scr->mouse_sgr_pixels = 0;
+                    break;
                 case 1007: scr->mouse_alt_scroll = (uint8_t)set; break;
+                case 1016:
+                    scr->mouse_sgr_pixels = (uint8_t)set;
+                    if (set) scr->mouse_sgr = 0;
+                    break;
                 case 1036: scr->alt_esc = (uint8_t)set; break;
+                case 1039: scr->alt_sends_escape = (uint8_t)set; break;
                 case 1045: scr->reverse_wrap_ext = (uint8_t)set; break;
                 case 1048:
                     if (set) jt_scr_decsc(scr);
@@ -496,6 +526,17 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
     if (priv == '>') {
         if (final == 'c') write_str(h, "\033[>0;0;0c");
         else if (final == 'q') write_xtversion(h);
+        else if (final == 'm') {
+            uint16_t pp = p->np > 0 ? p->params[0] : 0;
+            if (pp == 0) {
+                scr->modify_other_keys = 0;
+            } else if (pp == 4) {
+                uint16_t pv = p->np > 1 ? p->params[1] : 0;
+                if (pv == 2) scr->modify_other_keys = 2;
+                else if (pv == 1) scr->modify_other_keys = 1;
+                else scr->modify_other_keys = 0;
+            }
+        }
         return;
     }
     if (priv == '=') return;
@@ -517,7 +558,11 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
     case 'C':
         scr->active->pending_wrap = 0;
         scr->active->cx += pdef(p->params, p->np, 0, 1);
-        if (scr->active->cx > scr->cols - 1) scr->active->cx = scr->cols - 1;
+        {
+            int maxx = scr->cols - 1;
+            if (scr->origin_mode && scr->lr_margin) maxx = scr->active->scroll_right;
+            if (scr->active->cx > maxx) scr->active->cx = maxx;
+        }
         break;
     case 'j':
     case 'D':
@@ -543,9 +588,17 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
     case '`':
     case 'G':
         scr->active->pending_wrap = 0;
-        scr->active->cx = pdef(p->params, p->np, 0, 1) - 1;
-        if (scr->active->cx < 0) scr->active->cx = 0;
-        if (scr->active->cx > scr->cols - 1) scr->active->cx = scr->cols - 1;
+        {
+            int x0 = 0, x1 = scr->cols - 1;
+            if (scr->origin_mode && scr->lr_margin) {
+                x0 = scr->active->scroll_left;
+                x1 = scr->active->scroll_right;
+            }
+            int x = x0 + pdef(p->params, p->np, 0, 1) - 1;
+            if (x < x0) x = x0;
+            if (x > x1) x = x1;
+            scr->active->cx = x;
+        }
         break;
     case 'H':
     case 'f':
@@ -592,11 +645,12 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
         int n = pdef(p->params, p->np, 0, 1);
         jt_buf *b = scr->active;
         b->pending_wrap = 0;
+        int left = scr->lr_margin ? b->scroll_left : 0;
         for (int k = 0; k < n; k++) {
             int x = b->cx - 1;
-            while (x > 0 && !b->tabstops[x]) x--;
-            b->cx = x < 0 ? 0 : x;
-            if (b->cx == 0) break;
+            while (x > left && !b->tabstops[x]) x--;
+            b->cx = x < left ? left : x;
+            if (b->cx == left) break;
         }
         break;
     }
@@ -671,7 +725,15 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
         }
         break;
     case 's':
-        if (priv == 0 && p->ni == 0) jt_scr_decsc(scr);
+        if (priv == 0 && p->ni == 0) {
+            if (scr->lr_margin) {
+                int left = pdef(p->params, p->np, 0, 1) - 1;
+                int right = (p->np < 2 || p->params[1] == 0) ? scr->cols - 1 : (int)p->params[1] - 1;
+                jt_scr_decslrm(scr, left, right);
+            } else if (p->np == 0) {
+                jt_scr_decsc(scr);
+            }
+        }
         break;
     case 'u':
         if (priv == 0 && p->ni == 0) jt_scr_decrc(scr);
@@ -710,6 +772,10 @@ static void handle_esc(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
             }
             jt_scr_ris(scr);
             if (h && h->history_cleared) h->history_cleared(h->ctx);
+            if (h && h->mouse_shape) {
+                static const uint8_t def[] = "default";
+                h->mouse_shape(h->ctx, def, 7);
+            }
             break;
         case 'D':
             jt_scr_index(scr);

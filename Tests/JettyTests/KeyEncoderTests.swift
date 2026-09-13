@@ -104,6 +104,63 @@ final class KeyEncoderTests: XCTestCase {
         )
     }
 
+    func testBackspaceDefaultIsDEL() {
+        let event = keyEvent(flags: [], characters: "\u{08}", ignoring: "\u{08}", keyCode: kVK_Delete)
+        XCTAssertEqual(XtermKeyEncoder.bytes(for: event, options: .init()), [0x7F])
+        XCTAssertEqual(
+            XtermKeyEncoder.bytes(for: event, options: .init(backarrow: true)),
+            [0x08]
+        )
+        let ctrl = keyEvent(flags: .control, characters: "\u{08}", ignoring: "\u{08}", keyCode: kVK_Delete)
+        XCTAssertEqual(XtermKeyEncoder.bytes(for: ctrl, options: .init()), [0x08])
+        XCTAssertEqual(
+            XtermKeyEncoder.bytes(for: ctrl, options: .init(backarrow: true)),
+            [0x7F]
+        )
+    }
+
+    func testAltSendsEscapeOffUsesCharacters() {
+        let event = keyEvent(flags: .option, characters: "é", ignoring: "e", keyCode: kVK_ANSI_E)
+        XCTAssertEqual(
+            XtermKeyEncoder.bytes(for: event, options: .init(altSendsEscape: false)),
+            Array("é".utf8)
+        )
+        XCTAssertFalse(XtermKeyEncoder.insertTextDefersToEncoder(
+            composing: false, event: event, altSendsEscape: false
+        ))
+        let mok = XtermKeyEncoder.Options(modifyOtherKeys: 2, altSendsEscape: false)
+        XCTAssertEqual(XtermKeyEncoder.bytes(for: event, options: mok), Array("é".utf8))
+    }
+
+    func testModifyOtherKeysCSI27() {
+        let opts = XtermKeyEncoder.Options(modifyOtherKeys: 2)
+        let ctrlP = keyEvent(flags: .control, characters: "\u{10}", ignoring: "p", keyCode: kVK_ANSI_P)
+        XCTAssertEqual(
+            XtermKeyEncoder.bytes(for: ctrlP, options: opts),
+            Array("\u{1B}[27;5;112~".utf8)
+        )
+        let ctrlShiftH = keyEvent(
+            flags: [.control, .shift], characters: "H", ignoring: "h", keyCode: kVK_ANSI_H
+        )
+        XCTAssertEqual(
+            XtermKeyEncoder.bytes(for: ctrlShiftH, options: opts),
+            Array("\u{1B}[27;6;72~".utf8)
+        )
+        let altE = keyEvent(flags: .option, characters: "é", ignoring: "e", keyCode: kVK_ANSI_E)
+        XCTAssertEqual(
+            XtermKeyEncoder.bytes(for: altE, options: opts),
+            Array("\u{1B}[27;3;101~".utf8)
+        )
+        let shiftSpace = keyEvent(flags: .shift, characters: " ", ignoring: " ", keyCode: kVK_Space)
+        XCTAssertEqual(
+            XtermKeyEncoder.bytes(for: shiftSpace, options: opts),
+            Array("\u{1B}[27;2;32~".utf8)
+        )
+        XCTAssertTrue(XtermKeyEncoder.insertTextDefersToEncoder(
+            composing: false, event: ctrlP, modifyOtherKeys: 2
+        ))
+    }
+
     private func keyEvent(
         flags: NSEvent.ModifierFlags,
         characters: String,

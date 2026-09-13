@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import Jetty
 
@@ -53,5 +54,24 @@ final class MouseReportTests: XCTestCase {
             shift: true, ctrl: true
         )
         XCTAssertEqual(p, X10Mouse.packet(button: 0, x: 1, y: 1))
+    }
+
+    func testSGRPixelsAreCoordinates() {
+        let p = MouseReport.packet(
+            mode: 1000, sgr: true, action: .press, button: 0, x: 10, y: 20
+        )
+        XCTAssertEqual(String(bytes: p ?? [], encoding: .utf8), "\u{1B}[<0;10;20M")
+        let up = MouseReport.packet(
+            mode: 1000, sgr: true, action: .release, button: 2, x: 10, y: 20
+        )
+        XCTAssertEqual(String(bytes: up ?? [], encoding: .utf8), "\u{1B}[<2;10;20m")
+    }
+
+    func testMouseShapeNames() {
+        XCTAssertEqual(MouseShape.cursor(named: "pointer"), NSCursor.pointingHand)
+        XCTAssertEqual(MouseShape.cursor(named: "text"), NSCursor.iBeam)
+        XCTAssertEqual(MouseShape.cursor(named: "default"), NSCursor.arrow)
+        XCTAssertEqual(MouseShape.cursor(named: ""), NSCursor.arrow)
+        XCTAssertNil(MouseShape.cursor(named: "not-a-cursor"))
     }
 }

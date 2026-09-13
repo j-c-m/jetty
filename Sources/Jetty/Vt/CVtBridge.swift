@@ -121,6 +121,14 @@ func jtHostRelock(_ ctx: UnsafeMutableRawPointer?) {
     Unmanaged<ParserGlue>.fromOpaque(ctx).takeUnretainedValue().parser.relock?()
 }
 
+func jtHostMouseShape(_ ctx: UnsafeMutableRawPointer?, _ p: UnsafePointer<UInt8>?, _ n: Int) {
+    guard let ctx else { return }
+    let bytes: [UInt8]
+    if let p, n > 0 { bytes = Array(UnsafeBufferPointer(start: p, count: n)) }
+    else { bytes = [] }
+    Unmanaged<ParserGlue>.fromOpaque(ctx).takeUnretainedValue().parser.handleMouseShape(bytes)
+}
+
 func jtHostPngDecode(
     _ ctx: UnsafeMutableRawPointer?,
     _ png: UnsafePointer<UInt8>?,

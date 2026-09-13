@@ -32,6 +32,8 @@ public final class Parser {
     public var onOsc52Read: ((UInt8) -> Void)?
     public var onOsc5522: (([UInt8], [UInt8]) -> Void)?
     public var onPaletteChanged: (() -> Void)?
+    public var onMouseShape: ((String) -> Void)?
+    public var mouseShapes: [String] = []
     public var unlockForIO: (() -> Void)?
     public var relock: (() -> Void)?
 
@@ -63,6 +65,7 @@ public final class Parser {
         host.unlock_for_io = jtHostUnlockForIO
         host.relock = jtHostRelock
         host.png_decode = jtHostPngDecode
+        host.mouse_shape = jtHostMouseShape
     }
 
     deinit {
@@ -82,6 +85,7 @@ public final class Parser {
         osc133.removeAll()
         notifies.removeAll()
         progress.removeAll()
+        mouseShapes.removeAll()
     }
 
     public func feed(_ bytes: UnsafePointer<UInt8>, count: Int) {
@@ -179,5 +183,11 @@ public final class Parser {
     func handleProgress(_ state: UInt8, _ percent: UInt8) {
         progress.append((state, percent))
         onProgress?(state, percent)
+    }
+
+    func handleMouseShape(_ bytes: [UInt8]) {
+        let s = String(bytes: bytes, encoding: .utf8) ?? ""
+        mouseShapes.append(s)
+        onMouseShape?(s)
     }
 }

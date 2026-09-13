@@ -1223,4 +1223,173 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(String(bytes: replies, encoding: .utf8) ?? "", "")
         XCTAssertEqual(titles.items, ["hello", "world", "hello"])
     }
+
+    func testCSIsSaveCursorWithoutDeclrmm() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("ab")
+        p.feed("\u{1B}[s")
+        p.feed("cd")
+        XCTAssertEqual(s.cursorX, 4)
+        p.feed("\u{1B}[u")
+        XCTAssertEqual(s.cursorX, 2)
+        p.feed("\u{1B}[3;8s")
+        XCTAssertEqual(s.cursorX, 2)
+        XCTAssertEqual(s.scrollLeft, 0)
+    }
+
+    func testModifyOtherKeysCSI() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        XCTAssertEqual(s.modifyOtherKeys, 0)
+        p.feed("\u{1B}[>4;2m")
+        XCTAssertEqual(s.modifyOtherKeys, 2)
+        p.feed("\u{1B}[>4;1m")
+        XCTAssertEqual(s.modifyOtherKeys, 1)
+        p.feed("\u{1B}[>4;0m")
+        XCTAssertEqual(s.modifyOtherKeys, 0)
+        p.feed("\u{1B}[>4;2m")
+        p.feed("\u{1B}[>m")
+        XCTAssertEqual(s.modifyOtherKeys, 0)
+        p.feed("\u{1B}[>4;2m")
+        p.feed("\u{1B}c")
+        XCTAssertEqual(s.modifyOtherKeys, 0)
+    }
+
+    func testDECRQSSDecslrm() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}P$qs\u{1B}\\")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}P0$r\u{1B}\\")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?69h")
+        p.feed("\u{1B}[3;8s")
+        XCTAssertTrue(s.lrMargin)
+        XCTAssertEqual(s.scrollLeft, 2)
+        XCTAssertEqual(s.scrollRight, 7)
+        p.feed("\u{1B}P$qs\u{1B}\\")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}P1$r3;8s\u{1B}\\")
+        p.writes.removeAll()
+        p.feed("\u{1B}[1;3r")
+        p.feed("\u{1B}P$qr\u{1B}\\")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}P1$r1;3r\u{1B}\\")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?69l")
+        XCTAssertFalse(s.lrMargin)
+        XCTAssertEqual(s.scrollLeft, 0)
+        XCTAssertEqual(s.scrollRight, 9)
+        p.feed("\u{1B}P$qs\u{1B}\\")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}P0$r\u{1B}\\")
+    }
+
+    func testOSC22MouseShape() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}]22;pointer\u{07}")
+        XCTAssertEqual(p.mouseShapes, ["pointer"])
+        p.feed("\u{1B}]22;text\u{1B}\\")
+        XCTAssertEqual(p.mouseShapes, ["pointer", "text"])
+        p.feed("\u{1B}c")
+        XCTAssertEqual(p.mouseShapes.last, "default")
+    }
+
+    func testSGRPixelsMode1016() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[?1016$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?1016;2$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?1016h")
+        XCTAssertTrue(s.mouseSgrPixels)
+        XCTAssertFalse(s.mouseSgr)
+        p.feed("\u{1B}[?1016$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?1016;1$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?1006$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?1006;2$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?1006h")
+        XCTAssertTrue(s.mouseSgr)
+        XCTAssertFalse(s.mouseSgrPixels)
+        p.feed("\u{1B}[?1006$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?1006;1$y")
+    }
+
+    func testDecslrmPrintAndScroll() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("0123456789abcdefghijABCDEFGHIJklmnopqrst")
+        p.feed("\u{1B}[?69h")
+        p.feed("\u{1B}[2;4r")
+        p.feed("\u{1B}[3;7s")
+        XCTAssertEqual(s.cursorX, 0)
+        XCTAssertEqual(s.cursorY, 0)
+        p.feed("\u{1B}[4;1H")
+        p.feed("\n")
+        XCTAssertEqual(s.glyph(0, 0), UInt32(UInt8(ascii: "0")))
+        XCTAssertEqual(s.glyph(2, 0), UInt32(UInt8(ascii: "2")))
+        XCTAssertEqual(s.glyph(1, 1), UInt32(UInt8(ascii: "b")))
+        XCTAssertEqual(s.glyph(2, 1), UInt32(UInt8(ascii: "C")))
+        XCTAssertEqual(s.glyph(6, 1), UInt32(UInt8(ascii: "G")))
+        XCTAssertEqual(s.glyph(7, 1), UInt32(UInt8(ascii: "h")))
+        XCTAssertEqual(s.glyph(2, 2), UInt32(UInt8(ascii: "m")))
+        XCTAssertEqual(s.glyph(6, 2), UInt32(UInt8(ascii: "q")))
+        XCTAssertEqual(s.glyph(7, 2), UInt32(UInt8(ascii: "H")))
+        XCTAssertEqual(s.glyph(2, 3), UInt32(UInt8(ascii: " ")))
+        XCTAssertEqual(s.glyph(6, 3), UInt32(UInt8(ascii: " ")))
+        XCTAssertEqual(s.glyph(7, 3), UInt32(UInt8(ascii: "r")))
+        p.feed("\r")
+        XCTAssertEqual(s.cursorX, 2)
+    }
+
+    func testDecslrmIdleOffDoesNotClip() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        p.feed("abcdefghij")
+        XCTAssertEqual(s.cursorX, 9)
+        XCTAssertTrue(s.pendingWrap)
+        XCTAssertFalse(s.lrMargin)
+        XCTAssertEqual(s.scrollLeft, 0)
+        XCTAssertEqual(s.scrollRight, 9)
+        s.decslrm(left: 2, right: 6)
+        XCTAssertEqual(s.scrollLeft, 0)
+        XCTAssertEqual(s.scrollRight, 9)
+    }
+
+    func testAltSendsEscapeAndBackarrowModes() {
+        let s = Screen(cols: 10, rows: 3, scrollbackCapRows: 0)
+        let p = Parser()
+        p.screen = s
+        XCTAssertTrue(s.altSendsEscape)
+        XCTAssertFalse(s.backarrow)
+        p.feed("\u{1B}[?1039$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?1039;1$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?67$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?67;2$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?69$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?69;2$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?1039l")
+        p.feed("\u{1B}[?67h")
+        XCTAssertFalse(s.altSendsEscape)
+        XCTAssertTrue(s.backarrow)
+        p.feed("\u{1B}[?1039$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?1039;2$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}[?67$p")
+        XCTAssertEqual(String(bytes: p.writes, encoding: .utf8), "\u{1B}[?67;1$y")
+        p.writes.removeAll()
+        p.feed("\u{1B}c")
+        XCTAssertTrue(s.altSendsEscape)
+        XCTAssertFalse(s.backarrow)
+    }
 }

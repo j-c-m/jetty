@@ -351,6 +351,8 @@ static int buf_init(jt_buf *b, int32_t cols, int32_t vis_rows, int32_t extra, Ce
     default_tabs(b->tabstops, cols);
     memset(b->dirty, 1, (size_t)vis_rows);
     b->scroll_bottom = vis_rows - 1;
+    b->scroll_left = 0;
+    b->scroll_right = cols > 0 ? cols - 1 : 0;
     return 1;
 }
 
@@ -463,6 +465,57 @@ static void rotate_up(jt_scr *s, jt_buf *b, int32_t top, int32_t bot) {
     b->rowmap[bot] = first;
 }
 
+static void fill_rect(jt_scr *s, int x1, int y1, int x2, int y2, int clear_wrap);
+
+static int32_t left_col(const jt_scr *s) {
+    if (!s->lr_margin) return 0;
+    return s->active->scroll_left;
+}
+
+static int32_t right_col(const jt_scr *s) {
+    if (!s->lr_margin) return s->cols > 0 ? s->cols - 1 : 0;
+    return s->active->scroll_right;
+}
+
+static int lr_partial(const jt_scr *s) {
+    if (!s->lr_margin) return 0;
+    jt_buf *b = s->active;
+    return b->scroll_left > 0 || b->scroll_right < s->cols - 1;
+}
+
+static void copy_cols(jt_scr *s, int32_t dst_y, int32_t src_y, int32_t left, int32_t right) {
+    materialize_row(s, dst_y);
+    materialize_row(s, src_y);
+    Cell *dst = row_at(s, dst_y);
+    Cell *src = row_at(s, src_y);
+    for (int32_t x = left; x <= right; x++) stamp_cell(s, &dst[x], src[x]);
+    mark_row(s, dst_y);
+}
+
+static void scroll_up_rect(jt_scr *s) {
+    jt_buf *b = s->active;
+    int32_t top = b->scroll_top, bot = b->scroll_bottom;
+    int32_t left = b->scroll_left, right = b->scroll_right;
+    if (bot <= top) {
+        fill_rect(s, left, bot, right, bot, 0);
+        return;
+    }
+    for (int32_t y = top; y < bot; y++) copy_cols(s, y, y + 1, left, right);
+    fill_rect(s, left, bot, right, bot, 0);
+}
+
+static void scroll_down_rect(jt_scr *s) {
+    jt_buf *b = s->active;
+    int32_t top = b->scroll_top, bot = b->scroll_bottom;
+    int32_t left = b->scroll_left, right = b->scroll_right;
+    if (bot <= top) {
+        fill_rect(s, left, top, right, top, 0);
+        return;
+    }
+    for (int32_t y = bot; y > top; y--) copy_cols(s, y, y - 1, left, right);
+    fill_rect(s, left, top, right, top, 0);
+}
+
 static void rotate_down(jt_scr *s, jt_buf *b, int32_t top, int32_t bot) {
     s->damage_gen++;
     int32_t span = bot - top;
@@ -476,6 +529,10 @@ static void rotate_down(jt_scr *s, jt_buf *b, int32_t top, int32_t bot) {
 static void scroll_up(jt_scr *s) {
     jt_buf *b = s->active;
     int32_t top = b->scroll_top, bot = b->scroll_bottom;
+    if (lr_partial(s)) {
+        scroll_up_rect(s);
+        return;
+    }
     if (top == 0 && !s->in_alt) {
         int32_t incoming = sb_push_falling(s);
         if (incoming >= 0) {
@@ -497,6 +554,10 @@ static void scroll_up(jt_scr *s) {
 static void scroll_down(jt_scr *s) {
     jt_buf *b = s->active;
     int32_t top = b->scroll_top, bot = b->scroll_bottom;
+    if (lr_partial(s)) {
+        scroll_down_rect(s);
+        return;
+    }
     if (bot > top) rotate_down(s, b, top, bot);
     fill_row(s, top);
     if (s->img_live_n > 0) jt_img_shift_region(s, top, bot, 1, 0);
@@ -524,7 +585,7 @@ void jt_scr_ri(jt_scr *s) {
 
 void jt_scr_cr(jt_scr *s) {
     s->active->pending_wrap = 0;
-    s->active->cx = 0;
+    s->active->cx = left_col(s);
 }
 
 void jt_scr_nel(jt_scr *s) {
@@ -540,7 +601,8 @@ void jt_scr_cub(jt_scr *s, int n) {
     if (!wrap_ext && !wrap_rev) {
         b->pending_wrap = 0;
         b->cx -= n;
-        if (b->cx < 0) b->cx = 0;
+        int32_t minx = (s->origin_mode && s->lr_margin) ? left_col(s) : 0;
+        if (b->cx < minx) b->cx = minx;
         return;
     }
     if (b->pending_wrap) {
@@ -550,8 +612,8 @@ void jt_scr_cub(jt_scr *s, int n) {
     }
     int32_t top = b->scroll_top;
     int32_t bot = b->scroll_bottom;
-    int32_t right = s->cols > 0 ? s->cols - 1 : 0;
-    int32_t left = 0;
+    int32_t right = right_col(s);
+    int32_t left = left_col(s);
     if (b->cx == left && wrap_rev && b->cy <= top) {
         b->cx = left;
         b->cy = top;
@@ -585,26 +647,33 @@ void jt_scr_bs(jt_scr *s) {
 void jt_scr_tab(jt_scr *s) {
     jt_buf *b = s->active;
     b->pending_wrap = 0;
+    int32_t last = right_col(s);
     int32_t x = b->cx + 1;
-    while (x < s->cols && !b->tabstops[x]) x++;
-    b->cx = x < s->cols ? x : s->cols - 1;
+    while (x <= last && !b->tabstops[x]) x++;
+    b->cx = x <= last ? x : last;
 }
 
 void jt_scr_cup(jt_scr *s, int row, int col) {
     jt_buf *b = s->active;
     b->pending_wrap = 0;
     int y0 = 0, y1 = s->rows - 1;
+    int x0 = 0, x1 = s->cols - 1;
     if (s->origin_mode) {
         y0 = b->scroll_top;
         y1 = b->scroll_bottom;
+        if (s->lr_margin) {
+            x0 = b->scroll_left;
+            x1 = b->scroll_right;
+        }
     }
     int y = y0 + row;
     if (y < y0) y = y0;
     if (y > y1) y = y1;
     b->cy = y;
-    if (col < 0) col = 0;
-    if (col > s->cols - 1) col = s->cols - 1;
-    b->cx = col;
+    int x = x0 + col;
+    if (x < x0) x = x0;
+    if (x > x1) x = x1;
+    b->cx = x;
 }
 
 static void consume_wrap(jt_scr *s) {
@@ -614,7 +683,7 @@ static void consume_wrap(jt_scr *s) {
     *wrap_at(s, y) = 1;
     mark_row(s, y);
     b->pending_wrap = 0;
-    b->cx = 0;
+    b->cx = left_col(s);
     jt_scr_index(s);
 }
 
@@ -629,8 +698,9 @@ static void place_graphic(jt_scr *s, uint32_t content) {
     neu.extra = s->pen.extra;
     stamp_cell(s, row_at(s, b->cy) + b->cx, neu);
     mark_row(s, b->cy);
-    if (b->cx + 1 >= s->cols) {
-        b->cx = s->cols - 1;
+    int32_t last = right_col(s);
+    if (b->cx >= last) {
+        b->cx = last;
         b->pending_wrap = s->auto_wrap;
     } else {
         b->cx++;
@@ -641,8 +711,8 @@ static void attach_mark(jt_scr *s, uint32_t mark) {
     jt_buf *b = s->active;
     int32_t y = b->cy;
     int32_t x;
-    if (b->pending_wrap) x = s->cols - 1;
-    else if (b->cx > 0) x = b->cx - 1;
+    if (b->pending_wrap) x = right_col(s);
+    else if (b->cx > left_col(s)) x = b->cx - 1;
     else return;
     materialize_row(s, y);
     Cell *row = row_at(s, y);
@@ -688,8 +758,8 @@ int jt_scr_mode_2027(const jt_scr *s) {
 static int attach_col(jt_scr *s, int32_t *x_out) {
     jt_buf *b = s->active;
     int32_t x;
-    if (b->pending_wrap) x = s->cols - 1;
-    else if (b->cx > 0) x = b->cx - 1;
+    if (b->pending_wrap) x = right_col(s);
+    else if (b->cx > left_col(s)) x = b->cx - 1;
     else return 0;
     materialize_row(s, b->cy);
     Cell *row = row_at(s, b->cy);
@@ -808,7 +878,8 @@ static void print_wide(jt_scr *s, uint32_t scalar) {
     jt_buf *b = s->active;
     consume_wrap(s);
     if (s->insert_mode) jt_scr_ich(s, 2);
-    int32_t room = s->cols - b->cx;
+    int32_t last = right_col(s);
+    int32_t room = last + 1 - b->cx;
     if (room < 2) {
         if (s->auto_wrap) {
             place_graphic(s, content_scalar(0, WIDE_HEAD));
@@ -830,10 +901,10 @@ static void print_wide(jt_scr *s, uint32_t scalar) {
     tail.content = content_scalar(0, WIDE_TAIL);
     tail.extra = 0;
     stamp_cell(s, row, full);
-    if (b->cx + 1 < s->cols) stamp_cell(s, row + 1, tail);
+    if (b->cx + 1 <= last) stamp_cell(s, row + 1, tail);
     mark_row(s, b->cy);
-    if (b->cx + 2 >= s->cols) {
-        b->cx = s->cols - 1;
+    if (b->cx + 2 > last) {
+        b->cx = last;
         b->pending_wrap = s->auto_wrap;
     } else {
         b->cx += 2;
@@ -1016,13 +1087,15 @@ void jt_scr_print_run(jt_scr *s, const uint8_t *p, size_t n) {
     jt_buf *b = s->active;
     while (i < n) {
         consume_wrap(s);
-        int32_t room = s->cols - b->cx;
+        int32_t last = right_col(s);
+        int32_t room = last + 1 - b->cx;
         if (room <= 0) {
-            b->cx = s->cols > 0 ? s->cols - 1 : 0;
+            b->cx = last;
             room = 1;
         }
         size_t take = (size_t)room < (n - i) ? (size_t)room : (n - i);
-        if (row_erased(s, b->cy) && b->cx == 0 && (int32_t)take == s->cols) {
+        if (row_erased(s, b->cy) && b->cx == 0 && !s->lr_margin
+            && (int32_t)take == s->cols) {
             *erased_at(s, b->cy) = 0;
         } else {
             materialize_row(s, b->cy);
@@ -1031,8 +1104,8 @@ void jt_scr_print_run(jt_scr *s, const uint8_t *p, size_t n) {
         store_ascii_cells(s, dest, p + i, take, s->pen.fg, s->pen.bg, s->pen.attrs, s->pen.extra);
         mark_row(s, b->cy);
         i += take;
-        if (b->cx + (int32_t)take >= s->cols) {
-            b->cx = s->cols - 1;
+        if (b->cx + (int32_t)take > last) {
+            b->cx = last;
             b->pending_wrap = s->auto_wrap;
         } else {
             b->cx += (int32_t)take;
@@ -1046,12 +1119,14 @@ void jt_scr_print_run(jt_scr *s, const uint8_t *p, size_t n) {
 
 void jt_scr_ich(jt_scr *s, int n) {
     jt_buf *b = s->active;
-    if (n <= 0 || b->cx >= s->cols) return;
+    int32_t last = right_col(s);
+    if (n <= 0 || b->cx > last) return;
     materialize_row(s, b->cy);
     Cell *row = row_at(s, b->cy);
-    int32_t count = n < (s->cols - b->cx) ? n : (s->cols - b->cx);
-    release_cells(s, row + (s->cols - count), count);
-    for (int32_t i = s->cols - 1; i >= b->cx + count; i--) {
+    int32_t span = last + 1 - b->cx;
+    int32_t count = n < span ? n : span;
+    release_cells(s, row + (last + 1 - count), count);
+    for (int32_t i = last; i >= b->cx + count; i--) {
         row[i] = row[i - count];
     }
     Cell blank = blank_cell(s);
@@ -1063,16 +1138,18 @@ void jt_scr_ich(jt_scr *s, int n) {
 
 void jt_scr_dch(jt_scr *s, int n) {
     jt_buf *b = s->active;
-    if (n <= 0 || b->cx >= s->cols) return;
+    int32_t last = right_col(s);
+    if (n <= 0 || b->cx > last) return;
     materialize_row(s, b->cy);
     Cell *row = row_at(s, b->cy);
-    int count = n < (s->cols - b->cx) ? n : (s->cols - b->cx);
+    int span = (int)(last + 1 - b->cx);
+    int count = n < span ? n : span;
     release_cells(s, row + b->cx, count);
-    for (int i = b->cx; i < s->cols - count; i++) {
+    for (int i = b->cx; i <= last - count; i++) {
         row[i] = row[i + count];
     }
     Cell blank = blank_cell(s);
-    for (int i = s->cols - count; i < s->cols; i++) row[i] = blank;
+    for (int i = last + 1 - count; i <= last; i++) row[i] = blank;
     fix_wide_row(s, row, s->cols, blank);
     *wrap_at(s, b->cy) = 0;
     mark_row(s, b->cy);
@@ -1095,11 +1172,17 @@ void jt_scr_il(jt_scr *s, int n) {
     if (b->cy < b->scroll_top || b->cy > b->scroll_bottom) return;
     int nn = n < 1 ? 1 : n;
     int32_t top = b->cy, bot = b->scroll_bottom;
+    int32_t save_top = b->scroll_top;
+    b->scroll_top = top;
     for (int k = 0; k < nn; k++) {
-        if (bot > top) rotate_down(s, b, top, bot);
-        fill_row(s, top);
-        if (s->img_live_n > 0) jt_img_shift_region(s, top, bot, 1, 0);
+        if (lr_partial(s)) scroll_down_rect(s);
+        else {
+            if (bot > top) rotate_down(s, b, top, bot);
+            fill_row(s, top);
+            if (s->img_live_n > 0) jt_img_shift_region(s, top, bot, 1, 0);
+        }
     }
+    b->scroll_top = save_top;
 }
 
 void jt_scr_dl(jt_scr *s, int n) {
@@ -1107,11 +1190,17 @@ void jt_scr_dl(jt_scr *s, int n) {
     if (b->cy < b->scroll_top || b->cy > b->scroll_bottom) return;
     int nn = n < 1 ? 1 : n;
     int32_t top = b->cy, bot = b->scroll_bottom;
+    int32_t save_top = b->scroll_top;
+    b->scroll_top = top;
     for (int k = 0; k < nn; k++) {
-        if (bot > top) rotate_up(s, b, top, bot);
-        fill_row(s, bot);
-        if (s->img_live_n > 0) jt_img_shift_region(s, top, bot, -1, 0);
+        if (lr_partial(s)) scroll_up_rect(s);
+        else {
+            if (bot > top) rotate_up(s, b, top, bot);
+            fill_row(s, bot);
+            if (s->img_live_n > 0) jt_img_shift_region(s, top, bot, -1, 0);
+        }
     }
+    b->scroll_top = save_top;
 }
 
 static void fill_rect(jt_scr *s, int x1, int y1, int x2, int y2, int clear_wrap) {
@@ -1183,6 +1272,17 @@ void jt_scr_decstbm(jt_scr *s, int top, int bot) {
         b->scroll_top = 0;
         b->scroll_bottom = s->rows - 1;
     }
+    jt_scr_cup(s, 0, 0);
+}
+
+void jt_scr_decslrm(jt_scr *s, int left, int right) {
+    if (!s->lr_margin) return;
+    jt_buf *b = s->active;
+    if (left < 0) left = 0;
+    if (right >= s->cols) right = s->cols - 1;
+    if (right <= left) return;
+    b->scroll_left = left;
+    b->scroll_right = right;
     jt_scr_cup(s, 0, 0);
 }
 
@@ -1462,6 +1562,8 @@ static int buf_resize(jt_buf *b, int32_t oc, int32_t orows, int32_t nc, int32_t 
     b->grid_rows = grid_rows;
     b->scroll_top = 0;
     b->scroll_bottom = nr - 1;
+    b->scroll_left = 0;
+    b->scroll_right = nc > 0 ? nc - 1 : 0;
     clamp_cursor(b, nc, nr);
     b->pending_wrap = 0;
     return 1;
@@ -1558,6 +1660,7 @@ void jt_scr_init(jt_scr *s, int32_t cols, int32_t rows, int32_t sb_cap) {
     s->cursor_visible = 1;
     s->cursor_style = 2;
     s->alt_esc = 1;
+    s->alt_sends_escape = 1;
     s->pen.fg = COLOR_DEFAULT;
     s->pen.bg = COLOR_DEFAULT;
     jt_defaults_reset(s);
@@ -1629,6 +1732,10 @@ void jt_scr_ris(jt_scr *s) {
     s->cursor_visible = 1;
     s->cursor_blink = 0;
     s->alt_esc = 1;
+    s->alt_sends_escape = 1;
+    s->backarrow = 0;
+    s->lr_margin = 0;
+    s->modify_other_keys = 0;
     s->reverse_wrap = 0;
     s->reverse_wrap_ext = 0;
     s->report_theme = 0;
@@ -1641,6 +1748,7 @@ void jt_scr_ris(jt_scr *s) {
     s->cursor_style = 2;
     s->mouse_event = 0;
     s->mouse_sgr = 0;
+    s->mouse_sgr_pixels = 0;
     s->mouse_alt_scroll = 1;
     s->focus_event = 0;
     s->bracketed_paste = 0;
@@ -1649,6 +1757,12 @@ void jt_scr_ris(jt_scr *s) {
     s->reverse_video = 0;
     s->primary.scroll_top = 0;
     s->primary.scroll_bottom = s->rows - 1;
+    s->primary.scroll_left = 0;
+    s->primary.scroll_right = s->cols > 0 ? s->cols - 1 : 0;
+    s->alt.scroll_top = 0;
+    s->alt.scroll_bottom = s->rows - 1;
+    s->alt.scroll_left = 0;
+    s->alt.scroll_right = s->cols > 0 ? s->cols - 1 : 0;
     if (s->primary.tabstops) default_tabs(s->primary.tabstops, s->cols);
     s->primary.cx = 0;
     s->primary.cy = 0;

@@ -381,6 +381,14 @@ void jt_osc_dispatch(jt_scr *s, const jt_vt_host *h, const uint8_t *p, int n) {
     case 9:
         osc9(h, p, n, i);
         break;
+    case 22: {
+        if (h && h->mouse_shape) {
+            uint8_t name[64];
+            int nn = utf8_sanitize(p + i, n - i, name, (int)sizeof name);
+            h->mouse_shape(h->ctx, name, (size_t)nn);
+        }
+        break;
+    }
     case 52:
         osc52(h, p, n, i);
         break;
@@ -405,7 +413,6 @@ void jt_osc_dispatch(jt_scr *s, const jt_vt_host *h, const uint8_t *p, int n) {
     case 18:
     case 19:
     case 21:
-    case 22:
     case 66:
     case 72:
     case 99:

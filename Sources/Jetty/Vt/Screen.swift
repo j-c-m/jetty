@@ -14,6 +14,13 @@ public final class Screen {
     public var viewportHistoryCount: Int { inAlt ? 0 : scrollbackCount }
     public var mouseEvent: UInt16 { implPtr.pointee.mouse_event }
     public var mouseSgr: Bool { implPtr.pointee.mouse_sgr != 0 }
+    public var mouseSgrPixels: Bool { implPtr.pointee.mouse_sgr_pixels != 0 }
+    public var modifyOtherKeys: UInt8 { implPtr.pointee.modify_other_keys }
+    public var altSendsEscape: Bool { implPtr.pointee.alt_sends_escape != 0 }
+    public var backarrow: Bool { implPtr.pointee.backarrow != 0 }
+    public var lrMargin: Bool { implPtr.pointee.lr_margin != 0 }
+    public var scrollLeft: Int { Int(implPtr.pointee.active.pointee.scroll_left) }
+    public var scrollRight: Int { Int(implPtr.pointee.active.pointee.scroll_right) }
     public var tracksMouse: Bool { mouseEvent != 0 }
     public var bracketedPaste: Bool { implPtr.pointee.bracketed_paste != 0 }
     public var pasteEvents: Bool { implPtr.pointee.paste_events != 0 }
@@ -156,6 +163,7 @@ public final class Screen {
     public func il(_ n: Int) { jt_scr_il(implPtr, Int32(n)) }
     public func dl(_ n: Int) { jt_scr_dl(implPtr, Int32(n)) }
     public func decstbm(top: Int, bot: Int) { jt_scr_decstbm(implPtr, Int32(top), Int32(bot)) }
+    public func decslrm(left: Int, right: Int) { jt_scr_decslrm(implPtr, Int32(left), Int32(right)) }
     public func switchScreenMode(_ mode: Int, enabled: Bool) {
         jt_scr_switch_screen_mode(implPtr, Int32(mode), enabled ? 1 : 0)
     }

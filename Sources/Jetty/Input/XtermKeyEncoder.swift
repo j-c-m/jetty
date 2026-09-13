@@ -2,37 +2,83 @@ import AppKit
 import Carbon.HIToolbox
 
 public enum XtermKeyEncoder {
+    public struct Options: Equatable, Sendable {
+        public var applicationCursor = false
+        public var modifyOtherKeys: UInt8 = 0
+        public var altSendsEscape = true
+        public var backarrow = false
+
+        public init(
+            applicationCursor: Bool = false,
+            modifyOtherKeys: UInt8 = 0,
+            altSendsEscape: Bool = true,
+            backarrow: Bool = false
+        ) {
+            self.applicationCursor = applicationCursor
+            self.modifyOtherKeys = modifyOtherKeys
+            self.altSendsEscape = altSendsEscape
+            self.backarrow = backarrow
+        }
+    }
+
     public static func bytes(for event: NSEvent, applicationCursor: Bool) -> [UInt8]? {
+        bytes(for: event, options: Options(applicationCursor: applicationCursor))
+    }
+
+    public static func bytes(for event: NSEvent, options: Options) -> [UInt8]? {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if flags.contains(.command) { return nil }
+        var encFlags = flags
+        if !options.altSendsEscape { encFlags.remove(.option) }
+        let mod = xtermMod(encFlags)
+        let other = options.modifyOtherKeys == 2
+
+        if let seq = special(event.keyCode, flags: flags, applicationCursor: options.applicationCursor) {
+            return seq
+        }
+
+        if event.keyCode == UInt16(kVK_Tab) {
+            if other, mod != 0, mod != 1 { return csi27(mod: mod, code: 9) }
+            if flags.contains(.shift) { return [0x1B, 0x5B, 0x5A] }
+            return [0x09]
+        }
+
+        if isReturn(event.keyCode) {
+            if other, mod != 0 { return csi27(mod: mod, code: 13) }
+            if flags.contains(.shift) { return [0x0A] }
+            return [0x0D]
+        }
+
+        if event.keyCode == UInt16(kVK_Delete) {
+            if other, mod != 0 { return csi27(mod: mod, code: 127) }
+            let bs: UInt8 = options.backarrow ? 0x08 : 0x7F
+            let del: UInt8 = options.backarrow ? 0x7F : 0x08
+            if flags.contains(.control) { return [del] }
+            if flags.contains(.option), options.altSendsEscape { return [0x1B, bs] }
+            return [bs]
+        }
+
+        if event.keyCode == UInt16(kVK_Escape) {
+            if other, mod != 0 { return csi27(mod: mod, code: 27) }
+            return [0x1B]
+        }
+
+        if other, let cp = otherCodepoint(event), shouldModifyOther(cp: cp, mod: mod) {
+            return csi27(mod: mod, code: cp)
+        }
 
         if flags.contains(.control), let c0 = classicControlByte(for: event) {
             return [c0]
         }
 
-        if event.keyCode == UInt16(kVK_Tab) {
-            if flags.contains(.shift) { return [0x1B, 0x5B, 0x5A] }
-            return [0x09]
-        }
-
-        if let seq = special(event.keyCode, flags: flags, applicationCursor: applicationCursor) {
-            return seq
-        }
-
-        if flags.contains(.option),
+        if flags.contains(.option), options.altSendsEscape,
            let raw = event.charactersIgnoringModifiers, let ch = raw.unicodeScalars.first,
            ch.isASCII, ch.value >= 0x20, ch.value < 0x7F {
             return [0x1B, UInt8(ch.value)]
         }
 
-        if isReturn(event.keyCode) {
-            if flags.contains(.shift) { return [0x0A] }
-            return [0x0D]
-        }
-        if event.keyCode == UInt16(kVK_Delete) { return [0x08] }
-        if event.keyCode == UInt16(kVK_Escape) { return [0x1B] }
-
-        if !flags.contains(.option), let text = event.characters, !text.isEmpty {
+        if !flags.contains(.option) || !options.altSendsEscape,
+           let text = event.characters, !text.isEmpty {
             return Array(text.utf8)
         }
         return nil
@@ -191,12 +237,18 @@ public enum XtermKeyEncoder {
         !hasMarkedText && !wasMarked && !insertTextConsumed
     }
 
-    /// Option-as-meta and Shift+Enter when IME is idle. insertText must not eat those keys.
-    public static func insertTextDefersToEncoder(composing: Bool, event: NSEvent?) -> Bool {
+    /// Option-as-meta, modifyOtherKeys, and Shift+Enter when IME is idle.
+    public static func insertTextDefersToEncoder(
+        composing: Bool,
+        event: NSEvent?,
+        altSendsEscape: Bool = true,
+        modifyOtherKeys: UInt8 = 0
+    ) -> Bool {
         guard !composing, let event, event.type == .keyDown else { return false }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if flags.contains(.command) { return false }
-        if flags.contains(.option) { return true }
+        if flags.contains(.option), altSendsEscape { return true }
+        if modifyOtherKeys == 2, flags.contains(.control) { return true }
         if flags.contains(.shift), isReturn(event.keyCode) { return true }
         return false
     }
@@ -239,6 +291,46 @@ public enum XtermKeyEncoder {
         out.reserveCapacity(one.count * count)
         for _ in 0..<count { out.append(contentsOf: one) }
         return out
+    }
+
+    private static func xtermMod(_ flags: NSEvent.ModifierFlags) -> Int {
+        (flags.contains(.shift) ? 1 : 0)
+            + (flags.contains(.option) ? 2 : 0)
+            + (flags.contains(.control) ? 4 : 0)
+    }
+
+    private static func csi27(mod: Int, code: UInt32) -> [UInt8] {
+        Array("\u{1B}[27;\(mod + 1);\(code)~".utf8)
+    }
+
+    /// xterm ModifyOtherKeys: encode when the key is a control-input codepoint,
+    /// any non-shift modifier is down, or Shift+Space.
+    private static func shouldModifyOther(cp: UInt32, mod: Int) -> Bool {
+        if mod == 0 { return false }
+        if cp >= 0x40, cp <= 0x7F { return true }
+        if mod != 1 { return true }
+        return cp == 32
+    }
+
+    private static func otherCodepoint(_ event: NSEvent) -> UInt32? {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if flags.contains(.option),
+           let raw = event.charactersIgnoringModifiers,
+           let ch = raw.unicodeScalars.first, ch.isASCII
+        {
+            return ch.value
+        }
+        if let raw = event.characters, let ch = raw.unicodeScalars.first,
+           ch.value >= 0x20, ch.value != 0x7F
+        {
+            return ch.value
+        }
+        if let raw = event.charactersIgnoringModifiers,
+           let ch = raw.unicodeScalars.first, ch.isASCII
+        {
+            return ch.value
+        }
+        return nil
     }
 
     private static func special(_ keyCode: UInt16, flags: NSEvent.ModifierFlags, applicationCursor: Bool) -> [UInt8]? {
