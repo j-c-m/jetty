@@ -1769,25 +1769,28 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             scrollPhysics.brake()
             kickScroll()
             if event.phase.isEmpty || event.phase.contains(.cancelled) { return }
-        } else if !event.momentumPhase.isEmpty {
-            return
         }
         let bs = max(window?.backingScaleFactor ?? 1, 1)
         let chPt = max(CGFloat(cellHPx) / bs, 1)
-        let dy = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.scrollingDeltaY * chPt * 3
+        let precise = event.hasPreciseScrollingDeltas
+        let dy = precise ? event.scrollingDeltaY : event.scrollingDeltaY * chPt * 3
         let deltaRows = Double(dy / chPt)
-        if !event.phase.isEmpty {
+        if precise {
+            let momentum = !event.momentumPhase.isEmpty
+            let phased = !event.phase.isEmpty || momentum
             let ended = event.phase.contains(.ended)
+                || event.momentumPhase.contains(.ended)
+                || !phased
             if abs(deltaRows) < 1e-4, !ended { return }
             scrollPhysics.applyPreciseDelta(
                 deltaRows: deltaRows,
-                timestamp: event.timestamp,
-                began: event.phase.contains(.began),
-                ended: ended
+                ended: ended,
+                momentum: momentum
             )
             kickScroll()
             return
         }
+        if !event.momentumPhase.isEmpty { return }
         if abs(deltaRows) < 1e-4 { return }
         scrollPhysics.applyImpulse(deltaRows: deltaRows)
         kickScroll()

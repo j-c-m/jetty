@@ -59,7 +59,7 @@ final class ScrollPhysicsTests: XCTestCase {
     func testTrimTopShiftsSeekTarget() {
         let p = ScrollPhysics()
         p.pinBottom(maxOffset: 100)
-        p.applyPreciseDelta(deltaRows: 20, timestamp: 1, began: true, ended: true)
+        p.applyPreciseDelta(deltaRows: 20, ended: true)
         XCTAssertEqual(p.position, 80, accuracy: 1e-9)
         p.smoothTo(offset: 50, maxOffset: 100)
         p.trimTop(10)
@@ -126,7 +126,7 @@ final class ScrollPhysicsTests: XCTestCase {
     func testPreciseDeltaMovesOneToOne() {
         let p = ScrollPhysics()
         p.pinBottom(maxOffset: 100)
-        p.applyPreciseDelta(deltaRows: 5, timestamp: 1.0, began: true, ended: false)
+        p.applyPreciseDelta(deltaRows: 5, ended: false)
         XCTAssertEqual(p.position, 95, accuracy: 1e-9)
         XCTAssertFalse(p.pinnedToBottom)
     }
@@ -134,8 +134,8 @@ final class ScrollPhysicsTests: XCTestCase {
     func testPreciseDeltaDoesNotIntegrateWhileFingersDown() {
         let p = ScrollPhysics()
         p.pinBottom(maxOffset: 100)
-        p.applyPreciseDelta(deltaRows: 2, timestamp: 1.000, began: true, ended: false)
-        p.applyPreciseDelta(deltaRows: 2, timestamp: 1.016, began: false, ended: false)
+        p.applyPreciseDelta(deltaRows: 2, ended: false)
+        p.applyPreciseDelta(deltaRows: 2, ended: false)
         let pos = p.position
         XCTAssertFalse(p.step(dt: 1.0 / 60.0, maxOffset: 100, viewportRows: 20))
         XCTAssertEqual(p.position, pos, accuracy: 1e-9)
@@ -145,8 +145,7 @@ final class ScrollPhysicsTests: XCTestCase {
         let p = ScrollPhysics()
         p.maxRowsPerFrame = 1_000
         p.pinBottom(maxOffset: 400)
-        p.applyPreciseDelta(deltaRows: 1, timestamp: 1.000, began: true, ended: false)
-        p.applyPreciseDelta(deltaRows: 1, timestamp: 1.016, began: false, ended: true)
+        p.applyImpulse(deltaRows: 8)
         XCTAssertTrue(p.step(dt: 1.0 / 60.0, maxOffset: 400, viewportRows: 20))
         let pos = p.position
         p.brake()
@@ -155,16 +154,66 @@ final class ScrollPhysicsTests: XCTestCase {
         XCTAssertFalse(p.pinnedToBottom)
     }
 
-    func testPreciseDeltaCoastsAfterEnded() {
+    func testPreciseDeltaDoesNotCoastAfterEnded() {
         let p = ScrollPhysics()
-        p.friction = 2
-        p.maxRowsPerFrame = 1_000
         p.pinBottom(maxOffset: 400)
-        p.applyPreciseDelta(deltaRows: 1, timestamp: 1.000, began: true, ended: false)
-        p.applyPreciseDelta(deltaRows: 1, timestamp: 1.016, began: false, ended: false)
-        p.applyPreciseDelta(deltaRows: 0, timestamp: 1.032, began: false, ended: true)
-        XCTAssertTrue(p.step(dt: 1.0 / 60.0, maxOffset: 400, viewportRows: 20))
-        XCTAssertLessThan(p.position, 398)
+        p.applyPreciseDelta(deltaRows: 1, ended: false)
+        p.applyPreciseDelta(deltaRows: 1, ended: false)
+        p.applyPreciseDelta(deltaRows: 0, ended: true)
+        let pos = p.position
+        XCTAssertFalse(p.step(dt: 1.0 / 60.0, maxOffset: 400, viewportRows: 20))
+        XCTAssertEqual(p.position, pos, accuracy: 1e-9)
+    }
+
+    func testMomentumDeltaMovesOneToOne() {
+        let p = ScrollPhysics()
+        p.pinBottom(maxOffset: 100)
+        p.applyPreciseDelta(deltaRows: 2, ended: true)
+        XCTAssertEqual(p.position, 98, accuracy: 1e-9)
+        p.applyPreciseDelta(deltaRows: 3, ended: false, momentum: true)
+        XCTAssertEqual(p.position, 95, accuracy: 1e-9)
+        XCTAssertFalse(p.step(dt: 1.0 / 60.0, maxOffset: 100, viewportRows: 20))
+        XCTAssertEqual(p.position, 95, accuracy: 1e-9)
+    }
+
+    func testMomentumIgnoredAfterPin() {
+        let p = ScrollPhysics()
+        p.pinBottom(maxOffset: 100)
+        p.applyPreciseDelta(deltaRows: 10, ended: true)
+        p.pinBottom(maxOffset: 100)
+        p.applyPreciseDelta(deltaRows: 5, ended: false, momentum: true)
+        XCTAssertEqual(p.position, 100, accuracy: 1e-9)
+        XCTAssertTrue(p.pinnedToBottom)
+    }
+
+    func testFingerDeltaClearsMomentumIgnore() {
+        let p = ScrollPhysics()
+        p.pinBottom(maxOffset: 100)
+        p.applyPreciseDelta(deltaRows: 1, ended: false, momentum: true)
+        XCTAssertEqual(p.position, 100, accuracy: 1e-9)
+        p.applyPreciseDelta(deltaRows: 4, ended: false)
+        XCTAssertEqual(p.position, 96, accuracy: 1e-9)
+        XCTAssertFalse(p.pinnedToBottom)
+    }
+
+    func testImpulseIgnoresLaterMomentum() {
+        let p = ScrollPhysics()
+        p.pinBottom(maxOffset: 500)
+        p.applyImpulse(deltaRows: 8)
+        let pos = p.position
+        XCTAssertNotEqual(p.velocity, 0)
+        p.applyPreciseDelta(deltaRows: 20, ended: false, momentum: true)
+        XCTAssertEqual(p.position, pos, accuracy: 1e-9)
+        XCTAssertNotEqual(p.velocity, 0)
+    }
+
+    func testPrecisionWheelTickDoesNotCoast() {
+        let p = ScrollPhysics()
+        p.pinBottom(maxOffset: 100)
+        p.applyPreciseDelta(deltaRows: 2.5, ended: true)
+        XCTAssertEqual(p.position, 97.5, accuracy: 1e-9)
+        XCTAssertFalse(p.step(dt: 1.0 / 60.0, maxOffset: 100, viewportRows: 20))
+        XCTAssertEqual(p.position, 97.5, accuracy: 1e-9)
     }
 
     func testCmdHomeSeeksTop() {

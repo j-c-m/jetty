@@ -922,7 +922,7 @@ Event filter (`mouse_encode.shouldReport`):
 | 1002 | press + release + motion **while down** |
 | 1003 | all motion |
 
-**1007 default on:** wheel in **alt screen** with tracking **off** → `CSI A/B` (or `SS3 OA/OB` if DECCKM) instead of host history. Wheel with tracking on → mouse 64/65 (X10) or SGR button 64/65. Wheel on primary with tracking off → `ScrollPhysics.applyImpulse`.
+**1007 default on:** wheel in **alt screen** with tracking **off** → `CSI A/B` (or `SS3 OA/OB` if DECCKM) instead of host history. Wheel with tracking on → mouse 64/65 (X10) or SGR button 64/65. Wheel on primary with tracking off → precise (trackpad / precision wheel) `ScrollPhysics.applyPreciseDelta` including AppKit `momentumPhase`; discrete notches `applyImpulse`.
 
 Copy-on-select **off** while tracking ≠ off (clicks belong to the TUI). Cmd-click never sent (hyperlink / host).
 
