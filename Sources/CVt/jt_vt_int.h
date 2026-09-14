@@ -35,4 +35,26 @@ void jt_apc_feed(jt_vt *p, const uint8_t *b, size_t n);
 void jt_apc_finish(jt_vt *p, jt_scr *scr, const jt_vt_host *h);
 void jt_apc_reset(jt_vt *p);
 
+void clear_seq(jt_vt *p);
+void enter_ground(jt_vt *p);
+void enter_escape(jt_vt *p);
+void enter_csi(jt_vt *p);
+void utf8_reset(jt_vt *p);
+void write_str(const jt_vt_host *h, const char *s);
+void finish_osc(jt_vt *p, jt_scr *scr, const jt_vt_host *h);
+void finish_dcs(jt_vt *p, jt_scr *scr, const jt_vt_host *h);
+
+void start_param(jt_vt *p, uint8_t b);
+void accum_param(jt_vt *p, uint8_t b);
+void push_param(jt_vt *p, int colon);
+void finish_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final);
+int try_fast_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h,
+                 const uint8_t *bytes, size_t *i, size_t n);
+
+void emit_utf8_run(jt_vt *p, jt_scr *scr, const uint8_t *src, size_t n);
+size_t take_combining(const uint8_t *p, size_t n, uint32_t *marks, int max, int *nmarks);
+
+void sync_apply(jt_vt *p, jt_scr *scr, const jt_vt_host *h, size_t off);
+void sync_buf_in(jt_vt *p, jt_scr *scr, const jt_vt_host *h, const uint8_t *bytes, size_t n);
+
 #endif

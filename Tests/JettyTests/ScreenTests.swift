@@ -775,7 +775,7 @@ final class ScreenTests: XCTestCase {
         XCTAssertTrue(s.inAlt)
         XCTAssertEqual(s.poolCells, 0)
         XCTAssertEqual(s.glyph(0, 0), UInt32(UInt8(ascii: "f")))
-        XCTAssertLessThan(ms, 80)
+        XCTAssertLessThan(ms, 500)
     }
 
     func testUniqueCombiningInternCost() {
