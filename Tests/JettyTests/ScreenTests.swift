@@ -737,6 +737,47 @@ final class ScreenTests: XCTestCase {
         XCTAssertLessThan(isolated, 500)
     }
 
+    func testEditorRedrawParseCost() {
+        func minMs(_ trials: Int, _ body: () -> Screen) -> (ms: Double, screen: Screen) {
+            var best = Double.greatestFiniteMagnitude
+            var last: Screen?
+            for _ in 0..<trials {
+                let t0 = ProcessInfo.processInfo.systemUptime
+                last = body()
+                best = min(best, (ProcessInfo.processInfo.systemUptime - t0) * 1000)
+            }
+            return (best, last!)
+        }
+
+        let dump = EditorRedrawDump.bytes()
+        XCTAssertGreaterThanOrEqual(dump.count, EditorRedrawDump.payloadBytes)
+        XCTAssertEqual(Array(dump.prefix(8)), Array("\u{1B}[?1049h".utf8))
+
+        let (ms, s) = minMs(5) {
+            let s = Screen(
+                cols: EditorRedrawDump.cols,
+                rows: EditorRedrawDump.rows,
+                scrollbackCapRows: 0
+            )
+            let p = Parser()
+            p.screen = s
+            dump.withUnsafeBufferPointer { buf in
+                guard let p0 = buf.baseAddress else { return }
+                for _ in 0..<EditorRedrawDump.feeds {
+                    p.feed(p0, count: buf.count)
+                }
+            }
+            return s
+        }
+        fputs(String(format: "editor redraw parse ms dump=%.2f bytes=%d feeds=%d\n",
+                     ms, dump.count, EditorRedrawDump.feeds), stderr)
+        fflush(stderr)
+        XCTAssertTrue(s.inAlt)
+        XCTAssertEqual(s.poolCells, 0)
+        XCTAssertEqual(s.glyph(0, 0), UInt32(UInt8(ascii: "f")))
+        XCTAssertLessThan(ms, 80)
+    }
+
     func testUniqueCombiningInternCost() {
         func utf8(_ cp: UInt32) -> [UInt8] {
             if cp < 0x80 { return [UInt8(cp)] }
@@ -901,5 +942,46 @@ final class ScreenTests: XCTestCase {
             s.takeDirty(into: buf.baseAddress!, count: s.rows)
         }
         return (bits, gen)
+    }
+}
+
+/// Alt-screen CUP+SGR+print+EL. Editor-shaped parse canary, not `y\n`.
+private enum EditorRedrawDump {
+    static let cols = 105
+    static let rows = 35
+    static let payloadBytes = 1_048_576
+    static let feeds = 20
+    static let lineCols = 80
+
+    static func bytes() -> [UInt8] {
+        let pens: [[UInt8]] = [
+            Array("\u{1B}[0m".utf8),
+            Array("\u{1B}[1m".utf8),
+            Array("\u{1B}[31m".utf8),
+            Array("\u{1B}[32m".utf8),
+            Array("\u{1B}[33m".utf8),
+            Array("\u{1B}[34m".utf8),
+            Array("\u{1B}[35m".utf8),
+            Array("\u{1B}[38;5;4m".utf8),
+        ]
+        let seed = Array("fn foo_bar(x: i32) { let y = x + 1; return y } // ident".utf8)
+        var line = [UInt8](repeating: UInt8(ascii: " "), count: lineCols)
+        for i in 0..<lineCols { line[i] = seed[i % seed.count] }
+
+        var frame = [UInt8]()
+        frame.reserveCapacity(rows * (24 + lineCols))
+        for y in 0..<rows {
+            frame.append(contentsOf: Array("\u{1B}[\(y + 1);1H".utf8))
+            frame.append(contentsOf: pens[y % pens.count])
+            frame.append(contentsOf: line)
+            frame.append(contentsOf: Array("\u{1B}[K".utf8))
+        }
+
+        var out = Array("\u{1B}[?1049h".utf8)
+        out.reserveCapacity(payloadBytes + frame.count)
+        while out.count < payloadBytes {
+            out.append(contentsOf: frame)
+        }
+        return out
     }
 }
