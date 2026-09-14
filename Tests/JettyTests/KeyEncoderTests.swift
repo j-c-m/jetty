@@ -126,8 +126,12 @@ final class KeyEncoderTests: XCTestCase {
             Array("é".utf8)
         )
         XCTAssertFalse(XtermKeyEncoder.insertTextDefersToEncoder(
-            composing: false, event: event, altSendsEscape: false
+            composing: false, event: event, macosOptionAsAlt: false
         ))
+        XCTAssertEqual(
+            XtermKeyEncoder.bytes(for: event, options: .init(macosOptionAsAlt: false)),
+            Array("é".utf8)
+        )
         let mok = XtermKeyEncoder.Options(modifyOtherKeys: 2, altSendsEscape: false)
         XCTAssertEqual(XtermKeyEncoder.bytes(for: event, options: mok), Array("é".utf8))
     }

@@ -322,6 +322,11 @@ background = #1e1e2e
 foreground = #cdd6f4
 cursor-color = #f5e0dc
 palette = 0=#11111b
+window-padding-x = 4
+window-padding-y = 4
+window-width = 105
+window-height = 35
+macos-option-as-alt = true
 palette-0 = #111111
 # …
 palette-15 = #f2f0ec
@@ -343,7 +348,7 @@ Rules:
 - `palette-N` overlays compiled Eighties Black. C owns the overlay: `jt_scr_set_palette_overlay(s, rgb16, mask)` stores 16 RGB values + a 16-bit mask. `jt_scr_palette_reset` writes compiled 0–15 then applies masked overlay entries, then the xterm cube 16–255. OSC 104 / RIS call that reset. Swift load/reload calls the setter then reset. Do not re-apply from Swift on every `palette_changed` — C already did. Compiled Eighties Black is not reopened.
 - `adjust-cell-width` / `adjust-cell-height`: integer pixels added to `CellMetrics.cellWidthPx` / `cellHeightPx` after the existing `round(max ASCII advance)+1` / `round(ascent+descent+leading)` measure. Clamp so cell ≥ 1×1. Negative allowed. Recompute `TIOCSWINSZ` on change.
 - `ligatures` is `off` / `programming` / `on` (default `programming`). Aliases: `false`/`0`/`no` → `off`; `true`/`1`/`yes` → `on`. Unknown values ignored (stay `programming`). `off` ignores `font-feature` and must not hash runs. `programming` matches a hardcoded longest-first ASCII table and shapes **only those spans**. `on` shapes each run (liga+calt) then still paints 1:1 cells with the v1 letter path. `font-feature` (`+tag` / `-tag` / `tag=0`) applies only on shaped spans/runs. Invalid tags ignored. `-calt` with `on` disables `calt` on the shaper (user wins).
-- Reload: menu **Reload Config** (`Cmd+Shift+,`). Live: font, size, ligatures, palette overlay, `foreground` / `background` / `cursor-color`, opacity, keybinds, notifications, link-url, secure-input. New-window only: `scrollback-lines`, launch cols/rows. `theme =` is Ghostty-compatible (file in `~/.config/jetty/themes` or `~/.config/ghostty/themes`, or an absolute path).
+- Reload: menu **Reload Config** (`Cmd+Shift+,`). Live: font, size, ligatures, palette overlay, `foreground` / `background` / `cursor-color`, padding, `macos-option-as-alt`, opacity, keybinds, notifications, link-url, secure-input. New-window only: `scrollback-lines`, `window-width` / `window-height`. `theme =` is Ghostty-compatible (file in `~/.config/jetty/themes` or `~/.config/ghostty/themes`, or an absolute path).
 
 Do not add Ghostty’s `font-family-bold` stack or synthetic italic in this follow-on unless the family has no italic (then italic request uses regular; italic ink may clip).
 

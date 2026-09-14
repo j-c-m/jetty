@@ -1,3 +1,5 @@
+import AppKit
+import Carbon
 import CVt
 import Foundation
 
@@ -24,10 +26,26 @@ public struct AppConfig: Sendable {
     public var progressStyle: Bool = true
     public var macosAutoSecureInput: Bool = true
     public var macosAppleScript: Bool = true
+    public var macosOptionAsAlt: OptionAsAlt = .unset
+    public var windowPaddingLeft: CGFloat = 4
+    public var windowPaddingRight: CGFloat = 4
+    public var windowPaddingTop: CGFloat = 4
+    public var windowPaddingBottom: CGFloat = 4
+    public var windowWidth: Int? = nil
+    public var windowHeight: Int? = nil
     public var scrollbackLines: Int = 50_000
     public var copyOnSelect: Bool = true
-    public var launchCols: Int = 105
-    public var launchRows: Int = 35
+
+    /// Ghostty `window-width` / `window-height` (cells). Both required; else 105×35.
+    public var launchCols: Int {
+        guard windowWidth != nil, windowHeight != nil else { return 105 }
+        return max(10, windowWidth!)
+    }
+
+    public var launchRows: Int {
+        guard windowWidth != nil, windowHeight != nil else { return 35 }
+        return max(4, windowHeight!)
+    }
     public var osc52Write: Osc52Write = .allow
     public var osc52Read: Osc52Read = .ask
     public var keybinds: [String] = []
@@ -61,6 +79,52 @@ public struct AppConfig: Sendable {
 
     public enum Osc52Read: Sendable {
         case ask, deny
+    }
+
+    /// Ghostty `macos-option-as-alt`: unset follows US / US International.
+    public enum OptionAsAlt: Sendable, Equatable {
+        case unset, off, on, left, right
+    }
+
+    static let leftOptionMask: UInt = 0x0000_0020
+    static let rightOptionMask: UInt = 0x0000_0040
+    static let defaultPadPt: CGFloat = 4
+
+    public static func usKeyboardLayout() -> Bool {
+        guard let src = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue() else {
+            return false
+        }
+        guard let raw = TISGetInputSourceProperty(src, kTISPropertyInputSourceID) else {
+            return false
+        }
+        let id = Unmanaged<CFString>.fromOpaque(raw).takeUnretainedValue() as String
+        return id == "com.apple.keylayout.US"
+            || id == "com.apple.keylayout.USInternational-PC"
+    }
+
+    public func optionAsAltActive(
+        optionDown: Bool,
+        leftOption: Bool,
+        rightOption: Bool,
+        usLayout: Bool
+    ) -> Bool {
+        switch macosOptionAsAlt {
+        case .unset: return optionDown && usLayout
+        case .off: return false
+        case .on: return optionDown
+        case .left: return leftOption
+        case .right: return rightOption
+        }
+    }
+
+    public func optionAsAltActive(_ event: NSEvent, usLayout: Bool = AppConfig.usKeyboardLayout()) -> Bool {
+        let flags = event.modifierFlags
+        return optionAsAltActive(
+            optionDown: flags.contains(.option),
+            leftOption: flags.rawValue & Self.leftOptionMask != 0,
+            rightOption: flags.rawValue & Self.rightOptionMask != 0,
+            usLayout: usLayout
+        )
     }
 
     /// Tagged `COLOR_RGB` for the C screen. Compiled defaults when unset.
@@ -170,6 +234,32 @@ public struct AppConfig: Sendable {
 
     public static func parseBool(_ s: String) -> Bool {
         ["true", "1", "yes"].contains(s.lowercased())
+    }
+
+    /// Ghostty `macos-option-as-alt`: `true` / `false` / `left` / `right`.
+    public static func parseOptionAsAlt(_ raw: String) -> OptionAsAlt? {
+        switch unquote(raw).lowercased() {
+        case "true", "1", "yes", "on": return .on
+        case "false", "0", "no", "off": return .off
+        case "left": return .left
+        case "right": return .right
+        default: return nil
+        }
+    }
+
+    /// Ghostty `window-padding-x` / `y`: `2` or `2,4` in points.
+    public static func parsePadPair(_ raw: String) -> (CGFloat, CGFloat)? {
+        let parts = raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        if parts.count == 1, let n = Double(parts[0]), n.isFinite {
+            let v = CGFloat(max(0, n))
+            return (v, v)
+        }
+        if parts.count == 2, let a = Double(parts[0]), let b = Double(parts[1]),
+           a.isFinite, b.isFinite
+        {
+            return (CGFloat(max(0, a)), CGFloat(max(0, b)))
+        }
+        return nil
     }
 
     public static func parseOnOff(_ s: String) -> Bool {
@@ -448,6 +538,31 @@ public struct AppConfig: Sendable {
             c.macosAutoSecureInput = parseBool(val)
         case "macos-applescript":
             c.macosAppleScript = parseBool(val)
+        case "macos-option-as-alt":
+            if val.isEmpty { c.macosOptionAsAlt = .unset }
+            else if let v = parseOptionAsAlt(val) { c.macosOptionAsAlt = v }
+        case "window-padding-x":
+            if val.isEmpty {
+                c.windowPaddingLeft = defaultPadPt
+                c.windowPaddingRight = defaultPadPt
+            } else if let pair = parsePadPair(val) {
+                c.windowPaddingLeft = pair.0
+                c.windowPaddingRight = pair.1
+            }
+        case "window-padding-y":
+            if val.isEmpty {
+                c.windowPaddingTop = defaultPadPt
+                c.windowPaddingBottom = defaultPadPt
+            } else if let pair = parsePadPair(val) {
+                c.windowPaddingTop = pair.0
+                c.windowPaddingBottom = pair.1
+            }
+        case "window-width":
+            if val.isEmpty { c.windowWidth = nil }
+            else if let n = Int(val.trimmingCharacters(in: .whitespaces)) { c.windowWidth = n }
+        case "window-height":
+            if val.isEmpty { c.windowHeight = nil }
+            else if let n = Int(val.trimmingCharacters(in: .whitespaces)) { c.windowHeight = n }
         case "scrollback-lines":
             if let n = Int(val), n >= 0 { c.scrollbackLines = n }
         case "copy-on-select":

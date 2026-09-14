@@ -159,6 +159,48 @@ final class ConfigTests: XCTestCase {
         )
     }
 
+    func testGhosttyWindowAndOptionKeys() {
+        let pad = AppConfig.parse("""
+            window-padding-x = 2
+            window-padding-y = 1,3
+            window-width = 80
+            window-height = 24
+            macos-option-as-alt = left
+            """)
+        XCTAssertEqual(pad.windowPaddingLeft, 2)
+        XCTAssertEqual(pad.windowPaddingRight, 2)
+        XCTAssertEqual(pad.windowPaddingTop, 1)
+        XCTAssertEqual(pad.windowPaddingBottom, 3)
+        XCTAssertEqual(pad.launchCols, 80)
+        XCTAssertEqual(pad.launchRows, 24)
+        XCTAssertEqual(pad.macosOptionAsAlt, .left)
+        XCTAssertEqual(AppConfig.parsePadPair("2, 8")?.0, 2)
+        XCTAssertEqual(AppConfig.parsePadPair("2, 8")?.1, 8)
+        XCTAssertEqual(AppConfig.parse("window-width = 80").launchCols, 105)
+        XCTAssertEqual(AppConfig.parse("window-height = 24").launchRows, 35)
+        XCTAssertEqual(
+            AppConfig.parse("window-width = 5\nwindow-height = 2").launchCols,
+            10
+        )
+        XCTAssertEqual(
+            AppConfig.parse("window-width = 5\nwindow-height = 2").launchRows,
+            4
+        )
+        XCTAssertEqual(AppConfig.parse("macos-option-as-alt = true").macosOptionAsAlt, .on)
+        XCTAssertEqual(AppConfig.parse("macos-option-as-alt = false").macosOptionAsAlt, .off)
+        XCTAssertEqual(AppConfig.parse("macos-option-as-alt = right").macosOptionAsAlt, .right)
+        XCTAssertEqual(AppConfig.parse("macos-option-as-alt =").macosOptionAsAlt, .unset)
+        XCTAssertEqual(AppConfig.parse("window-padding-x =").windowPaddingLeft, 4)
+        let on = AppConfig.parse("macos-option-as-alt = true")
+        XCTAssertTrue(on.optionAsAltActive(optionDown: true, leftOption: true, rightOption: false, usLayout: false))
+        let unsetUS = AppConfig.parse("")
+        XCTAssertTrue(unsetUS.optionAsAltActive(optionDown: true, leftOption: true, rightOption: false, usLayout: true))
+        XCTAssertFalse(unsetUS.optionAsAltActive(optionDown: true, leftOption: true, rightOption: false, usLayout: false))
+        let left = AppConfig.parse("macos-option-as-alt = left")
+        XCTAssertTrue(left.optionAsAltActive(optionDown: true, leftOption: true, rightOption: false, usLayout: false))
+        XCTAssertFalse(left.optionAsAltActive(optionDown: true, leftOption: false, rightOption: true, usLayout: false))
+    }
+
     func testThemeAbsolutePath() throws {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("jetty-theme-\(UUID().uuidString)")
@@ -239,6 +281,15 @@ final class ConfigTests: XCTestCase {
         XCTAssertNil(c.foreground)
         XCTAssertNil(c.background)
         XCTAssertNil(c.cursorColor)
+        XCTAssertEqual(c.windowPaddingLeft, 4)
+        XCTAssertEqual(c.windowPaddingRight, 4)
+        XCTAssertEqual(c.windowPaddingTop, 4)
+        XCTAssertEqual(c.windowPaddingBottom, 4)
+        XCTAssertNil(c.windowWidth)
+        XCTAssertNil(c.windowHeight)
+        XCTAssertEqual(c.launchCols, 105)
+        XCTAssertEqual(c.launchRows, 35)
+        XCTAssertEqual(c.macosOptionAsAlt, .unset)
         XCTAssertTrue(c.linkURL)
         XCTAssertTrue(c.desktopNotifications)
         XCTAssertTrue(c.progressStyle)

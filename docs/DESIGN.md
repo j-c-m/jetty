@@ -847,9 +847,10 @@ Launch geometry copies linux16term’s **content vs frame split**. `contentSizeP
 ```
 cwPt = cellWPx / backingScale
 chPt = cellHPx / backingScale
-content = (105 * cwPt + 2*padPt) × (35 * chPt + 2*padPt)
+content = (cols * cwPt + padL + padR) × (rows * chPt + padT + padB)
 frame  = NSWindow.frameRect(forContentRect: content, styleMask: titled…)
-padPt = 4  // linux16term MetalTerminalView.padPt
+pad default 4 pt; Ghostty `window-padding-x` / `window-padding-y` (`2` or `2,4`).
+Launch grid 105×35 unless both `window-width` and `window-height` are set (cells, min 10×4).
 ```
 
 On 2×, JetBrains Mono at 20 pt is typically ~12×24 pt cells → ~1260×840 pt **content** plus titlebar — a real window, not VGA 640×400.
@@ -967,6 +968,11 @@ foreground = #cdd6f4
 cursor-color = #f5e0dc
 palette = 0=#11111b
 palette-15 = #ffffff
+window-padding-x = 4
+window-padding-y = 4
+window-width = 105
+window-height = 35
+macos-option-as-alt = true   # true | false | left | right; unset = US layouts
 ```
 
 Ghostty theme files are the same `key = value` syntax. `theme` loads one (or `light:Name,dark:Name` from system appearance). Config keys after the theme win. `cursor-text` / `selection-*` are ignored. No `console-mode`, `vt-count`, `web-extension`, `scale`. Missing file → defaults.

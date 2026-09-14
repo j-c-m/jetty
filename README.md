@@ -38,8 +38,9 @@ JETTY_SIGN_IDENTITY=... JETTY_NOTARY_PROFILE=... ./scripts/notarize.sh
 
 ## Config
 
-`~/.config/jetty/config`. Ghostty theme files work (`theme =`, `background`,
-`foreground`, `cursor-color`, `palette = N=`). Keys and internals:
+`~/.config/jetty/config`. Ghostty keys that work include `theme`, `background`,
+`foreground`, `cursor-color`, `palette = N=`, `window-padding-x` / `y`,
+`window-width` / `height`, `macos-option-as-alt`. Keys and internals:
 [docs/DESIGN.md](docs/DESIGN.md),
 [docs/DESIGN-follow-on.md](docs/DESIGN-follow-on.md),
 [docs/DESIGN-kitty-graphics.md](docs/DESIGN-kitty-graphics.md),

@@ -6,17 +6,20 @@ public enum XtermKeyEncoder {
         public var applicationCursor = false
         public var modifyOtherKeys: UInt8 = 0
         public var altSendsEscape = true
+        public var macosOptionAsAlt = true
         public var backarrow = false
 
         public init(
             applicationCursor: Bool = false,
             modifyOtherKeys: UInt8 = 0,
             altSendsEscape: Bool = true,
+            macosOptionAsAlt: Bool = true,
             backarrow: Bool = false
         ) {
             self.applicationCursor = applicationCursor
             self.modifyOtherKeys = modifyOtherKeys
             self.altSendsEscape = altSendsEscape
+            self.macosOptionAsAlt = macosOptionAsAlt
             self.backarrow = backarrow
         }
     }
@@ -54,7 +57,9 @@ public enum XtermKeyEncoder {
             let bs: UInt8 = options.backarrow ? 0x08 : 0x7F
             let del: UInt8 = options.backarrow ? 0x7F : 0x08
             if flags.contains(.control) { return [del] }
-            if flags.contains(.option), options.altSendsEscape { return [0x1B, bs] }
+            if flags.contains(.option), options.macosOptionAsAlt, options.altSendsEscape {
+                return [0x1B, bs]
+            }
             return [bs]
         }
 
@@ -71,13 +76,13 @@ public enum XtermKeyEncoder {
             return [c0]
         }
 
-        if flags.contains(.option), options.altSendsEscape,
+        if flags.contains(.option), options.macosOptionAsAlt, options.altSendsEscape,
            let raw = event.charactersIgnoringModifiers, let ch = raw.unicodeScalars.first,
            ch.isASCII, ch.value >= 0x20, ch.value < 0x7F {
             return [0x1B, UInt8(ch.value)]
         }
 
-        if !flags.contains(.option) || !options.altSendsEscape,
+        if !flags.contains(.option) || !options.macosOptionAsAlt || !options.altSendsEscape,
            let text = event.characters, !text.isEmpty {
             return Array(text.utf8)
         }
@@ -242,12 +247,13 @@ public enum XtermKeyEncoder {
         composing: Bool,
         event: NSEvent?,
         altSendsEscape: Bool = true,
+        macosOptionAsAlt: Bool = true,
         modifyOtherKeys: UInt8 = 0
     ) -> Bool {
         guard !composing, let event, event.type == .keyDown else { return false }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if flags.contains(.command) { return false }
-        if flags.contains(.option), altSendsEscape { return true }
+        if flags.contains(.option), macosOptionAsAlt { return true }
         if modifyOtherKeys == 2, flags.contains(.control) { return true }
         if modifyOtherKeys == 2, flags.contains(.shift),
            event.keyCode == UInt16(kVK_Space) { return true }

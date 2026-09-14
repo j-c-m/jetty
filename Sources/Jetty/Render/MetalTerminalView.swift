@@ -8,7 +8,6 @@ import simd
 public final class MetalTerminalView: MTKView, MTKViewDelegate {
     public let session: TerminalSession
     public var config: AppConfig
-    public var padPt: CGFloat = 4
     public var onNewWindow: (() -> Void)?
     public var onReloadConfig: (() -> Void)?
     public var onOpenConfig: (() -> Void)?
@@ -159,7 +158,10 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let bs = max(backingScale, 1)
         let cw = CGFloat(cellWPx) / bs
         let ch = CGFloat(cellHPx) / bs
-        return NSSize(width: CGFloat(cols) * cw + 2 * padPt, height: CGFloat(rows) * ch + 2 * padPt)
+        return NSSize(
+            width: CGFloat(cols) * cw + config.windowPaddingLeft + config.windowPaddingRight,
+            height: CGFloat(rows) * ch + config.windowPaddingTop + config.windowPaddingBottom
+        )
     }
 
     public override var acceptsFirstResponder: Bool { true }
@@ -1065,13 +1067,12 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     /// Pad plus `safeAreaInsets` so the titlebar / traffic lights do not cover row 0.
     private func gridInsetsPx(backingScale: CGFloat) -> NSEdgeInsets {
         let sa = safeAreaInsets
-        let p = padPt
         let bs = max(backingScale, 1)
         return NSEdgeInsets(
-            top: (p + sa.top) * bs,
-            left: (p + sa.left) * bs,
-            bottom: (p + sa.bottom) * bs,
-            right: (p + sa.right) * bs
+            top: (config.windowPaddingTop + sa.top) * bs,
+            left: (config.windowPaddingLeft + sa.left) * bs,
+            bottom: (config.windowPaddingBottom + sa.bottom) * bs,
+            right: (config.windowPaddingRight + sa.right) * bs
         )
     }
 
@@ -1130,6 +1131,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             applicationCursor: session.screen.decckm,
             modifyOtherKeys: session.screen.modifyOtherKeys,
             altSendsEscape: session.screen.altSendsEscape,
+            macosOptionAsAlt: config.optionAsAltActive(event),
             backarrow: session.screen.backarrow
         )
         session.lock.unlock()
@@ -2436,8 +2438,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let p = convert(event.locationInWindow, from: nil)
         let bs = max(window?.backingScaleFactor ?? 1, 1)
         let sa = safeAreaInsets
-        let x = Int(((p.x - padPt - sa.left) * bs).rounded())
-        let y = Int(((bounds.height - p.y - padPt - sa.top) * bs).rounded())
+        let x = Int(((p.x - config.windowPaddingLeft - sa.left) * bs).rounded())
+        let y = Int(((bounds.height - p.y - config.windowPaddingTop - sa.top) * bs).rounded())
         return (x, y)
     }
 
@@ -2447,8 +2449,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let sa = safeAreaInsets
         let cw = CGFloat(cellWPx) / bs
         let ch = CGFloat(cellHPx) / bs
-        let x = Int(floor((p.x - padPt - sa.left) / cw))
-        let yFromTop = Int(floor((bounds.height - p.y - padPt - sa.top) / ch))
+        let x = Int(floor((p.x - config.windowPaddingLeft - sa.left) / cw))
+        let yFromTop = Int(floor((bounds.height - p.y - config.windowPaddingTop - sa.top) / ch))
         return (
             max(0, min(max(0, cols - 1), x)),
             max(0, min(max(0, rows - 1), yFromTop))
@@ -2466,8 +2468,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let sa = safeAreaInsets
         let cw = CGFloat(cellWPx) / bs
         let ch = CGFloat(cellHPx) / bs
-        let x = Int(floor((p.x - padPt - sa.left) / cw))
-        let yFromTop = Int(floor((bounds.height - p.y - padPt - sa.top) / ch))
+        let x = Int(floor((p.x - config.windowPaddingLeft - sa.left) / cw))
+        let yFromTop = Int(floor((bounds.height - p.y - config.windowPaddingTop - sa.top) / ch))
         session.lock.lock()
         let cols = session.screen.cols
         let sb = session.screen.viewportHistoryCount
@@ -2660,8 +2662,8 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let start = inAlt ? sb : Int(scrollPhysics.integerRow(maxOffset: Double(sb)))
         let liveOrigin = inAlt ? 0 : sb - start
         let visRows = inAlt ? 0.0 : scrollPhysics.visualOffsetRows(maxOffset: Double(sb))
-        let x = padPt + sa.left + CGFloat(cx) * cw
-        let yFromTop = padPt + sa.top + (CGFloat(cy + liveOrigin) + visRows) * ch
+        let x = config.windowPaddingLeft + sa.left + CGFloat(cx) * cw
+        let yFromTop = config.windowPaddingTop + sa.top + (CGFloat(cy + liveOrigin) + visRows) * ch
         return NSRect(x: x, y: bounds.height - yFromTop - ch, width: cw, height: ch)
     }
 
@@ -2825,10 +2827,13 @@ extension MetalTerminalView: @preconcurrency NSTextInputClient {
         let altEsc = session.screen.altSendsEscape
         let modify = session.screen.modifyOtherKeys
         session.lock.unlock()
+        let ev = NSApp.currentEvent
+        let optionAsAlt = ev.map { config.optionAsAltActive($0) } ?? false
         if XtermKeyEncoder.insertTextDefersToEncoder(
             composing: composing,
-            event: NSApp.currentEvent,
+            event: ev,
             altSendsEscape: altEsc,
+            macosOptionAsAlt: optionAsAlt,
             modifyOtherKeys: modify
         ) {
             return

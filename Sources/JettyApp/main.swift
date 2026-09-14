@@ -384,10 +384,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             cols: config.launchCols,
             rows: config.launchRows
         )
+        let vis = screen.visibleFrame
+        let content = NSSize(
+            width: min(grid.width, vis.width),
+            height: min(grid.height, vis.height)
+        )
         let bg = session.screen.defaultBgRGB
 
         let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: grid),
+            contentRect: NSRect(origin: .zero, size: content),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
