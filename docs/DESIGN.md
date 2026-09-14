@@ -433,9 +433,9 @@ Pen holds `fg`, `bg`, `ul_color` (rare; `COLOR_DEFAULT` means “use fg”), `at
 
 Cube 16–231: for `n` in 0..5, channel = `n==0 ? 0 : n*40+55` (Ghostty `color.zig` lines 21–36). Gray 232–255: `8 + 10*(i-232)`.
 
-Config may overlay `palette-0`…`palette-15` only. OSC 4 can change any of 0–255. OSC 104 / `oc` restore compiled defaults then re-apply the config 0–15 overlay (startup config is the reset baseline for ANSI; 16–255 return to the cube). **v1 lock:** OSC 104 / RIS restore compiled xterm cube **plus** the config 0–15 overlay loaded at process start (config is not re-read).
+Config may overlay `palette-0`…`palette-15` or Ghostty `palette = N=#rrggbb` for N in 0–15. OSC 4 can change any of 0–255. OSC 104 / `oc` restore compiled defaults then re-apply the config 0–15 overlay. OSC 110 / 111 / 112 restore config `foreground` / `background` / `cursor-color` (compiled `#CCCCCC` / `#000000` / cell-fg when unset). Reload re-reads config. RIS uses the same reset baseline.
 
-Default fg paint = OSC 10 or palette[7]. Default bg paint = OSC 11 or palette[0]. Cursor color = OSC 12 or fg.
+Default fg paint = OSC 10 or config `foreground` (else compiled `#CCCCCC`). Default bg paint = OSC 11 or config `background` (else compiled `#000000`). Cursor color = OSC 12 or config `cursor-color` (else fg).
 
 ### Grid, alt screen, scrollback, damage
 
@@ -746,7 +746,7 @@ Terminate on BEL or ST (`ESC \`). Cap 4 KiB then ignore-until-ST.
 | 8 | Hyperlink `8;id=…;URI` / `8;;` end (`osc/parsers/hyperlink.zig`). `extra` + rare store. **Do not auto-open.** |
 | 52 | `Ms`. `52;c;<base64>` write; `52;c;?` read. Kinds `c` / `p` / `s` all map to **`NSPasteboard.general`** (one macOS pasteboard). Unknown kind → `c`. See [Security](#security--privacy-considerations). |
 | 133 | Semantic prompt (`osc/parsers/semantic_prompt.zig` actions L/A/N/P/B/I/C/D). **v1: parse and store, no UI** (no jump-to-prompt, no click, no copy-last-output). Marks are keyed by **absolute line id** `lines_scrolled + y`, not a live row index (IND/`sb_push` would stale a row table). Options `aid` and `cl` are stored as unparsed bytes on the mark; `click_events` is ignored. Cap 4096 marks, drop oldest on overflow. Not a cell field (Ghostty `semantic_content` does not exist here). Follow-on PR 25: jump-to-prompt. Copy-last-output still out. |
-| 104 / 110 / 111 | Reset palette / default fg / default bg. |
+| 104 / 110 / 111 / 112 | Reset palette / default fg / default bg / cursor to config baseline. |
 | unknown | Drain until BEL/ST. |
 
 OSC 4 `rgb:RR/GG/BB` in `initc` (terminfo uses `%2.2X` 8-bit). Accept `rgb:RRRR/GGGG/BBBB`, `#RRGGBB`, and `?`.
@@ -961,12 +961,15 @@ scrollback-lines = 50000
 copy-on-select = true
 osc52-write = allow          # allow | deny
 osc52-read = ask             # ask | deny  (no silent allow in v1)
-palette-0 = #000000
-# …
+theme = Catppuccin Mocha     # ~/.config/jetty/themes or ~/.config/ghostty/themes
+background = #1e1e2e
+foreground = #cdd6f4
+cursor-color = #f5e0dc
+palette = 0=#11111b
 palette-15 = #ffffff
 ```
 
-No `console-mode`, `vt-count`, `theme`, `web-extension`, `scale`. Missing file → defaults.
+Ghostty theme files are the same `key = value` syntax. `theme` loads one (or `light:Name,dark:Name` from system appearance). Config keys after the theme win. `cursor-text` / `selection-*` are ignored. No `console-mode`, `vt-count`, `web-extension`, `scale`. Missing file → defaults.
 
 ### Unicode width
 

@@ -65,6 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var device: MTLDevice?
     var config: AppConfig?
     var terms: [TermWindow] = []
+    private var appearanceObserver: NSObjectProtocol?
     /// True after `terminateLater` until the quit panel replies.
     private var quitTerminatePending = false
 
@@ -80,6 +81,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Osc5522StoredPasswords.process = Osc5522StoredPasswords.load()
         EmbeddedFonts.registerIfNeeded()
         DesktopNotify.install()
+        appearanceObserver = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("AppleInterfaceThemeChangedNotification"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.reloadConfig(nil)
+            }
+        }
 
         let menu = NSMenu()
         let appMenu = NSMenuItem()
@@ -355,7 +365,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             cellHeightPx: UInt32(metrics.cellHeightPx),
             scrollbackCapRows: config.scrollbackLines
         )
-        session.screen.setPaletteOverlay(config.paletteOverlay, mask: config.paletteOverlayMask)
+        session.screen.applyConfigColors(config)
         let view = MetalTerminalView(
             session: session,
             config: config,

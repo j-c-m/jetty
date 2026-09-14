@@ -58,6 +58,7 @@ typedef struct jt_scr {
     uint32_t pal_overlay[16];
     uint16_t pal_overlay_mask;
     uint32_t default_fg, default_bg, cursor_color;
+    uint32_t cfg_fg, cfg_bg, cfg_cursor;
     uint16_t mouse_event;
     uint8_t mouse_sgr;
     uint8_t mouse_sgr_pixels;
@@ -163,6 +164,7 @@ uint32_t jt_sync_epoch(const jt_scr *s);
 void jt_sync_timeout_clear(jt_scr *s);
 void jt_pools_reclaim(jt_scr *s);
 void jt_scr_set_palette_overlay(jt_scr *s, const uint32_t rgb16[16], uint16_t mask);
+void jt_scr_set_color_defaults(jt_scr *s, uint32_t fg, uint32_t bg, uint32_t cursor);
 void jt_scr_palette_reset(jt_scr *s);
 void jt_scr_palette_reset_index(jt_scr *s, int idx);
 void jt_sgr_apply(jt_scr *s, const uint16_t *p, int n, uint32_t seps);

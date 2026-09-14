@@ -1,4 +1,5 @@
 import CoreText
+import CVt
 import XCTest
 @testable import Jetty
 
@@ -30,6 +31,9 @@ final class ConfigTests: XCTestCase {
             notify-on-command-finish-after = 10s
             notify-on-command-finish-action = no-bell,notify
             unknown-key = ignored
+            background = #1e1e2e
+            foreground = cdd6f4
+            cursor-color = #f5e0dc
             """)
         XCTAssertEqual(c.fontFamily, "Menlo")
         XCTAssertEqual(c.fontSize, 18)
@@ -68,6 +72,104 @@ final class ConfigTests: XCTestCase {
         XCTAssertFalse(AppConfig.parse("kitty-graphics = off").kittyGraphics)
         XCTAssertFalse(AppConfig.parse("kitty-graphics = no").kittyGraphics)
         XCTAssertTrue(AppConfig.parse("kitty-graphics = on").kittyGraphics)
+        XCTAssertEqual(c.background, 0x1E1E2E)
+        XCTAssertEqual(c.foreground, 0xCDD6F4)
+        XCTAssertEqual(c.cursorColor, 0xF5E0DC)
+        XCTAssertEqual(c.packedForeground, COLOR_RGB | 0xCDD6F4)
+        XCTAssertEqual(c.packedBackground, COLOR_RGB | 0x1E1E2E)
+        XCTAssertEqual(c.packedCursor, COLOR_RGB | 0xF5E0DC)
+    }
+
+    func testGhosttyThemeFileKeys() {
+        let c = AppConfig.parse("""
+            palette = 0=#11111b
+            palette = 1=#f38ba8
+            palette = 15 = #cdd6f4
+            background = #1e1e2e
+            foreground = #cdd6f4
+            cursor-color = #f5e0dc
+            cursor-text = #1e1e2e
+            selection-background = #585b70
+            selection-foreground = #cdd6f4
+            """)
+        XCTAssertEqual(c.background, 0x1E1E2E)
+        XCTAssertEqual(c.foreground, 0xCDD6F4)
+        XCTAssertEqual(c.cursorColor, 0xF5E0DC)
+        XCTAssertEqual(c.paletteOverlay[0], 0x11111B)
+        XCTAssertEqual(c.paletteOverlay[1], 0xF38BA8)
+        XCTAssertEqual(c.paletteOverlay[15], 0xCDD6F4)
+        XCTAssertEqual(
+            c.paletteOverlayMask,
+            UInt16(1 << 0) | UInt16(1 << 1) | UInt16(1 << 15)
+        )
+        XCTAssertEqual(AppConfig.parseColor("#abc"), 0xAABBCC)
+        XCTAssertEqual(AppConfig.parseColor("red"), 0xFF0000)
+        XCTAssertEqual(AppConfig.parseColor("\"#ff0000\""), 0xFF0000)
+        XCTAssertNil(AppConfig.parse("foreground =").foreground)
+        XCTAssertNil(AppConfig.parse("cursor-color = cell-foreground").cursorColor)
+        XCTAssertEqual(AppConfig.parse("").packedForeground, COLOR_RGB | 0xCCCCCC)
+        XCTAssertEqual(AppConfig.parse("").packedBackground, COLOR_RGB | 0x000000)
+        XCTAssertEqual(AppConfig.parse("").packedCursor, COLOR_DEFAULT)
+    }
+
+    func testThemeLoadsThenConfigOverrides() {
+        let files = [
+            "mocha": """
+                background = #1e1e2e
+                foreground = #cdd6f4
+                palette = 0=#11111b
+                font-size = 12
+                theme = ignored
+                """,
+            "day": "background = #ffffff\nforeground = #111111\n",
+            "night": "background = #000000\nforeground = #eeeeee\n",
+        ]
+        let c = AppConfig.parse(
+            """
+            theme = mocha
+            background = #ff0000
+            """,
+            loadTheme: { files[$0] }
+        )
+        XCTAssertEqual(c.background, 0xFF0000)
+        XCTAssertEqual(c.foreground, 0xCDD6F4)
+        XCTAssertEqual(c.paletteOverlay[0], 0x11111B)
+        XCTAssertEqual(c.fontSize, 12)
+
+        let dark = AppConfig.parse(
+            "theme = light:day,dark:night",
+            dark: true,
+            loadTheme: { files[$0] }
+        )
+        XCTAssertEqual(dark.background, 0x000000)
+        XCTAssertEqual(dark.foreground, 0xEEEEEE)
+        let light = AppConfig.parse(
+            "theme = dark:night, light:day",
+            dark: false,
+            loadTheme: { files[$0] }
+        )
+        XCTAssertEqual(light.background, 0xFFFFFF)
+        XCTAssertEqual(
+            AppConfig.resolveThemeName("light:Rose Pine Dawn,dark:Rose Pine", dark: false),
+            "Rose Pine Dawn"
+        )
+        XCTAssertEqual(
+            AppConfig.parse("theme = missing", loadTheme: { _ in nil }).background,
+            nil
+        )
+    }
+
+    func testThemeAbsolutePath() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jetty-theme-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("Catppuccin Mocha")
+        try "background = #1e1e2e\npalette = 0=#010203\n"
+            .write(to: url, atomically: true, encoding: .utf8)
+        let c = AppConfig.parse("theme = \(url.path)")
+        XCTAssertEqual(c.background, 0x1E1E2E)
+        XCTAssertEqual(c.paletteOverlay[0], 0x010203)
     }
 
     func testOpenConfigShellCommandUsesEditor() {
@@ -134,6 +236,9 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(c.adjustCellWidth, 0)
         XCTAssertEqual(c.paletteOverlayMask, 0)
         XCTAssertEqual(c.backgroundOpacity, 1)
+        XCTAssertNil(c.foreground)
+        XCTAssertNil(c.background)
+        XCTAssertNil(c.cursorColor)
         XCTAssertTrue(c.linkURL)
         XCTAssertTrue(c.desktopNotifications)
         XCTAssertTrue(c.progressStyle)

@@ -318,6 +318,15 @@ public final class Screen {
         }
     }
 
+    public func setColorDefaults(fg: UInt32, bg: UInt32, cursor: UInt32) {
+        jt_scr_set_color_defaults(implPtr, fg, bg, cursor)
+    }
+
+    public func applyConfigColors(_ c: AppConfig) {
+        setPaletteOverlay(c.paletteOverlay, mask: c.paletteOverlayMask)
+        setColorDefaults(fg: c.packedForeground, bg: c.packedBackground, cursor: c.packedCursor)
+    }
+
     @discardableResult
     public func takeDirty(into dest: UnsafeMutablePointer<UInt8>, count: Int) -> UInt32 {
         var gen: UInt32 = 0

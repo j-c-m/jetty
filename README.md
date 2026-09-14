@@ -38,7 +38,9 @@ JETTY_SIGN_IDENTITY=... JETTY_NOTARY_PROFILE=... ./scripts/notarize.sh
 
 ## Config
 
-`~/.config/jetty/config`. Keys and internals: [docs/DESIGN.md](docs/DESIGN.md),
+`~/.config/jetty/config`. Ghostty theme files work (`theme =`, `background`,
+`foreground`, `cursor-color`, `palette = N=`). Keys and internals:
+[docs/DESIGN.md](docs/DESIGN.md),
 [docs/DESIGN-follow-on.md](docs/DESIGN-follow-on.md),
 [docs/DESIGN-kitty-graphics.md](docs/DESIGN-kitty-graphics.md),
 [docs/DESIGN-osc-5522.md](docs/DESIGN-osc-5522.md).

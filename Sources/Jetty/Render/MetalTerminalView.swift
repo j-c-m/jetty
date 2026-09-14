@@ -1642,10 +1642,11 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             setProgress(state: 0, percent: 0)
         }
         session.lock.lock()
-        session.screen.setPaletteOverlay(next.paletteOverlay, mask: next.paletteOverlayMask)
+        session.screen.applyConfigColors(next)
         session.screen.setKittyGraphics(next.kittyGraphics)
         session.screen.setOsc52ReadAsk(session.osc52ReadAsk)
         session.lock.unlock()
+        chromePacked = .max
         let bs = max(window?.backingScaleFactor ?? lastBackingScale, 1)
         lastBackingScale = bs
         replaceMetrics(measureMetrics(fontSize: next.fontSize, backingScale: bs))

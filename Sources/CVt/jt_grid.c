@@ -62,9 +62,9 @@ static void apply_pal_overlay(jt_scr *s) {
 
 static void jt_defaults_reset(jt_scr *s) {
     jt_scr_palette_reset(s);
-    s->default_fg = COLOR_RGB | 0xCCCCCCu;
-    s->default_bg = COLOR_RGB | 0x000000u;
-    s->cursor_color = COLOR_DEFAULT;
+    s->default_fg = s->cfg_fg;
+    s->default_bg = s->cfg_bg;
+    s->cursor_color = s->cfg_cursor;
 }
 
 void jt_scr_set_palette_overlay(jt_scr *s, const uint32_t rgb16[16], uint16_t mask) {
@@ -72,6 +72,16 @@ void jt_scr_set_palette_overlay(jt_scr *s, const uint32_t rgb16[16], uint16_t ma
     if (rgb16) memcpy(s->pal_overlay, rgb16, sizeof(s->pal_overlay));
     else memset(s->pal_overlay, 0, sizeof(s->pal_overlay));
     s->pal_overlay_mask = mask;
+}
+
+void jt_scr_set_color_defaults(jt_scr *s, uint32_t fg, uint32_t bg, uint32_t cursor) {
+    if (!s) return;
+    s->cfg_fg = fg;
+    s->cfg_bg = bg;
+    s->cfg_cursor = cursor;
+    s->default_fg = fg;
+    s->default_bg = bg;
+    s->cursor_color = cursor;
 }
 
 void jt_scr_palette_reset(jt_scr *s) {
@@ -1684,6 +1694,9 @@ void jt_scr_init(jt_scr *s, int32_t cols, int32_t rows, int32_t sb_cap) {
     s->alt_sends_escape = 1;
     s->pen.fg = COLOR_DEFAULT;
     s->pen.bg = COLOR_DEFAULT;
+    s->cfg_fg = JT_COMPILED_FG;
+    s->cfg_bg = JT_COMPILED_BG;
+    s->cfg_cursor = COLOR_DEFAULT;
     jt_defaults_reset(s);
     jt_pools_init(s);
     int32_t cap = sb_cap < 0 ? 0 : sb_cap;

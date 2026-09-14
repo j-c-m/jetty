@@ -444,19 +444,19 @@ void jt_osc_dispatch(jt_scr *s, const jt_vt_host *h, const uint8_t *p, int n) {
         break;
     case 110:
         if (s) {
-            s->default_fg = COLOR_RGB | 0xCCCCCCu;
+            s->default_fg = s->cfg_fg;
             if (h && h->palette_changed) h->palette_changed(h->ctx);
         }
         break;
     case 111:
         if (s) {
-            s->default_bg = COLOR_RGB | 0x000000u;
+            s->default_bg = s->cfg_bg;
             if (h && h->palette_changed) h->palette_changed(h->ctx);
         }
         break;
     case 112:
         if (s) {
-            s->cursor_color = COLOR_DEFAULT;
+            s->cursor_color = s->cfg_cursor;
             if (h && h->palette_changed) h->palette_changed(h->ctx);
         }
         break;

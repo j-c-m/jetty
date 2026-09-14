@@ -1,6 +1,11 @@
+import CVt
 import Foundation
 
 public struct AppConfig: Sendable {
+    /// Compiled default fg/bg when config omits `foreground` / `background`.
+    public static let compiledForeground: UInt32 = 0xCCCCCC
+    public static let compiledBackground: UInt32 = 0x000000
+
     public var fontFamily: String? = nil
     public var fontSize: CGFloat = 20
     public var ligatures: Ligatures = .programming
@@ -8,6 +13,10 @@ public struct AppConfig: Sendable {
     public var adjustCellWidth: Int = 0
     public var adjustCellHeight: Int = 0
     public var backgroundOpacity: CGFloat = 1
+    /// Default fg/bg/cursor as 0xRRGGBB. Nil keeps compiled / DECSCUSR-default.
+    public var foreground: UInt32? = nil
+    public var background: UInt32? = nil
+    public var cursorColor: UInt32? = nil
     public var paletteOverlay: [UInt32] = Array(repeating: 0, count: 16)
     public var paletteOverlayMask: UInt16 = 0
     public var linkURL: Bool = true
@@ -54,84 +63,40 @@ public struct AppConfig: Sendable {
         case ask, deny
     }
 
+    /// Tagged `COLOR_RGB` for the C screen. Compiled defaults when unset.
+    public var packedForeground: UInt32 { COLOR_RGB | (foreground ?? Self.compiledForeground) }
+    public var packedBackground: UInt32 { COLOR_RGB | (background ?? Self.compiledBackground) }
+    public var packedCursor: UInt32 {
+        if let rgb = cursorColor { return COLOR_RGB | rgb }
+        return COLOR_DEFAULT
+    }
+
+    public static var systemDark: Bool {
+        UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
+    }
+
     public static func load() -> AppConfig {
         let url = configURL()
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return AppConfig() }
         return parse(text)
     }
 
-    public static func parse(_ text: String) -> AppConfig {
+    public static func parse(
+        _ text: String,
+        dark: Bool = systemDark,
+        loadTheme: ((String) -> String?)? = nil
+    ) -> AppConfig {
+        let pairs = keyValues(text)
         var c = AppConfig()
-        for raw in text.split(whereSeparator: \.isNewline) {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            if line.isEmpty || line.hasPrefix("#") { continue }
-            let parts = line.split(separator: "=", maxSplits: 1).map {
-                $0.trimmingCharacters(in: .whitespaces)
-            }
-            guard parts.count == 2 else { continue }
-            let key = parts[0]
-            let val = parts[1]
-            switch key {
-            case "font-family":
-                let name = val.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-                c.fontFamily = name.isEmpty ? nil : name
-            case "font-size":
-                if let n = Double(val) { c.fontSize = CGFloat(min(72, max(8, n))) }
-            case "ligatures":
-                if let v = parseLigatures(val) { c.ligatures = v }
-            case "font-feature":
-                c.fontFeature = val
-            case "adjust-cell-width":
-                if let n = Int(val) { c.adjustCellWidth = n }
-            case "adjust-cell-height":
-                if let n = Int(val) { c.adjustCellHeight = n }
-            case "background-opacity":
-                if let n = Double(val) { c.backgroundOpacity = CGFloat(min(1, max(0, n))) }
-            case "link-url":
-                c.linkURL = parseBool(val)
-            case "desktop-notifications":
-                c.desktopNotifications = parseBool(val)
-            case "progress-style":
-                c.progressStyle = parseBool(val)
-            case "macos-auto-secure-input":
-                c.macosAutoSecureInput = parseBool(val)
-            case "macos-applescript":
-                c.macosAppleScript = parseBool(val)
-            case "scrollback-lines":
-                if let n = Int(val), n >= 0 { c.scrollbackLines = n }
-            case "copy-on-select":
-                c.copyOnSelect = parseBool(val)
-            case "osc52-write":
-                c.osc52Write = val == "deny" ? .deny : .allow
-            case "osc52-read":
-                c.osc52Read = val == "deny" ? .deny : .ask
-            case "keybind":
-                if val == "clear" {
-                    c.keybinds.removeAll()
-                } else if !val.isEmpty {
-                    c.keybinds.append(val)
-                }
-            case "kitty-graphics":
-                c.kittyGraphics = parseOnOff(val)
-            case "shell-integration":
-                if let v = parseShellIntegration(val) { c.shellIntegration = v }
-            case "notify-on-command-finish":
-                if let v = parseNotifyWhen(val) { c.notifyOnCommandFinish = v }
-            case "notify-on-command-finish-after":
-                if let n = parseSeconds(val) { c.notifyOnCommandFinishAfter = n }
-            case "notify-on-command-finish-action":
-                parseNotifyAction(val, into: &c)
-            default:
-                if key.hasPrefix("palette-"),
-                   let idx = Int(key.dropFirst("palette-".count)),
-                   (0...15).contains(idx),
-                   let rgb = parseHexRGB(val)
-                {
-                    c.paletteOverlay[idx] = rgb
-                    c.paletteOverlayMask |= UInt16(1 << idx)
-                }
+        if let spec = lastValue(pairs, key: "theme"), !spec.isEmpty,
+           let name = resolveThemeName(spec, dark: dark)
+        {
+            let loader = loadTheme ?? readThemeFile
+            if let body = loader(name) {
+                apply(keyValues(body), into: &c)
             }
         }
+        apply(pairs, into: &c)
         return c
     }
 
@@ -326,9 +291,238 @@ public struct AppConfig: Sendable {
     }
 
     public static func parseHexRGB(_ raw: String) -> UInt32? {
-        var s = raw.trimmingCharacters(in: .whitespaces)
+        parseColor(raw)
+    }
+
+    /// Ghostty color: `#RGB`, `#RRGGBB`, `RRGGBB`, or a small X11 name set.
+    public static func parseColor(_ raw: String) -> UInt32? {
+        var s = unquote(raw)
+        if s.isEmpty { return nil }
+        if let named = x11Color[s.lowercased()] { return named }
         if s.hasPrefix("#") { s.removeFirst() }
-        guard s.count == 6, let v = UInt32(s, radix: 16) else { return nil }
+        guard s.unicodeScalars.allSatisfy({ $0.isASCII && isHex($0) }) else { return nil }
+        switch s.count {
+        case 3:
+            let chars = Array(s)
+            let exp = String([chars[0], chars[0], chars[1], chars[1], chars[2], chars[2]])
+            return UInt32(exp, radix: 16)
+        case 6:
+            return UInt32(s, radix: 16)
+        default:
+            return nil
+        }
+    }
+
+    static func unquote(_ raw: String) -> String {
+        var s = raw.trimmingCharacters(in: .whitespaces)
+        if s.count >= 2 {
+            if (s.hasPrefix("\"") && s.hasSuffix("\"")) || (s.hasPrefix("'") && s.hasSuffix("'")) {
+                s = String(s.dropFirst().dropLast())
+            }
+        }
+        return s.trimmingCharacters(in: .whitespaces)
+    }
+
+    static func keyValues(_ text: String) -> [(String, String)] {
+        var out: [(String, String)] = []
+        for raw in text.split(whereSeparator: \.isNewline) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty || line.hasPrefix("#") { continue }
+            let parts = line.split(separator: "=", maxSplits: 1).map {
+                $0.trimmingCharacters(in: .whitespaces)
+            }
+            guard parts.count == 2 else { continue }
+            out.append((parts[0], parts[1]))
+        }
+        return out
+    }
+
+    static func lastValue(_ pairs: [(String, String)], key: String) -> String? {
+        var found: String?
+        for (k, v) in pairs where k == key { found = v }
+        return found
+    }
+
+    /// Ghostty `light:Name,dark:Name` (order free) or a single theme name.
+    public static func resolveThemeName(_ raw: String, dark: Bool) -> String? {
+        let v = unquote(raw)
+        if v.isEmpty { return nil }
+        var light: String?
+        var darkName: String?
+        for part in v.split(separator: ",") {
+            let p = part.trimmingCharacters(in: .whitespaces)
+            let lower = p.lowercased()
+            if lower.hasPrefix("light:") {
+                light = unquote(String(p.dropFirst(6)))
+            } else if lower.hasPrefix("dark:") {
+                darkName = unquote(String(p.dropFirst(5)))
+            }
+        }
+        if let light, let darkName {
+            let name = dark ? darkName : light
+            return name.isEmpty ? nil : name
+        }
         return v
     }
+
+    public static func themeURL(named name: String) -> URL? {
+        let trimmed = unquote(name)
+        if trimmed.isEmpty { return nil }
+        if trimmed.hasPrefix("/") {
+            let u = URL(fileURLWithPath: trimmed)
+            return FileManager.default.isReadableFile(atPath: u.path) ? u : nil
+        }
+        if trimmed.contains("/") { return nil }
+        for dir in themeSearchDirs() {
+            let u = dir.appendingPathComponent(trimmed)
+            if FileManager.default.isReadableFile(atPath: u.path) { return u }
+        }
+        return nil
+    }
+
+    public static func readThemeFile(_ name: String) -> String? {
+        guard let url = themeURL(named: name) else { return nil }
+        return try? String(contentsOf: url, encoding: .utf8)
+    }
+
+    static func themeSearchDirs() -> [URL] {
+        let jetty = configURL().deletingLastPathComponent().appendingPathComponent("themes")
+        let base = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
+            ?? (NSHomeDirectory() + "/.config")
+        let ghostty = URL(fileURLWithPath: base).appendingPathComponent("ghostty/themes")
+        return [jetty, ghostty]
+    }
+
+    static func apply(_ pairs: [(String, String)], into c: inout AppConfig) {
+        for (key, val) in pairs {
+            apply(key: key, value: val, into: &c)
+        }
+    }
+
+    static func apply(key: String, value val: String, into c: inout AppConfig) {
+        switch key {
+        case "theme":
+            break
+        case "font-family":
+            let name = val.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            c.fontFamily = name.isEmpty ? nil : name
+        case "font-size":
+            if let n = Double(val) { c.fontSize = CGFloat(min(72, max(8, n))) }
+        case "ligatures":
+            if let v = parseLigatures(val) { c.ligatures = v }
+        case "font-feature":
+            c.fontFeature = val
+        case "adjust-cell-width":
+            if let n = Int(val) { c.adjustCellWidth = n }
+        case "adjust-cell-height":
+            if let n = Int(val) { c.adjustCellHeight = n }
+        case "background-opacity":
+            if let n = Double(val) { c.backgroundOpacity = CGFloat(min(1, max(0, n))) }
+        case "background":
+            if val.isEmpty { c.background = nil }
+            else if let rgb = parseColor(val) { c.background = rgb }
+        case "foreground":
+            if val.isEmpty { c.foreground = nil }
+            else if let rgb = parseColor(val) { c.foreground = rgb }
+        case "cursor-color":
+            let v = unquote(val)
+            if v.isEmpty || v.lowercased() == "cell-foreground" {
+                c.cursorColor = nil
+            } else if let rgb = parseColor(v) {
+                c.cursorColor = rgb
+            }
+        case "palette":
+            if val.isEmpty {
+                c.paletteOverlay = Array(repeating: 0, count: 16)
+                c.paletteOverlayMask = 0
+            } else {
+                applyPaletteEntry(val, into: &c)
+            }
+        case "link-url":
+            c.linkURL = parseBool(val)
+        case "desktop-notifications":
+            c.desktopNotifications = parseBool(val)
+        case "progress-style":
+            c.progressStyle = parseBool(val)
+        case "macos-auto-secure-input":
+            c.macosAutoSecureInput = parseBool(val)
+        case "macos-applescript":
+            c.macosAppleScript = parseBool(val)
+        case "scrollback-lines":
+            if let n = Int(val), n >= 0 { c.scrollbackLines = n }
+        case "copy-on-select":
+            c.copyOnSelect = parseBool(val)
+        case "osc52-write":
+            c.osc52Write = val == "deny" ? .deny : .allow
+        case "osc52-read":
+            c.osc52Read = val == "deny" ? .deny : .ask
+        case "keybind":
+            if val == "clear" {
+                c.keybinds.removeAll()
+            } else if !val.isEmpty {
+                c.keybinds.append(val)
+            }
+        case "kitty-graphics":
+            c.kittyGraphics = parseOnOff(val)
+        case "shell-integration":
+            if let v = parseShellIntegration(val) { c.shellIntegration = v }
+        case "notify-on-command-finish":
+            if let v = parseNotifyWhen(val) { c.notifyOnCommandFinish = v }
+        case "notify-on-command-finish-after":
+            if let n = parseSeconds(val) { c.notifyOnCommandFinishAfter = n }
+        case "notify-on-command-finish-action":
+            parseNotifyAction(val, into: &c)
+        default:
+            if key.hasPrefix("palette-"),
+               let idx = Int(key.dropFirst("palette-".count)),
+               (0...15).contains(idx)
+            {
+                if val.isEmpty {
+                    c.paletteOverlayMask &= ~UInt16(1 << idx)
+                } else if let rgb = parseColor(val) {
+                    c.paletteOverlay[idx] = rgb
+                    c.paletteOverlayMask |= UInt16(1 << idx)
+                }
+            }
+        }
+    }
+
+    /// Ghostty `N=COLOR`. Indices 16–255 are ignored (0–15 overlay only).
+    static func applyPaletteEntry(_ raw: String, into c: inout AppConfig) {
+        guard let eq = raw.firstIndex(of: "=") else { return }
+        let idxRaw = raw[..<eq].trimmingCharacters(in: .whitespaces)
+        let colorRaw = raw[raw.index(after: eq)...].trimmingCharacters(in: .whitespaces)
+        guard let idx = parsePaletteIndex(idxRaw), (0...15).contains(idx),
+              let rgb = parseColor(colorRaw)
+        else { return }
+        c.paletteOverlay[idx] = rgb
+        c.paletteOverlayMask |= UInt16(1 << idx)
+    }
+
+    static func parsePaletteIndex(_ raw: String) -> Int? {
+        let t = raw.trimmingCharacters(in: .whitespaces)
+        if t.hasPrefix("0x") || t.hasPrefix("0X") { return Int(t.dropFirst(2), radix: 16) }
+        if t.hasPrefix("0b") || t.hasPrefix("0B") { return Int(t.dropFirst(2), radix: 2) }
+        if t.hasPrefix("0o") || t.hasPrefix("0O") { return Int(t.dropFirst(2), radix: 8) }
+        return Int(t)
+    }
+
+    static func isHex(_ u: UnicodeScalar) -> Bool {
+        (u >= "0" && u <= "9") || (u >= "a" && u <= "f") || (u >= "A" && u <= "F")
+    }
+
+    static let x11Color: [String: UInt32] = [
+        "black": 0x000000,
+        "white": 0xFFFFFF,
+        "red": 0xFF0000,
+        "green": 0x00FF00,
+        "blue": 0x0000FF,
+        "yellow": 0xFFFF00,
+        "cyan": 0x00FFFF,
+        "magenta": 0xFF00FF,
+        "gray": 0xBEBEBE,
+        "grey": 0xBEBEBE,
+        "orange": 0xFFA500,
+        "purple": 0xA020F0,
+    ]
 }

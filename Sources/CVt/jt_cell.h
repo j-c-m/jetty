@@ -24,6 +24,8 @@ _Static_assert(offsetof(Cell, extra) == 14, "Cell field order");
 #define COLOR_DEFAULT 0u
 #define COLOR_INDEXED (1u << COLOR_TYPE_SHIFT)
 #define COLOR_RGB (2u << COLOR_TYPE_SHIFT)
+#define JT_COMPILED_FG (COLOR_RGB | 0xCCCCCCu)
+#define JT_COMPILED_BG (COLOR_RGB | 0x000000u)
 
 #define CONTENT_PAYLOAD 0x001FFFFFu
 #define CONTENT_KIND_SHIFT 21

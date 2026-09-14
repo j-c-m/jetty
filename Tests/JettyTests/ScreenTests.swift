@@ -39,6 +39,41 @@ final class ScreenTests: XCTestCase {
         XCTAssertEqual(s.paletteColor(15), RGB(r: 0xF2, g: 0xF0, b: 0xEC))
     }
 
+    func testColorDefaultsSurviveOscAndRis() {
+        let s = Screen(cols: 8, rows: 2, scrollbackCapRows: 0)
+        let cfg = AppConfig.parse("""
+            foreground = #aabbcc
+            background = #010203
+            cursor-color = #112233
+            palette = 0=#445566
+            """)
+        s.applyConfigColors(cfg)
+        XCTAssertEqual(s.defaultFgRGB, RGB(r: 0xAA, g: 0xBB, b: 0xCC))
+        XCTAssertEqual(s.defaultBgRGB, RGB(r: 0x01, g: 0x02, b: 0x03))
+        XCTAssertEqual(s.cursorRGB, RGB(r: 0x11, g: 0x22, b: 0x33))
+        XCTAssertEqual(s.paletteColor(0), RGB(r: 0x44, g: 0x55, b: 0x66))
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}]10;#FFFFFF\u{07}")
+        p.feed("\u{1B}]11;#000000\u{07}")
+        p.feed("\u{1B}]12;#0000FF\u{07}")
+        XCTAssertEqual(s.defaultFgRGB, RGB(r: 255, g: 255, b: 255))
+        XCTAssertEqual(s.defaultBgRGB, RGB(r: 0, g: 0, b: 0))
+        p.feed("\u{1B}]110\u{07}")
+        p.feed("\u{1B}]111\u{07}")
+        p.feed("\u{1B}]112\u{07}")
+        XCTAssertEqual(s.defaultFgRGB, RGB(r: 0xAA, g: 0xBB, b: 0xCC))
+        XCTAssertEqual(s.defaultBgRGB, RGB(r: 0x01, g: 0x02, b: 0x03))
+        XCTAssertEqual(s.cursorRGB, RGB(r: 0x11, g: 0x22, b: 0x33))
+        p.feed("\u{1B}]10;#FFFFFF\u{07}")
+        p.feed("\u{1B}c")
+        XCTAssertEqual(s.defaultFgRGB, RGB(r: 0xAA, g: 0xBB, b: 0xCC))
+        XCTAssertEqual(s.defaultBgRGB, RGB(r: 0x01, g: 0x02, b: 0x03))
+        XCTAssertEqual(s.paletteColor(0), RGB(r: 0x44, g: 0x55, b: 0x66))
+        s.setColorDefaults(fg: COLOR_RGB | 0xAABBCC, bg: COLOR_RGB | 0x010203, cursor: COLOR_DEFAULT)
+        XCTAssertEqual(s.cursorRGB, RGB(r: 0xAA, g: 0xBB, b: 0xCC))
+    }
+
     func testScrollRegionParseCost() {
         func minMs(_ trials: Int, _ body: () -> Double) -> Double {
             var best = Double.greatestFiniteMagnitude
