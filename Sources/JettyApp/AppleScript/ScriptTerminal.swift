@@ -98,7 +98,7 @@ final class ScriptTerminal: NSObject, @unchecked Sendable {
         guard JettyScripting.validate(command) else { return nil }
         let ok = JettyScripting.onMain { () -> Bool in
             guard let window = term?.window else { return false }
-            window.close()
+            window.performClose(nil)
             return true
         }
         if !ok {

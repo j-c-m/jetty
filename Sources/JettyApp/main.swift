@@ -332,7 +332,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         workingDirectory: String = "",
         fontSize: Double = 0,
         initialInput: String = "",
-        command: String = ""
+        command: String = "",
+        extraEnv: [String] = []
     ) -> TermWindow? {
         guard let device, var config else { return nil }
         if fontSize > 0 {
@@ -465,6 +466,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             extra = []
         }
         extra.append(contentsOf: config.envAssignments)
+        extra.append(contentsOf: extraEnv)
         guard session.spawn(
             workingDirectory: cwd,
             extraEnv: extra,

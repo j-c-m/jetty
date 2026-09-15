@@ -74,16 +74,16 @@
       <property name="initial working directory" code="GScD" type="text" description="Initial working directory for the terminal process.">
         <cocoa key="workingDirectory"/>
       </property>
-      <property name="command" code="GScC" type="text" description="Ignored. Jetty always starts a login shell.">
+      <property name="command" code="GScC" type="text" description="Command to run instead of the login shell. Same as config command, including direct: and shell: prefixes.">
         <cocoa key="command"/>
       </property>
       <property name="initial input" code="GScI" type="text" description="Input sent to the terminal after launch.">
         <cocoa key="initialInput"/>
       </property>
-      <property name="wait after command" code="GScW" type="boolean" description="Ignored. Jetty does not replace the login shell.">
+      <property name="wait after command" code="GScW" type="boolean" description="Ignored. The window closes when the child exits.">
         <cocoa key="waitAfterCommand"/>
       </property>
-      <property name="environment variables" code="GScE" description="Ignored. Jetty does not inject extra env.">
+      <property name="environment variables" code="GScE" description="Extra KEY=VALUE environment variables. Applied after config env.">
         <type type="text" list="yes"/>
         <cocoa key="environmentVariables"/>
       </property>

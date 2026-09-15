@@ -49,7 +49,9 @@ JETTY_SIGN_IDENTITY=... JETTY_NOTARY_PROFILE=... ./scripts/notarize.sh
 [docs/DESIGN-osc-5522.md](docs/DESIGN-osc-5522.md).
 
 AppleScript is on unless `macos-applescript = false`. Command names match
-Ghostty for windows and terminals. No tabs or splits.
+Ghostty for windows and terminals. `new window` takes command, working
+directory, env, font size, and initial input. Close uses
+`confirm-close-surface`. No tabs or splits.
 
 ## License
 

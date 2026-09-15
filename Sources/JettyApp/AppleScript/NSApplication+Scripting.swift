@@ -136,7 +136,9 @@ extension NSApplication {
         guard let term = app.openWindow(
             workingDirectory: cwd,
             fontSize: cfg.fontSize,
-            initialInput: cfg.initialInput
+            initialInput: cfg.initialInput,
+            command: cfg.command,
+            extraEnv: cfg.environmentVariables
         ) else {
             command.scriptErrorNumber = errAEEventFailed
             command.scriptErrorString = "Failed to create window."

@@ -70,7 +70,10 @@ struct ScriptSurfaceConfiguration {
                 throw ParseError.invalidType("wait after command", "boolean")
             }
         }
-        if let assignments = raw["environmentVariables"] as? [String] {
+        if let rawEnv = raw["environmentVariables"] {
+            guard let assignments = rawEnv as? [String] else {
+                throw ParseError.invalidType("environment variables", "a list of text")
+            }
             environmentVariables = assignments
         }
     }

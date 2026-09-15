@@ -1004,7 +1004,7 @@ Status: **now** = v1 HEAD `573cf05` when this document was written. **follow-on*
 | xcodeproj | no | optional | not a gate |
 | Notarization | no | follow-on | **shipped** (PR 36); scripts |
 | Auto-update | no | **out** | |
-| AppleScript | yes | Ghostty command names for windows/terminals; no tabs/splits. **Shipped.** | |
+| AppleScript | yes | command names for windows/terminals; `new window` command / cwd / env / font size / initial input; close uses `confirm-close-surface`. No tabs/splits. **Shipped.** | |
 | Sandbox | off | off | lock |
 
 ---
