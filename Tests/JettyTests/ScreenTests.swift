@@ -74,6 +74,34 @@ final class ScreenTests: XCTestCase {
         XCTAssertEqual(s.cursorRGB, RGB(r: 0xAA, g: 0xBB, b: 0xCC))
     }
 
+    func testCursorDefaultsSurviveRis() {
+        let s = Screen(cols: 8, rows: 2, scrollbackCapRows: 0)
+        XCTAssertEqual(s.cursorStyle, 2)
+        XCTAssertFalse(s.cursorHollow)
+        let cfg = AppConfig.parse("""
+            cursor-style = bar
+            cursor-style-blink = true
+            """)
+        s.applyConfigColors(cfg)
+        XCTAssertEqual(s.cursorStyle, 5)
+        XCTAssertFalse(s.cursorHollow)
+        let p = Parser()
+        p.screen = s
+        p.feed("\u{1B}[2 q")
+        XCTAssertEqual(s.cursorStyle, 2)
+        p.feed("\u{1B}c")
+        XCTAssertEqual(s.cursorStyle, 5)
+        s.applyConfigColors(AppConfig.parse("cursor-style = block_hollow"))
+        XCTAssertEqual(s.cursorStyle, 2)
+        XCTAssertTrue(s.cursorHollow)
+        p.feed("\u{1B}[4 q")
+        XCTAssertEqual(s.cursorStyle, 4)
+        XCTAssertFalse(s.cursorHollow)
+        p.feed("\u{1B}c")
+        XCTAssertEqual(s.cursorStyle, 2)
+        XCTAssertTrue(s.cursorHollow)
+    }
+
     func testScrollRegionParseCost() {
         func minMs(_ trials: Int, _ body: () -> Double) -> Double {
             var best = Double.greatestFiniteMagnitude

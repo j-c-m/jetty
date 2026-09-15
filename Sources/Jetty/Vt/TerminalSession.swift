@@ -603,6 +603,10 @@ public final class TerminalSession: @unchecked Sendable {
             return
         }
         guard let str = Clipboard.pasteboardPayload(pb) else { return }
+        pasteString(str, bracketed: bracketed)
+    }
+
+    func pasteString(_ str: String, bracketed: Bool) {
         writeToPty(Clipboard.pasteBytes(Array(str.utf8), bracketed: bracketed))
     }
 

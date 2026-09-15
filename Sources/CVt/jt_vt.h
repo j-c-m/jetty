@@ -66,6 +66,9 @@ typedef struct jt_scr {
     uint8_t focus_event, bracketed_paste, paste_events, osc52_read_ask, sync_output;
     uint8_t reverse_video, cursor_visible, cursor_blink;
     uint8_t cursor_style;
+    uint8_t cursor_hollow;
+    uint8_t cfg_cursor_style;
+    uint8_t cfg_cursor_hollow;
     uint8_t decckm, deckpam;
     uint8_t reverse_wrap, reverse_wrap_ext, linefeed_nl;
     uint8_t alt_esc, alt_sends_escape, backarrow;
@@ -165,6 +168,7 @@ void jt_sync_timeout_clear(jt_scr *s);
 void jt_pools_reclaim(jt_scr *s);
 void jt_scr_set_palette_overlay(jt_scr *s, const uint32_t rgb16[16], uint16_t mask);
 void jt_scr_set_color_defaults(jt_scr *s, uint32_t fg, uint32_t bg, uint32_t cursor);
+void jt_scr_set_cursor_defaults(jt_scr *s, uint8_t style, int hollow);
 void jt_scr_palette_reset(jt_scr *s);
 void jt_scr_palette_reset_index(jt_scr *s, int idx);
 void jt_sgr_apply(jt_scr *s, const uint16_t *p, int n, uint32_t seps);

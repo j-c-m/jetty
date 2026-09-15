@@ -120,10 +120,58 @@ static void exec_login_shell(void) {
     _exit(127);
 }
 
+static int is_ws(char c) { return c == ' ' || c == '\t'; }
+
+static void exec_direct(const char *spec) {
+    char buf[4096];
+    if (snprintf(buf, sizeof buf, "%s", spec) >= (int)sizeof buf) {
+        dprintf(STDERR_FILENO, "jetty: command too long\n");
+        _exit(127);
+    }
+    char *argv[64];
+    int n = 0;
+    char *save = NULL;
+    for (char *tok = strtok_r(buf, " \t", &save); tok && n < 63; tok = strtok_r(NULL, " \t", &save))
+        argv[n++] = tok;
+    argv[n] = NULL;
+    if (n == 0) {
+        dprintf(STDERR_FILENO, "jetty: empty command\n");
+        _exit(127);
+    }
+    execvp(argv[0], argv);
+    dprintf(STDERR_FILENO, "jetty: exec %s failed: %s\n", argv[0], strerror(errno));
+    _exit(127);
+}
+
+/* `command`: `direct:` execvp, `shell:` /bin/sh -c, else sh -c if args. */
 static void exec_command(const char *command) {
     set_term_identity();
-    execl("/bin/sh", "sh", "-c", command, (char *)NULL);
-    dprintf(STDERR_FILENO, "jetty: exec sh -c failed: %s\n", strerror(errno));
+    const char *p = command;
+    while (*p && is_ws(*p)) p++;
+    if (strncmp(p, "direct:", 7) == 0) {
+        exec_direct(p + 7);
+        return;
+    }
+    if (strncmp(p, "shell:", 6) == 0) {
+        p += 6;
+        execl("/bin/sh", "sh", "-c", p, (char *)NULL);
+        dprintf(STDERR_FILENO, "jetty: exec sh -c failed: %s\n", strerror(errno));
+        _exit(127);
+    }
+    int has_args = 0;
+    for (const char *c = p; *c; c++) {
+        if (is_ws(*c)) {
+            has_args = 1;
+            break;
+        }
+    }
+    if (has_args) {
+        execl("/bin/sh", "sh", "-c", p, (char *)NULL);
+        dprintf(STDERR_FILENO, "jetty: exec sh -c failed: %s\n", strerror(errno));
+        _exit(127);
+    }
+    execlp(p, p, (char *)NULL);
+    dprintf(STDERR_FILENO, "jetty: exec %s failed: %s\n", p, strerror(errno));
     _exit(127);
 }
 

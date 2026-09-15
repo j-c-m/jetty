@@ -77,6 +77,7 @@ public enum GridExpand {
         hideGlyphs: UnsafePointer<UInt8>? = nil,
         bgAlpha: Float = 1,
         pass: Pass = .mix,
+        cursorFill: SIMD3<Float>? = nil,
         dest: UnsafeMutablePointer<CellInstance>
     ) {
         let selCols = selection.flatMap {
@@ -102,7 +103,12 @@ public enum GridExpand {
                 highlighted = true
             }
             if cursorOnRow && x == cursorX {
-                swap(&fg, &bg)
+                if let fill = cursorFill {
+                    fg = bg
+                    bg = fill
+                } else {
+                    swap(&fg, &bg)
+                }
                 highlighted = true
             }
             if (cell.attrs & UInt16(ATTR_HIDDEN)) != 0
@@ -195,6 +201,7 @@ public enum GridExpand {
         hideGlyphs: UnsafePointer<UInt8>? = nil,
         bgAlpha: Float = 1,
         pass: Pass = .mix,
+        cursorFill: SIMD3<Float>? = nil,
         dest: UnsafeMutablePointer<CellInstance>
     ) {
         var y = 0
@@ -222,6 +229,7 @@ public enum GridExpand {
                 hideGlyphs: hideGlyphs,
                 bgAlpha: bgAlpha,
                 pass: pass,
+                cursorFill: cursorFill,
                 dest: dest + y * cols
             )
             y += 1

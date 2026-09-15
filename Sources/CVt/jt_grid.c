@@ -84,6 +84,15 @@ void jt_scr_set_color_defaults(jt_scr *s, uint32_t fg, uint32_t bg, uint32_t cur
     s->cursor_color = cursor;
 }
 
+void jt_scr_set_cursor_defaults(jt_scr *s, uint8_t style, int hollow) {
+    if (!s) return;
+    if (style < 1 || style > 6) style = 2;
+    s->cfg_cursor_style = style;
+    s->cfg_cursor_hollow = hollow ? 1 : 0;
+    s->cursor_style = style;
+    s->cursor_hollow = s->cfg_cursor_hollow;
+}
+
 void jt_scr_palette_reset(jt_scr *s) {
     if (!s) return;
     jt_palette_reset(s->palette);
@@ -1689,7 +1698,10 @@ void jt_scr_init(jt_scr *s, int32_t cols, int32_t rows, int32_t sb_cap) {
     s->g1 = 1;
     s->mouse_alt_scroll = 1;
     s->cursor_visible = 1;
+    s->cfg_cursor_style = 2;
+    s->cfg_cursor_hollow = 0;
     s->cursor_style = 2;
+    s->cursor_hollow = 0;
     s->alt_esc = 1;
     s->alt_sends_escape = 1;
     s->pen.fg = COLOR_DEFAULT;
@@ -1779,7 +1791,8 @@ void jt_scr_ris(jt_scr *s) {
     s->xtsave_valid = 0;
     memset(s->xtsave, 0, sizeof s->xtsave);
     s->linefeed_nl = 0;
-    s->cursor_style = 2;
+    s->cursor_style = s->cfg_cursor_style ? s->cfg_cursor_style : 2;
+    s->cursor_hollow = s->cfg_cursor_hollow;
     s->mouse_event = 0;
     s->mouse_sgr = 0;
     s->mouse_sgr_pixels = 0;

@@ -6,6 +6,11 @@ public enum Clipboard {
 
     /// Encode a host paste. When 2004 is on, wrap `ESC [ 200 ~` … `ESC [ 201 ~`
     /// and drop any nested end sequence from the payload.
+    /// `clipboard-paste-protection`: newlines (and CR) are unsafe.
+    public static func needsPasteConfirm(_ text: String) -> Bool {
+        text.contains(where: { $0 == "\n" || $0 == "\r" })
+    }
+
     public static func pasteBytes(_ data: [UInt8], bracketed: Bool) -> [UInt8] {
         guard bracketed else { return data }
         var out: [UInt8] = []

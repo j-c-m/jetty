@@ -857,7 +857,7 @@ On 2×, JetBrains Mono at 20 pt is typically ~12×24 pt cells → ~1260×840 pt 
 
 **Sprites:** ghosvt `Render/Sprite/` idea (box, block/sextant, braille). First match wins over missing CT glyphs so `U+2502` / braille still look right. Port the drawers, not Kitty virtual unicode.
 
-**Cursor:** DECSCUSR. Block inverts the cell in the **glyph** pass (linux16term `expandInvert`); underline/bar are overlay-pass quads. Blink 500 ms. Unfocused = hollow / steady. `civis` hides. OSC 8 hover: `NSCursor.pointingHand` when the cell under the pointer has a URI and (tracking is off or Cmd is held). Default cursor otherwise.
+**Cursor:** DECSCUSR. Config `cursor-style` / `cursor-style-blink` is the reset baseline (default **block**, **no blink** = `CSI 2 q`). Block inverts the cell in the **glyph** pass (linux16term `expandInvert`). `cursor-color` fills the block and inverts the glyph. `block_hollow` is an outline even when focused. Underline/bar are overlay-pass quads. Blink 500 ms (DECSCUSR 0/1/3/5). Unfocused = hollow / steady. `civis` hides. RIS restores config. Programs may still send `CSI q`. OSC 8 hover: `NSCursor.pointingHand` when the cell under the pointer has a URI and (tracking is off or Cmd is held). Default cursor otherwise.
 
 **Chrome:** transparent titlebar, `titlebarSeparatorStyle = .none`, `fullSizeContentView`, background = **default bg** (linux16term uses `palette[0]`; jetty uses OSC 11 / default, usually the same). Appearance dark/light from luminance (`MetalTerminalView.applyChrome`). Windowed launch — **not** ghosvt `AppDelegate` forced fullscreen. Fullscreen is more cells.
 
@@ -973,9 +973,16 @@ window-padding-y = 4
 window-width = 105
 window-height = 35
 macos-option-as-alt = true   # true | false | left | right; unset = US layouts
+cursor-style = block         # block | bar | underline | block_hollow
+cursor-style-blink = false
+command =                    # unset = login shell; `direct:` / `shell:` prefixes
+working-directory =          # unset | home | inherit | path
+env = FOO=bar
+clipboard-paste-protection = true
+confirm-close-surface = true # true | false | always
 ```
 
-Ghostty theme files are the same `key = value` syntax. `theme` loads one (or `light:Name,dark:Name` from system appearance). Config keys after the theme win. `cursor-text` / `selection-*` are ignored. No `console-mode`, `vt-count`, `web-extension`, `scale`. Missing file → defaults.
+Ghostty theme files are the same `key = value` syntax. `theme` loads one (or `light:Name,dark:Name` from system appearance). Config keys after the theme win. Selection and search invert the cell. `cursor-text` / `selection-foreground` / `selection-background` are ignored. No `console-mode`, `vt-count`, `web-extension`, `scale`. Missing file → defaults.
 
 ### Unicode width
 

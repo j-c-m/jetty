@@ -24,6 +24,13 @@ final class ClipboardTests: XCTestCase {
         XCTAssertEqual(out, Clipboard.pasteStart + Clipboard.pasteEnd)
     }
 
+    func testNeedsPasteConfirmOnNewline() {
+        XCTAssertFalse(Clipboard.needsPasteConfirm("hello"))
+        XCTAssertTrue(Clipboard.needsPasteConfirm("hello\nworld"))
+        XCTAssertTrue(Clipboard.needsPasteConfirm("hello\r"))
+        XCTAssertFalse(Clipboard.needsPasteConfirm("tabs\tok"))
+    }
+
     func testFocusPackets() {
         XCTAssertEqual(Clipboard.focusBytes(gained: true), [0x1B, 0x5B, 0x49])
         XCTAssertEqual(Clipboard.focusBytes(gained: false), [0x1B, 0x5B, 0x4F])

@@ -225,7 +225,11 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let cy = session.screen.cursorY
         let vis = session.screen.cursorVisible
         let curStyle = session.screen.cursorStyle
+        let curHollow = session.screen.cursorHollow
         let curRGB = session.screen.cursorRGB
+        let cursorFill: SIMD3<Float>? = session.screen.hasRGBCursorColor
+            ? SIMD3(Float(curRGB.r) / 255, Float(curRGB.g) / 255, Float(curRGB.b) / 255)
+            : nil
         let rev = session.screen.reverseVideo
         let inAlt = session.screen.inAlt
         if inAlt != lastInAlt {
@@ -443,7 +447,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let blinks = !showLock && (curStyle == 0 || curStyle == 1 || curStyle == 3 || curStyle == 5)
         let phaseOn = Int(dtNow * 2) % 2 == 0
         let blinkOn = !blinks || phaseOn
-        let blockStyle = curStyle <= 2
+        let blockStyle = curStyle <= 2 && !curHollow
         let cursorOn = vis && focused && blockStyle && blinkOn && curY >= 0 && curY < paintRows
             && !showLock
         if vis, blinks, focused { armCursorBlink() }
@@ -582,6 +586,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                                     hideGlyphs: hidePtr,
                                     bgAlpha: bgA,
                                     pass: .bgOnly,
+                                    cursorFill: cursorFill,
                                     dest: inst + uy * cols
                                 )
                                 GridExpand.expandRow(
@@ -607,6 +612,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                                     hideGlyphs: hidePtr,
                                     bgAlpha: bgA,
                                     pass: .glyphsOnly,
+                                    cursorFill: cursorFill,
                                     dest: inst + n + uy * cols
                                 )
                                 uy += 1
@@ -671,6 +677,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                                         graphemes: graphemes,
                                         hideGlyphs: hidePtr,
                                         bgAlpha: bgA,
+                                        cursorFill: cursorFill,
                                         dest: inst + y * cols
                                     )
                                 } else {
@@ -706,6 +713,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                                     graphemes: graphemes,
                                     hideGlyphs: hidePtr,
                                     bgAlpha: bgA,
+                                    cursorFill: cursorFill,
                                     dest: inst + y * cols
                                 )
                                 y += 1
@@ -732,6 +740,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                                 graphemes: graphemes,
                                 hideGlyphs: hidePtr,
                                 bgAlpha: bgA,
+                                cursorFill: cursorFill,
                                 dest: inst
                             )
                         }
@@ -827,7 +836,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                     dest: ov,
                     at: overlayN,
                     style: curStyle,
-                    focused: focused,
+                    focused: focused && !curHollow,
                     ox: insetLeftPx + Float(cx) * cw,
                     oy: insetTopPx + Float(curY) * ch,
                     cw: cw,
@@ -878,7 +887,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                         dest: ov,
                         at: overlayN,
                         style: curStyle,
-                        focused: focused,
+                        focused: focused && !curHollow,
                         ox: insetLeftPx + Float(cx) * cw,
                         oy: insetTopPx + Float(curY) * ch,
                         cw: cw,
@@ -2124,7 +2133,39 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     @objc public func paste(_ sender: Any?) {
-        session.pasteFromPasteboard(.general)
+        session.lock.lock()
+        let mimePaste = session.screen.pasteEvents
+        let bracketed = session.screen.bracketedPaste
+        session.lock.unlock()
+        if mimePaste {
+            session.pasteFromPasteboard(.general)
+            return
+        }
+        guard let str = Clipboard.pasteboardPayload(.general) else { return }
+        if config.clipboardPasteProtection, !bracketed, Clipboard.needsPasteConfirm(str) {
+            confirmPaste(str, bracketed: bracketed)
+            return
+        }
+        session.pasteString(str, bracketed: bracketed)
+    }
+
+    private func confirmPaste(_ str: String, bracketed: Bool) {
+        let alert = NSAlert()
+        alert.messageText = "Paste?"
+        let preview = str.count > 500 ? String(str.prefix(500)) + "…" : str
+        alert.informativeText = preview
+        alert.addButton(withTitle: "Paste")
+        alert.addButton(withTitle: "Cancel")
+        func finish(_ response: NSApplication.ModalResponse) {
+            if response == .alertFirstButtonReturn {
+                session.pasteString(str, bracketed: bracketed)
+            }
+        }
+        if let window {
+            alert.beginSheetModal(for: window, completionHandler: finish)
+        } else {
+            finish(alert.runModal())
+        }
     }
 
     private func presentOsc5522Prompt(

@@ -19,6 +19,8 @@ public struct AppConfig: Sendable {
     public var foreground: UInt32? = nil
     public var background: UInt32? = nil
     public var cursorColor: UInt32? = nil
+    public var cursorStyle: CursorStyle = .block
+    public var cursorStyleBlink: Bool = false
     public var paletteOverlay: [UInt32] = Array(repeating: 0, count: 16)
     public var paletteOverlayMask: UInt16 = 0
     public var linkURL: Bool = true
@@ -35,8 +37,13 @@ public struct AppConfig: Sendable {
     public var windowHeight: Int? = nil
     public var scrollbackLines: Int = 50_000
     public var copyOnSelect: Bool = true
+    public var command: String? = nil
+    public var workingDirectory: WorkingDirectory = .unset
+    public var env: [String: String] = [:]
+    public var clipboardPasteProtection: Bool = true
+    public var confirmCloseSurface: ConfirmClose = .on
 
-    /// Ghostty `window-width` / `window-height` (cells). Both required; else 105×35.
+    /// `window-width` / `window-height` (cells). Both required; else 105×35.
     public var launchCols: Int {
         guard windowWidth != nil, windowHeight != nil else { return 105 }
         return max(10, windowWidth!)
@@ -81,9 +88,24 @@ public struct AppConfig: Sendable {
         case ask, deny
     }
 
-    /// Ghostty `macos-option-as-alt`: unset follows US / US International.
+    /// `macos-option-as-alt`: unset follows US / US International.
     public enum OptionAsAlt: Sendable, Equatable {
         case unset, off, on, left, right
+    }
+
+    /// `cursor-style`. Default `block`.
+    public enum CursorStyle: Sendable, Equatable {
+        case block, bar, underline, blockHollow
+    }
+
+    /// `working-directory`: unset is inherit, Finder/`open` → home.
+    public enum WorkingDirectory: Sendable, Equatable {
+        case unset, home, inherit, path(String)
+    }
+
+    /// `confirm-close-surface`: `true` / `false` / `always`.
+    public enum ConfirmClose: Sendable, Equatable {
+        case off, on, always
     }
 
     static let leftOptionMask: UInt = 0x0000_0020
@@ -134,6 +156,40 @@ public struct AppConfig: Sendable {
         if let rgb = cursorColor { return COLOR_RGB | rgb }
         return COLOR_DEFAULT
     }
+
+    public var envAssignments: [String] {
+        env.keys.sorted().map { "\($0)=\(env[$0] ?? "")" }
+    }
+
+    public func resolvedWorkingDirectory() -> String? {
+        switch workingDirectory {
+        case .unset:
+            return nil
+        case .inherit:
+            return FileManager.default.currentDirectoryPath
+        case .home:
+            return NSHomeDirectory()
+        case .path(let raw):
+            let path = (raw as NSString).expandingTildeInPath
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else {
+                return nil
+            }
+            return path
+        }
+    }
+
+    /// DECSCUSR 1–6. Blink is the odd number. Hollow is a paint flag on `block`.
+    public var packedCursorStyle: UInt8 {
+        let blink = cursorStyleBlink
+        switch cursorStyle {
+        case .block, .blockHollow: return blink ? 1 : 2
+        case .underline: return blink ? 3 : 4
+        case .bar: return blink ? 5 : 6
+        }
+    }
+
+    public var cursorHollow: Bool { cursorStyle == .blockHollow }
 
     public static var systemDark: Bool {
         UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
@@ -236,7 +292,64 @@ public struct AppConfig: Sendable {
         ["true", "1", "yes"].contains(s.lowercased())
     }
 
-    /// Ghostty `macos-option-as-alt`: `true` / `false` / `left` / `right`.
+    /// `cursor-style`: `block` / `bar` / `underline` / `block_hollow`.
+    public static func parseCursorStyle(_ raw: String) -> CursorStyle? {
+        switch unquote(raw).lowercased() {
+        case "block": return .block
+        case "bar": return .bar
+        case "underline": return .underline
+        case "block_hollow": return .blockHollow
+        default: return nil
+        }
+    }
+
+    public static func parseTrueFalse(_ raw: String) -> Bool? {
+        switch unquote(raw).lowercased() {
+        case "true", "1", "yes", "on": return true
+        case "false", "0", "no", "off": return false
+        default: return nil
+        }
+    }
+
+    /// `cursor-style-blink`: `true` / `false`. Empty resets to no blink.
+    public static func parseCursorBlink(_ raw: String) -> Bool? {
+        parseTrueFalse(raw)
+    }
+
+    public static func parseConfirmClose(_ raw: String) -> ConfirmClose? {
+        let v = unquote(raw).lowercased()
+        if v == "always" { return .always }
+        if let b = parseTrueFalse(v) { return b ? .on : .off }
+        return nil
+    }
+
+    public static func parseWorkingDirectory(_ raw: String) -> WorkingDirectory {
+        let v = unquote(raw)
+        if v.isEmpty { return .unset }
+        switch v.lowercased() {
+        case "home": return .home
+        case "inherit": return .inherit
+        default: return .path(v)
+        }
+    }
+
+    static func applyEnvEntry(_ raw: String, into c: inout AppConfig) {
+        if raw.isEmpty {
+            c.env.removeAll()
+            return
+        }
+        guard let eq = raw.firstIndex(of: "=") else { return }
+        let key = String(raw[..<eq]).trimmingCharacters(in: .whitespaces)
+        let val = String(raw[raw.index(after: eq)...])
+        if key.isEmpty { return }
+        if val.isEmpty {
+            c.env.removeValue(forKey: key)
+        } else {
+            c.env[key] = val
+        }
+    }
+
+    /// `macos-option-as-alt`: `true` / `false` / `left` / `right`.
     public static func parseOptionAsAlt(_ raw: String) -> OptionAsAlt? {
         switch unquote(raw).lowercased() {
         case "true", "1", "yes", "on": return .on
@@ -247,7 +360,7 @@ public struct AppConfig: Sendable {
         }
     }
 
-    /// Ghostty `window-padding-x` / `y`: `2` or `2,4` in points.
+    /// `window-padding-x` / `y`: `2` or `2,4` in points.
     public static func parsePadPair(_ raw: String) -> (CGFloat, CGFloat)? {
         let parts = raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
         if parts.count == 1, let n = Double(parts[0]), n.isFinite {
@@ -299,7 +412,7 @@ public struct AppConfig: Sendable {
         }
     }
 
-    /// Ghostty `Duration`: `1h30m`, `45s`, `500ms`. A bare number is seconds.
+    /// Duration: `1h30m`, `45s`, `500ms`. A bare number is seconds.
     public static func parseSeconds(_ raw: String) -> TimeInterval? {
         let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
@@ -384,7 +497,7 @@ public struct AppConfig: Sendable {
         parseColor(raw)
     }
 
-    /// Ghostty color: `#RGB`, `#RRGGBB`, `RRGGBB`, or a small X11 name set.
+    /// Color: `#RGB`, `#RRGGBB`, `RRGGBB`, or a small X11 name set.
     public static func parseColor(_ raw: String) -> UInt32? {
         var s = unquote(raw)
         if s.isEmpty { return nil }
@@ -418,11 +531,11 @@ public struct AppConfig: Sendable {
         for raw in text.split(whereSeparator: \.isNewline) {
             let line = raw.trimmingCharacters(in: .whitespaces)
             if line.isEmpty || line.hasPrefix("#") { continue }
-            let parts = line.split(separator: "=", maxSplits: 1).map {
-                $0.trimmingCharacters(in: .whitespaces)
-            }
-            guard parts.count == 2 else { continue }
-            out.append((parts[0], parts[1]))
+            guard let eq = line.firstIndex(of: "=") else { continue }
+            let key = String(line[..<eq]).trimmingCharacters(in: .whitespaces)
+            let val = String(line[line.index(after: eq)...]).trimmingCharacters(in: .whitespaces)
+            if key.isEmpty { continue }
+            out.append((key, val))
         }
         return out
     }
@@ -433,7 +546,7 @@ public struct AppConfig: Sendable {
         return found
     }
 
-    /// Ghostty `light:Name,dark:Name` (order free) or a single theme name.
+    /// `light:Name,dark:Name` (order free) or a single theme name.
     public static func resolveThemeName(_ raw: String, dark: Bool) -> String? {
         let v = unquote(raw)
         if v.isEmpty { return nil }
@@ -521,6 +634,12 @@ public struct AppConfig: Sendable {
             } else if let rgb = parseColor(v) {
                 c.cursorColor = rgb
             }
+        case "cursor-style":
+            if val.isEmpty { c.cursorStyle = .block }
+            else if let v = parseCursorStyle(val) { c.cursorStyle = v }
+        case "cursor-style-blink":
+            if val.isEmpty { c.cursorStyleBlink = false }
+            else if let v = parseCursorBlink(val) { c.cursorStyleBlink = v }
         case "palette":
             if val.isEmpty {
                 c.paletteOverlay = Array(repeating: 0, count: 16)
@@ -567,6 +686,19 @@ public struct AppConfig: Sendable {
             if let n = Int(val), n >= 0 { c.scrollbackLines = n }
         case "copy-on-select":
             c.copyOnSelect = parseBool(val)
+        case "command":
+            let v = unquote(val)
+            c.command = v.isEmpty ? nil : v
+        case "working-directory":
+            c.workingDirectory = parseWorkingDirectory(val)
+        case "env":
+            applyEnvEntry(val, into: &c)
+        case "clipboard-paste-protection":
+            if val.isEmpty { c.clipboardPasteProtection = true }
+            else if let v = parseTrueFalse(val) { c.clipboardPasteProtection = v }
+        case "confirm-close-surface":
+            if val.isEmpty { c.confirmCloseSurface = .on }
+            else if let v = parseConfirmClose(val) { c.confirmCloseSurface = v }
         case "osc52-write":
             c.osc52Write = val == "deny" ? .deny : .allow
         case "osc52-read":
@@ -602,7 +734,7 @@ public struct AppConfig: Sendable {
         }
     }
 
-    /// Ghostty `N=COLOR`. Indices 16–255 are ignored (0–15 overlay only).
+    /// `palette = N=COLOR`. Indices 16–255 are ignored (0–15 overlay only).
     static func applyPaletteEntry(_ raw: String, into c: inout AppConfig) {
         guard let eq = raw.firstIndex(of: "=") else { return }
         let idxRaw = raw[..<eq].trimmingCharacters(in: .whitespaces)

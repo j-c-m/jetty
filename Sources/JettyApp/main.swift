@@ -340,7 +340,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let cwd: String?
         if workingDirectory.isEmpty {
-            cwd = nil
+            if case .path = config.workingDirectory {
+                guard let path = config.resolvedWorkingDirectory() else { return nil }
+                cwd = path
+            } else {
+                cwd = config.resolvedWorkingDirectory()
+            }
         } else {
             let path = (workingDirectory as NSString).expandingTildeInPath
             var isDir: ObjCBool = false
@@ -452,14 +457,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 window?.close()
             }
         }
-        let extra: [String]
-        if command.isEmpty {
+        let spawnCmd = command.isEmpty ? (config.command ?? "") : command
+        var extra: [String]
+        if spawnCmd.isEmpty {
             extra = ShellInject.extraEnv(kind: ShellInject.kind(config: config.shellIntegration))
         } else {
             extra = []
         }
+        extra.append(contentsOf: config.envAssignments)
         guard session.spawn(
-            workingDirectory: cwd, extraEnv: extra, command: command.isEmpty ? nil : command
+            workingDirectory: cwd,
+            extraEnv: extra,
+            command: spawnCmd.isEmpty ? nil : spawnCmd
         ) else {
             session.stop()
             return nil
@@ -479,7 +488,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if quitTerminatePending {
             return .terminateCancel
         }
-        guard terms.contains(where: { $0.session.hasNonShellProcess }) else {
+        let confirm = config?.confirmCloseSurface ?? .on
+        if confirm == .off {
+            return .terminateNow
+        }
+        let busy = terms.contains(where: { $0.session.hasNonShellProcess })
+        if confirm == .on, !busy {
+            return .terminateNow
+        }
+        if terms.isEmpty {
             return .terminateNow
         }
         abortAllConfirms()
@@ -520,7 +537,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func termShouldClose(_ term: TermWindow) -> Bool {
-        if !term.session.hasNonShellProcess { return true }
+        switch term.view.config.confirmCloseSurface {
+        case .off:
+            return true
+        case .on:
+            if !term.session.hasNonShellProcess { return true }
+        case .always:
+            break
+        }
         if quitTerminatePending { return false }
         if term.view.isQuitConfirmOpen { return false }
         abortAllConfirms()

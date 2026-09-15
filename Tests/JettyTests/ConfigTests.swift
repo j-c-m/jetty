@@ -201,6 +201,55 @@ final class ConfigTests: XCTestCase {
         XCTAssertFalse(left.optionAsAltActive(optionDown: true, leftOption: false, rightOption: true, usLayout: false))
     }
 
+    func testGhosttyCursorStyle() {
+        XCTAssertEqual(AppConfig.parse("cursor-style = bar").cursorStyle, .bar)
+        XCTAssertEqual(AppConfig.parse("cursor-style = bar").packedCursorStyle, 6)
+        XCTAssertEqual(AppConfig.parse("cursor-style = underline").packedCursorStyle, 4)
+        XCTAssertEqual(AppConfig.parse("cursor-style = block_hollow").cursorStyle, .blockHollow)
+        XCTAssertTrue(AppConfig.parse("cursor-style = block_hollow").cursorHollow)
+        XCTAssertEqual(AppConfig.parse("cursor-style = block_hollow").packedCursorStyle, 2)
+        let blink = AppConfig.parse("""
+            cursor-style = bar
+            cursor-style-blink = true
+            """)
+        XCTAssertEqual(blink.packedCursorStyle, 5)
+        XCTAssertTrue(blink.cursorStyleBlink)
+        XCTAssertEqual(AppConfig.parse("cursor-style-blink = false").packedCursorStyle, 2)
+        XCTAssertEqual(AppConfig.parse("cursor-style = bar\ncursor-style =").cursorStyle, .block)
+        XCTAssertFalse(AppConfig.parse("cursor-style-blink = true\ncursor-style-blink =").cursorStyleBlink)
+        XCTAssertEqual(AppConfig.parseCursorStyle("BLOCK"), .block)
+        XCTAssertNil(AppConfig.parseCursorStyle("caret"))
+    }
+
+    func testGhosttyCommandEnvPasteClose() {
+        let c = AppConfig.parse("""
+            command = fish
+            working-directory = home
+            env = FOO=bar
+            env = BAZ=qux
+            env = FOO=
+            clipboard-paste-protection = false
+            confirm-close-surface = always
+            """)
+        XCTAssertEqual(c.command, "fish")
+        XCTAssertEqual(c.workingDirectory, .home)
+        XCTAssertNil(c.env["FOO"])
+        XCTAssertEqual(c.env["BAZ"], "qux")
+        XCTAssertEqual(c.envAssignments, ["BAZ=qux"])
+        XCTAssertFalse(c.clipboardPasteProtection)
+        XCTAssertEqual(c.confirmCloseSurface, .always)
+        XCTAssertEqual(AppConfig.parse("working-directory = inherit").workingDirectory, .inherit)
+        XCTAssertEqual(AppConfig.parse("working-directory = ~/src").workingDirectory, .path("~/src"))
+        XCTAssertEqual(AppConfig.parse("command = direct:nvim foo").command, "direct:nvim foo")
+        XCTAssertEqual(AppConfig.parse("confirm-close-surface = false").confirmCloseSurface, .off)
+        XCTAssertEqual(AppConfig.parse("env = A=1\nenv =").env.count, 0)
+        XCTAssertNil(AppConfig.parse("command =").command)
+        XCTAssertEqual(AppConfig.parse("").workingDirectory, .unset)
+        XCTAssertTrue(AppConfig.parse("").clipboardPasteProtection)
+        XCTAssertEqual(AppConfig.parse("").confirmCloseSurface, .on)
+        XCTAssertEqual(AppConfig.parse("").command, nil)
+    }
+
     func testThemeAbsolutePath() throws {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("jetty-theme-\(UUID().uuidString)")
@@ -290,6 +339,15 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(c.launchCols, 105)
         XCTAssertEqual(c.launchRows, 35)
         XCTAssertEqual(c.macosOptionAsAlt, .unset)
+        XCTAssertEqual(c.cursorStyle, .block)
+        XCTAssertFalse(c.cursorStyleBlink)
+        XCTAssertEqual(c.packedCursorStyle, 2)
+        XCTAssertFalse(c.cursorHollow)
+        XCTAssertNil(c.command)
+        XCTAssertEqual(c.workingDirectory, .unset)
+        XCTAssertTrue(c.env.isEmpty)
+        XCTAssertTrue(c.clipboardPasteProtection)
+        XCTAssertEqual(c.confirmCloseSurface, .on)
         XCTAssertTrue(c.linkURL)
         XCTAssertTrue(c.desktopNotifications)
         XCTAssertTrue(c.progressStyle)

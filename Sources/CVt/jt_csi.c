@@ -508,7 +508,10 @@ static void handle_csi(jt_vt *p, jt_scr *scr, const jt_vt_host *h, uint8_t final
     case 'q':
         if (p->ni == 1 && p->inter[0] == ' ') {
             int n = pdef(p->params, p->np, 0, 0);
-            if (n >= 0 && n <= 6) scr->cursor_style = (uint8_t)n;
+            if (n >= 0 && n <= 6) {
+                scr->cursor_style = (uint8_t)n;
+                scr->cursor_hollow = 0;
+            }
         }
         break;
     case 's':

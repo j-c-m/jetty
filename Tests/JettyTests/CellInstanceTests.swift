@@ -131,4 +131,93 @@ final class CellInstanceTests: XCTestCase {
         XCTAssertEqual(glyphs[1].sx, 12)
         XCTAssertEqual(glyphs[0].bg >> 24, 0)
     }
+
+    func testSelectionInvertsCellColors() {
+        guard let device = MTLCreateSystemDefaultDevice() else { return }
+        let metrics = CellMetrics.measure(fontSize: 20, backingScale: 2)
+        guard let atlas = GlyphAtlas(device: device, metrics: metrics) else {
+            XCTFail("atlas")
+            return
+        }
+        let pal = [SIMD3<Float>](repeating: SIMD3(0, 0, 0), count: 256)
+        let cells = [
+            Cell(content: content_scalar(0x41, WIDE_NARROW), fg: COLOR_DEFAULT, bg: COLOR_DEFAULT, attrs: 0, extra: 0),
+        ]
+        var out = [CellInstance.empty]
+        pal.withUnsafeBufferPointer { palBuf in
+            cells.withUnsafeBufferPointer { cellBuf in
+                out.withUnsafeMutableBufferPointer { dest in
+                    GridExpand.expandRow(
+                        rowCells: cellBuf.baseAddress!,
+                        cols: 1,
+                        rowY: 0,
+                        cellW: 12,
+                        cellH: 24,
+                        originX: 0,
+                        originY: 0,
+                        palette: palBuf.baseAddress!,
+                        defFG: SIMD3(1, 1, 1),
+                        defBG: SIMD3(0, 0, 0),
+                        atlas: atlas,
+                        cursorX: -1,
+                        cursorY: -1,
+                        cursorVisible: false,
+                        selection: (0, 0, 0, 0),
+                        dest: dest.baseAddress!
+                    )
+                }
+            }
+        }
+        XCTAssertEqual(out[0].fg & 0xFF, 0)
+        XCTAssertEqual((out[0].fg >> 8) & 0xFF, 0)
+        XCTAssertEqual((out[0].fg >> 16) & 0xFF, 0)
+        XCTAssertEqual(out[0].bg & 0xFF, 255)
+        XCTAssertEqual((out[0].bg >> 8) & 0xFF, 255)
+        XCTAssertEqual((out[0].bg >> 16) & 0xFF, 255)
+    }
+
+    func testCursorFillInvertsGlyph() {
+        guard let device = MTLCreateSystemDefaultDevice() else { return }
+        let metrics = CellMetrics.measure(fontSize: 20, backingScale: 2)
+        guard let atlas = GlyphAtlas(device: device, metrics: metrics) else {
+            XCTFail("atlas")
+            return
+        }
+        let pal = [SIMD3<Float>](repeating: SIMD3(0, 0, 0), count: 256)
+        let cells = [
+            Cell(content: content_scalar(0x41, WIDE_NARROW), fg: COLOR_DEFAULT, bg: COLOR_DEFAULT, attrs: 0, extra: 0),
+        ]
+        var out = [CellInstance.empty]
+        pal.withUnsafeBufferPointer { palBuf in
+            cells.withUnsafeBufferPointer { cellBuf in
+                out.withUnsafeMutableBufferPointer { dest in
+                    GridExpand.expandRow(
+                        rowCells: cellBuf.baseAddress!,
+                        cols: 1,
+                        rowY: 0,
+                        cellW: 12,
+                        cellH: 24,
+                        originX: 0,
+                        originY: 0,
+                        palette: palBuf.baseAddress!,
+                        defFG: SIMD3(1, 1, 1),
+                        defBG: SIMD3(0, 0, 0),
+                        atlas: atlas,
+                        cursorX: 0,
+                        cursorY: 0,
+                        cursorVisible: true,
+                        selection: nil,
+                        cursorFill: SIMD3(1, 0, 0),
+                        dest: dest.baseAddress!
+                    )
+                }
+            }
+        }
+        XCTAssertEqual(out[0].fg & 0xFF, 0)
+        XCTAssertEqual((out[0].fg >> 8) & 0xFF, 0)
+        XCTAssertEqual((out[0].fg >> 16) & 0xFF, 0)
+        XCTAssertEqual(out[0].bg & 0xFF, 255)
+        XCTAssertEqual((out[0].bg >> 8) & 0xFF, 0)
+        XCTAssertEqual((out[0].bg >> 16) & 0xFF, 0)
+    }
 }

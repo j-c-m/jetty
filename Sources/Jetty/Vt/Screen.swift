@@ -86,10 +86,18 @@ public final class Screen {
         get { implPtr.pointee.cursor_blink != 0 }
         set { implPtr.pointee.cursor_blink = newValue ? 1 : 0 }
     }
+    public var cursorHollow: Bool { implPtr.pointee.cursor_hollow != 0 }
+
+    public func setCursorDefaults(style: UInt8, hollow: Bool) {
+        jt_scr_set_cursor_defaults(implPtr, style, hollow ? 1 : 0)
+    }
     public var cursorRGB: RGB {
         let v = implPtr.pointee.cursor_color
         if PackedColor.type(of: v) == 2 { return RGB.packed(v) }
         return defaultFgRGB
+    }
+    public var hasRGBCursorColor: Bool {
+        PackedColor.type(of: implPtr.pointee.cursor_color) == 2
     }
 
     public var penFG: UInt32 {
@@ -325,6 +333,7 @@ public final class Screen {
     public func applyConfigColors(_ c: AppConfig) {
         setPaletteOverlay(c.paletteOverlay, mask: c.paletteOverlayMask)
         setColorDefaults(fg: c.packedForeground, bg: c.packedBackground, cursor: c.packedCursor)
+        setCursorDefaults(style: c.packedCursorStyle, hollow: c.cursorHollow)
     }
 
     @discardableResult
