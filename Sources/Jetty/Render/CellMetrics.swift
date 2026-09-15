@@ -41,7 +41,7 @@ public struct CellMetrics {
         let descent = CTFontGetDescent(regular)
         let leading = CTFontGetLeading(regular)
         let faceHeight = ascent + descent + leading
-        let cellWPx = max(1, Int(faceWidth.rounded()) + 1 + adjustWidth)
+        let cellWPx = max(1, Int(faceWidth.rounded()) + adjustWidth)
         let cellHPx = max(1, Int(faceHeight.rounded()) + adjustHeight)
         let halfLineGap = leading / 2
         let faceBaseline = halfLineGap + descent

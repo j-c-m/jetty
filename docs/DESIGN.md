@@ -840,7 +840,7 @@ Config `font-family` is a **Core Text family name**. If it equals the bundled Mo
 
 **Ligatures:** `CTFontCreateCopyWithAttributes` with `kCTFontFeatureSettingsAttribute` disabling `liga` and `calt`. Atlas keys are `(CGGlyph, fontID, bold, italic, cellW, cellH, fontPx)` — ghosvt `GlyphAtlas.GlyphKey` — so a later ligature PR can add shaped-run keys without throwing the atlas away. v1 rasterizes one glyph, one `CTLine` cluster, or one sprite **per cell**, then cell-boxes it.
 
-**Metrics:** port ghosvt `CellMetrics.measure` (Ghostty `Metrics.calc`): `fontPx = round(fontSize * backingScale)`, `cellWPx = round(max ASCII advance) + 1`, `cellHPx = round(ascent+descent+leading)`, baseline from bottom. Default **font size 20**.
+**Metrics:** port ghosvt `CellMetrics.measure` (Ghostty `Metrics.calc`): `fontPx = round(fontSize * backingScale)`, `cellWPx = round(max ASCII advance)`, `cellHPx = round(ascent+descent+leading)`, baseline from bottom. Default **font size 20**.
 
 Launch geometry copies linux16term’s **content vs frame split**. `contentSizePoints` is pad + grid only (`MetalTerminalView.contentSizePoints`); `AppDelegate` adds titlebar height **outside** that, like `linux16term/Sources/Linux16TermApp/main.swift` `titleH`. Do **not** fold titlebar into content or the window is short by the titlebar.
 
