@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import CoreText
 import CVt
 import MetalKit
 import QuartzCore
@@ -54,9 +55,11 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     private var ligaHide = ContiguousArray<UInt8>()
     private var lastInk = false
     private var lastBackingScale: CGFloat
-    private var findAccessory: NSTitlebarAccessoryViewController?
-    private var findField: NSTextField?
-    private var findCountLabel: NSTextField?
+    private var findBar: FindBarView?
+    private var findField: FindField?
+    private var findCountLabel: FindBarTextView?
+    private var findNavUp: NSButton?
+    private var findNavDown: NSButton?
     private var findHits: [ScrollSearch.Hit] = []
     private var findSpansByDoc: [Int: [(lo: Int, hi: Int)]] = [:]
     private var findSig: UInt64 = 0
@@ -180,9 +183,14 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        applyChrome(session.screen.defaultBgRGB, reverse: false)
+        applyChrome(
+            session.screen.defaultBgRGB,
+            fg: session.screen.defaultFgRGB,
+            reverse: session.screen.reverseVideo
+        )
         refreshInsets()
         layoutProgressChrome()
+        layoutFindBar()
         reportFocus(gained: window?.isKeyWindow == true)
         if progressState != 0 {
             armProgressStaleTimer()
@@ -200,6 +208,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     public override func layout() {
         super.layout()
         layoutProgressChrome()
+        layoutFindBar()
         let top = safeAreaInsets.top
         if abs(top - lastSafeTop) > 0.5 {
             lastSafeTop = top
@@ -272,7 +281,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             if trim > 0.5, !scrollPhysics.pinnedToBottom {
                 scrollPhysics.trimTop(trim)
             }
-            if findAccessory != nil, trim > 0.5 {
+            if findBar != nil, trim > 0.5 {
                 shiftFindHits(by: Int(trim.rounded()))
             }
             scrollPhysics.followBottomIfPinned(maxOffset: maxO)
@@ -425,7 +434,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                 execute: item
             )
         }
-        applyChrome(defBG, reverse: rev)
+        applyChrome(defBG, fg: defFG, reverse: rev)
 
         let dw = drawableSize.width
         let dh = drawableSize.height
@@ -688,7 +697,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
                                 }
                                 y += 1
                             }
-                        } else if findAccessory != nil {
+                        } else if findBar != nil {
                             var y = 0
                             while y < paintRows {
                                 GridExpand.expandRow(
@@ -1016,24 +1025,21 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         _ = device
     }
 
-    private func applyChrome(_ rgb: RGB, reverse: Bool) {
-        var r = rgb.r
-        var g = rgb.g
-        var b = rgb.b
-        if reverse {
-            r = 255 &- r
-            g = 255 &- g
-            b = 255 &- b
-        }
-        let packed = UInt32(r) << 16 | UInt32(g) << 8 | UInt32(b)
+    private func applyChrome(_ rgb: RGB, fg: RGB, reverse: Bool) {
+        let bg = FindBarChrome.paint(rgb, reverse: reverse)
+        let ink = FindBarChrome.paint(fg, reverse: reverse)
+        let packed = UInt32(bg.r) << 16 | UInt32(bg.g) << 8 | UInt32(bg.b)
+        let fgPacked = UInt32(ink.r) << 16 | UInt32(ink.g) << 8 | UInt32(ink.b)
         let alpha = effectiveBackgroundAlpha()
         let alphaByte = UInt64(min(255, max(0, alpha * 255)).rounded())
-        let stamp = UInt64(packed) | (alphaByte << 32)
-        if stamp == chromePacked { return }
+        let stamp = UInt64(packed) | (alphaByte << 32) | (UInt64(fgPacked) << 40)
+        if stamp == chromePacked {
+            return
+        }
         chromePacked = stamp
-        let rf = CGFloat(r) / 255
-        let gf = CGFloat(g) / 255
-        let bf = CGFloat(b) / 255
+        let rf = CGFloat(bg.r) / 255
+        let gf = CGFloat(bg.g) / 255
+        let bf = CGFloat(bg.b) / 255
         let a = CGFloat(alpha)
         clearColor = MTLClearColorMake(Double(rf), Double(gf), Double(bf), Double(a))
         let opaque = alpha >= 1
@@ -1047,10 +1053,11 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
             window.titlebarAppearsTransparent = true
             window.titlebarSeparatorStyle = .none
             paintTitlebar(window, color: color)
-            let lum = 0.2126 * Double(r) + 0.7152 * Double(g) + 0.0722 * Double(b)
+            let lum = 0.2126 * Double(bg.r) + 0.7152 * Double(bg.g) + 0.0722 * Double(bg.b)
             window.appearance = NSAppearance(named: lum < 128 ? .darkAqua : .aqua)
             NSApp.appearance = window.appearance
         }
+        applyFindBarChrome(fg: ink, bg: bg)
     }
 
     /// Solid titlebar fill matching default bg. Native title and traffic lights stay.
@@ -1113,7 +1120,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
 
     public override func keyDown(with event: NSEvent) {
         if handleQuitConfirmKey(event) { return }
-        if event.keyCode == UInt16(kVK_Escape), findAccessory != nil {
+        if event.keyCode == UInt16(kVK_Escape), findBar != nil {
             endFind()
             return
         }
@@ -1708,6 +1715,7 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
         let r = session.screen.rows
         session.lock.unlock()
         session.setWinsize(cols: c, rows: r)
+        restyleFindBar()
         needsDisplay = true
     }
 
@@ -1818,12 +1826,12 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     @objc public func findNext(_ sender: Any?) {
-        if findAccessory == nil { showFind(); return }
+        if findBar == nil { showFind(); return }
         stepFind(1)
     }
 
     @objc public func findPrevious(_ sender: Any?) {
-        if findAccessory == nil { showFind(); return }
+        if findBar == nil { showFind(); return }
         stepFind(-1)
     }
 
@@ -1864,71 +1872,145 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
     }
 
     private func showFind() {
-        if let field = findField, findAccessory != nil {
+        if let field = findField, findBar != nil {
             window?.makeFirstResponder(field)
             return
         }
-        let field = FindField(string: "")
+        let field = FindField(frame: .zero)
         field.finder = self
-        field.isBordered = true
-        field.bezelStyle = .roundedBezel
-        field.focusRingType = .none
-        field.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
         field.delegate = self
-        field.frame = NSRect(x: 8, y: 3, width: 180, height: 22)
-        let count = NSTextField(labelWithString: "0/0")
-        count.font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
-        count.textColor = .secondaryLabelColor
-        count.alignment = .right
+        let count = FindBarTextView(frame: .zero)
+        count.isEditable = false
+        count.isSelectable = false
         count.drawsBackground = false
-        count.frame = NSRect(x: 192, y: 5, width: 52, height: 18)
-        let up = findNavButton(symbol: "chevron.up", action: #selector(findNext(_:)))
-        let down = findNavButton(symbol: "chevron.down", action: #selector(findPrevious(_:)))
-        up.frame = NSRect(x: 248, y: 3, width: 22, height: 22)
-        down.frame = NSRect(x: 270, y: 3, width: 22, height: 22)
-        let wrap = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 28))
+        count.alignment = .right
+        count.stringValue = "0/0"
+        let up = findNavButton(title: FindBarLayout.nextGlyph, action: #selector(findNext(_:)))
+        let down = findNavButton(title: FindBarLayout.prevGlyph, action: #selector(findPrevious(_:)))
+        let wrap = FindBarView(frame: .zero)
         wrap.addSubview(field)
         wrap.addSubview(count)
         wrap.addSubview(up)
         wrap.addSubview(down)
-        let acc = NSTitlebarAccessoryViewController()
-        acc.view = wrap
-        acc.layoutAttribute = .right
-        window?.addTitlebarAccessoryViewController(acc)
-        findAccessory = acc
+        wrap.setAccessibilityRole(.group)
+        wrap.setAccessibilityLabel("Find")
+        addSubview(wrap)
+        findBar = wrap
         findField = field
         findCountLabel = count
+        findNavUp = up
+        findNavDown = down
+        restyleFindBar()
         window?.makeFirstResponder(field)
-        relayout()
         needsDisplay = true
     }
 
-    private func findNavButton(symbol: String, action: Selector) -> NSButton {
-        let img = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        let b = NSButton(image: img ?? NSImage(), target: self, action: action)
+    private func findNavButton(title: String, action: Selector) -> NSButton {
+        let b = NSButton(title: title, target: self, action: action)
         b.isBordered = false
         b.bezelStyle = .inline
-        b.imagePosition = .imageOnly
-        b.imageScaling = .scaleProportionallyDown
+        b.setButtonType(.momentaryChange)
+        b.imagePosition = .noImage
+        b.focusRingType = .none
         return b
     }
 
     private func endFind() {
-        if let acc = findAccessory {
-            if let i = window?.titlebarAccessoryViewControllers.firstIndex(of: acc) {
-                window?.removeTitlebarAccessoryViewController(at: i)
-            }
-        }
-        findAccessory = nil
+        findBar?.removeFromSuperview()
+        findBar = nil
         findField = nil
         findCountLabel = nil
+        findNavUp = nil
+        findNavDown = nil
         findHits = []
         findSpansByDoc = [:]
         findSig = 0
         findIndex = 0
         window?.makeFirstResponder(self)
-        relayout()
         needsDisplay = true
+    }
+
+    private func restyleFindBar() {
+        guard findBar != nil else { return }
+        layoutFindBar()
+        let fg = FindBarChrome.paint(session.screen.defaultFgRGB, reverse: session.screen.reverseVideo)
+        let bg = FindBarChrome.paint(session.screen.defaultBgRGB, reverse: session.screen.reverseVideo)
+        applyFindBarChrome(fg: fg, bg: bg)
+    }
+
+    private func findCellPoints() -> (w: CGFloat, h: CGFloat) {
+        let bs = max(window?.backingScaleFactor ?? lastBackingScale, 1)
+        return (CGFloat(cellWPx) / bs, CGFloat(cellHPx) / bs)
+    }
+
+    private func layoutFindBar() {
+        guard let bar = findBar else { return }
+        let cell = findCellPoints()
+        let size = FindBarLayout.size(cellW: cell.w, cellH: cell.h)
+        findField?.frame = FindBarLayout.fieldFrame(cellW: cell.w, cellH: cell.h)
+        findField?.syncLineBox()
+        findCountLabel?.frame = FindBarLayout.countFrame(cellW: cell.w, cellH: cell.h)
+        findCountLabel?.syncLineBox()
+        findNavUp?.frame = FindBarLayout.upFrame(cellW: cell.w, cellH: cell.h)
+        findNavDown?.frame = FindBarLayout.downFrame(cellW: cell.w, cellH: cell.h)
+        let sa = safeAreaInsets
+        bar.frame = FindBarLayout.frame(
+            bounds: bounds,
+            flipped: isFlipped,
+            safeTop: sa.top,
+            safeRight: sa.right,
+            safeLeft: sa.left,
+            size: size
+        )
+    }
+
+    private func applyFindBarChrome(fg: RGB, bg: RGB) {
+        guard let bar = findBar else { return }
+        let font = FindBarChrome.uiFont(
+            face: metrics.font,
+            fontPx: metrics.fontPx,
+            cellWidthPx: metrics.cellWidthPx,
+            backingScale: max(window?.backingScaleFactor ?? lastBackingScale, 1)
+        )
+        let fill = FindBarChrome.srgb(bg)
+        let stroke = FindBarChrome.srgb(fg, alpha: FindBarChrome.strokeAlpha)
+        let text = FindBarChrome.srgb(fg)
+        bar.apply(fill: fill, stroke: stroke)
+        findField?.font = font
+        findField?.applyTerminalColors(text: text, fill: fill)
+        findField?.syncLineBox()
+        let dim = FindBarChrome.dim(fg)
+        findCountLabel?.font = font
+        findCountLabel?.textColor = dim
+        findCountLabel?.alignment = .right
+        let para = NSMutableParagraphStyle()
+        para.alignment = .right
+        findCountLabel?.typingAttributes = [
+            .font: font,
+            .foregroundColor: dim,
+            .paragraphStyle: para,
+        ]
+        findCountLabel?.syncLineBox()
+        let bs = max(window?.backingScaleFactor ?? lastBackingScale, 1)
+        findField?.syncTerminalType(
+            face: metrics.font, baselinePx: metrics.cellBaselinePx, backingScale: bs
+        )
+        findCountLabel?.syncTerminalType(
+            face: metrics.font, baselinePx: metrics.cellBaselinePx, backingScale: bs
+        )
+        paintFindNav(findNavUp, title: FindBarLayout.nextGlyph, font: font, color: text)
+        paintFindNav(findNavDown, title: FindBarLayout.prevGlyph, font: font, color: text)
+    }
+
+    private func paintFindNav(_ button: NSButton?, title: String, font: NSFont, color: NSColor) {
+        guard let button else { return }
+        button.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [
+                .font: font,
+                .foregroundColor: color,
+            ]
+        )
     }
 
     private func rescanFind() {
@@ -2747,6 +2829,174 @@ enum ProgressInk {
     }
 }
 
+/// Default-fg/bg chrome for the surface find overlay.
+enum FindBarChrome {
+    static let strokeAlpha: CGFloat = 0.4
+    static let dimScale: CGFloat = 2.0 / 3.0
+
+    static func paint(_ rgb: RGB, reverse: Bool) -> RGB {
+        if reverse {
+            return RGB(r: 255 &- rgb.r, g: 255 &- rgb.g, b: 255 &- rgb.b)
+        }
+        return rgb
+    }
+
+    static func srgb(_ rgb: RGB, alpha: CGFloat = 1) -> NSColor {
+        NSColor(
+            srgbRed: CGFloat(rgb.r) / 255,
+            green: CGFloat(rgb.g) / 255,
+            blue: CGFloat(rgb.b) / 255,
+            alpha: alpha
+        )
+    }
+
+    static func dim(_ rgb: RGB) -> NSColor {
+        NSColor(
+            srgbRed: CGFloat(rgb.r) / 255 * dimScale,
+            green: CGFloat(rgb.g) / 255 * dimScale,
+            blue: CGFloat(rgb.b) / 255 * dimScale,
+            alpha: 1
+        )
+    }
+
+    /// AppKit font whose `M` advance matches one terminal cell.
+    /// `CellMetrics.font` is raster px (`fontSize * backingScale`).
+    static func uiFont(
+        face: CTFont,
+        fontPx: CGFloat,
+        cellWidthPx: Int,
+        backingScale: CGFloat
+    ) -> NSFont {
+        let bs = max(backingScale, 1)
+        let points = fontPx / bs
+        let base = CTFontCreateCopyWithAttributes(face, points, nil, nil)
+        let cellW = CGFloat(cellWidthPx) / bs
+        var glyph = CGGlyph()
+        var ch: UniChar = 0x4D
+        guard CTFontGetGlyphsForCharacters(base, &ch, &glyph, 1), glyph != 0 else {
+            return base as NSFont
+        }
+        var adv = CGSize.zero
+        CTFontGetAdvancesForGlyphs(base, .horizontal, &glyph, &adv, 1)
+        guard adv.width > 0.1 else { return base as NSFont }
+        let fitted = points * (cellW / adv.width)
+        return CTFontCreateCopyWithAttributes(face, fitted, nil, nil) as NSFont
+    }
+
+    static func centeredTitleRect(bounds: CGRect, textHeight: CGFloat) -> CGRect {
+        let h = min(max(textHeight, 0), bounds.height)
+        let y = bounds.origin.y + (bounds.height - h) / 2
+        return CGRect(x: bounds.origin.x, y: y, width: bounds.width, height: h)
+    }
+
+    /// Same line box NSTextView uses, including leading.
+    static func lineHeight(font: NSFont) -> CGFloat {
+        NSLayoutManager().defaultLineHeight(for: font)
+    }
+
+    /// Baseline in a line box. `defaultBaselineOffset` is from the bottom of the fragment.
+    static func baselineY(in rect: CGRect, font: NSFont, flipped: Bool) -> CGFloat {
+        let fromBottom = NSLayoutManager().defaultBaselineOffset(for: font)
+        if flipped {
+            return rect.maxY - fromBottom
+        }
+        return rect.minY + fromBottom
+    }
+
+}
+
+/// Surface overlay for scrollback find. Sized in terminal cells.
+enum FindBarLayout {
+    static let margin: CGFloat = 8
+    static let innerPad: CGFloat = 4
+    static let queryCols = 20
+    static let countCols = 11
+    static let navCols = 2
+    static let nextGlyph = "↑"
+    static let prevGlyph = "↓"
+
+    static func size(cellW: CGFloat, cellH: CGFloat) -> CGSize {
+        let cols = CGFloat(queryCols + countCols + navCols)
+        let w = innerPad * 4 + cols * cellW
+        let h = innerPad * 2 + cellH
+        return CGSize(width: w, height: h)
+    }
+
+    static func fieldFrame(cellW: CGFloat, cellH: CGFloat) -> CGRect {
+        CGRect(x: innerPad, y: innerPad, width: CGFloat(queryCols) * cellW, height: cellH)
+    }
+
+    static func countFrame(cellW: CGFloat, cellH: CGFloat) -> CGRect {
+        CGRect(
+            x: innerPad + CGFloat(queryCols) * cellW + innerPad,
+            y: innerPad,
+            width: CGFloat(countCols) * cellW,
+            height: cellH
+        )
+    }
+
+    static func upFrame(cellW: CGFloat, cellH: CGFloat) -> CGRect {
+        CGRect(
+            x: innerPad + CGFloat(queryCols) * cellW + innerPad
+                + CGFloat(countCols) * cellW + innerPad,
+            y: innerPad,
+            width: cellW,
+            height: cellH
+        )
+    }
+
+    static func downFrame(cellW: CGFloat, cellH: CGFloat) -> CGRect {
+        var r = upFrame(cellW: cellW, cellH: cellH)
+        r.origin.x += cellW
+        return r
+    }
+
+    static func frame(
+        bounds: CGRect,
+        flipped: Bool,
+        safeTop: CGFloat,
+        safeRight: CGFloat,
+        safeLeft: CGFloat,
+        size: CGSize
+    ) -> CGRect {
+        let w = size.width
+        let h = size.height
+        let x = max(safeLeft + margin, bounds.width - w - margin - safeRight)
+        let y = flipped ? safeTop + margin : bounds.height - safeTop - margin - h
+        return CGRect(x: x, y: y, width: w, height: h)
+    }
+}
+
+private final class FindBarView: NSView {
+    var fillColor = NSColor.black
+    var strokeColor = NSColor.clear
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    func apply(fill: NSColor, stroke: NSColor) {
+        fillColor = fill
+        strokeColor = stroke
+        needsDisplay = true
+        updateLayer()
+    }
+
+    override func updateLayer() {
+        guard let layer else { return }
+        layer.backgroundColor = fillColor.cgColor
+        layer.borderColor = strokeColor.cgColor
+        layer.cornerRadius = 8
+        layer.borderWidth = 1
+        layer.masksToBounds = true
+    }
+}
+
 /// OSC 9;4 indeterminate: full-width opacity breath, sampled at `hz`.
 enum ProgressPulse {
     static let thickness: CGFloat = 2
@@ -2883,16 +3133,14 @@ extension MetalTerminalView: @preconcurrency NSTextInputClient {
     }
 }
 
-extension MetalTerminalView: NSTextFieldDelegate {
-    public func controlTextDidChange(_ obj: Notification) {
+extension MetalTerminalView: NSTextViewDelegate {
+    public func textDidChange(_ notification: Notification) {
+        guard notification.object as? NSView === findField else { return }
         rescanFind()
     }
 
-    public func control(
-        _ control: NSControl,
-        textView: NSTextView,
-        doCommandBy commandSelector: Selector
-    ) -> Bool {
+    public func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard textView === findField else { return false }
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
             endFind()
             return true
@@ -2906,8 +3154,183 @@ extension MetalTerminalView: NSTextFieldDelegate {
     }
 }
 
-final class FindField: NSTextField {
+class FindBarTextView: NSTextView {
+    private var terminalFace: CTFont?
+    private var terminalBaselinePx = 0
+    private var terminalBackingScale: CGFloat = 1
+
+    override var acceptsFirstResponder: Bool { isEditable }
+
+    override init(frame frameRect: NSRect, textContainer container: NSTextContainer?) {
+        super.init(frame: frameRect, textContainer: container)
+        configure()
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configure()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configure()
+    }
+
+    var stringValue: String {
+        get { string }
+        set {
+            let font = self.font
+            let color = self.textColor
+            let align = alignment
+            string = newValue
+            if let font { self.font = font }
+            if let color { self.textColor = color }
+            alignment = align
+            alignContents()
+        }
+    }
+
+    func configure() {
+        isRichText = false
+        isEditable = true
+        isSelectable = true
+        drawsBackground = true
+        focusRingType = .none
+        allowsUndo = false
+        isVerticallyResizable = false
+        isHorizontallyResizable = false
+        textContainerInset = .zero
+        textContainer?.lineFragmentPadding = 0
+        textContainer?.widthTracksTextView = true
+        textContainer?.heightTracksTextView = false
+        textContainer?.maximumNumberOfLines = 1
+        textContainer?.lineBreakMode = .byClipping
+        isAutomaticQuoteSubstitutionEnabled = false
+        isAutomaticDashSubstitutionEnabled = false
+        isAutomaticTextReplacementEnabled = false
+        isAutomaticSpellingCorrectionEnabled = false
+        isAutomaticDataDetectionEnabled = false
+        isAutomaticLinkDetectionEnabled = false
+    }
+
+    func syncTerminalType(face: CTFont, baselinePx: Int, backingScale: CGFloat) {
+        terminalFace = face
+        terminalBaselinePx = baselinePx
+        terminalBackingScale = max(backingScale, 1)
+        needsDisplay = true
+    }
+
+    func syncLineBox() {
+        textContainer?.lineFragmentPadding = 0
+        let size = bounds.size
+        textContainer?.size = NSSize(width: max(size.width, 1), height: max(size.height, 1))
+        guard let font, let lm = layoutManager else { return }
+        let lineH = lm.defaultLineHeight(for: font)
+        let pad = max(0, (bounds.height - lineH) / 2)
+        textContainerInset = NSSize(width: 0, height: pad)
+        alignContents()
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if drawsBackground, backgroundColor.alphaComponent > 0 {
+            backgroundColor.setFill()
+            bounds.fill()
+        }
+        drawTerminalGlyphs()
+    }
+
+    override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
+        needsDisplay = true
+    }
+
+    private func drawTerminalGlyphs() {
+        guard let face = terminalFace else { return }
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let bs = max(terminalBackingScale, 1)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 1
+        (textColor ?? .white).usingColorSpace(.sRGB)?.getRed(&r, green: &g, blue: &b, alpha: &a)
+        let cg = CGColor(srgbRed: r, green: g, blue: b, alpha: a)
+        let attrs: [NSAttributedString.Key: Any] = [
+            kCTFontAttributeName as NSAttributedString.Key: face,
+            kCTForegroundColorAttributeName as NSAttributedString.Key: cg,
+        ]
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: string, attributes: attrs))
+        let typoW = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+        ctx.saveGState()
+        if isFlipped {
+            ctx.translateBy(x: 0, y: bounds.height)
+            ctx.scaleBy(x: 1, y: -1)
+        }
+        ctx.scaleBy(x: 1 / bs, y: 1 / bs)
+        ctx.textMatrix = .identity
+        var x: CGFloat = 0
+        if alignment == .right {
+            x = bounds.width * bs - typoW
+        }
+        let y = CGFloat(terminalBaselinePx)
+        let sel = selectedRange
+        if sel.length > 0 {
+            let x0 = CTLineGetOffsetForStringIndex(line, sel.location, nil)
+            let x1 = CTLineGetOffsetForStringIndex(line, NSMaxRange(sel), nil)
+            let ascent = CTFontGetAscent(face)
+            let descent = CTFontGetDescent(face)
+            ctx.setFillColor(CGColor(srgbRed: r, green: g, blue: b, alpha: 0.25))
+            ctx.fill(CGRect(x: x + min(x0, x1), y: y - descent, width: abs(x1 - x0), height: ascent + descent))
+        }
+        ctx.textPosition = CGPoint(x: x, y: y)
+        CTLineDraw(line, ctx)
+        if shouldDrawInsertionPoint, sel.length == 0, isEditable {
+            let caretX = x + CTLineGetOffsetForStringIndex(line, sel.location, nil)
+            let ascent = CTFontGetAscent(face)
+            let descent = CTFontGetDescent(face)
+            ctx.setFillColor(cg)
+            ctx.fill(CGRect(x: caretX, y: y - descent, width: max(bs, 1), height: ascent + descent))
+        }
+        ctx.restoreGState()
+    }
+
+    func alignContents() {
+        let para = NSMutableParagraphStyle()
+        para.alignment = alignment
+        textStorage?.addAttribute(
+            .paragraphStyle,
+            value: para,
+            range: NSRange(location: 0, length: textStorage?.length ?? 0)
+        )
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        syncLineBox()
+    }
+}
+
+final class FindField: FindBarTextView {
     weak var finder: MetalTerminalView?
+
+    override func configure() {
+        super.configure()
+        allowsUndo = true
+    }
+
+    func applyTerminalColors(text: NSColor, fill: NSColor) {
+        textColor = text
+        backgroundColor = fill
+        insertionPointColor = text
+        selectedTextAttributes = [
+            .foregroundColor: fill,
+            .backgroundColor: text,
+        ]
+        var typing: [NSAttributedString.Key: Any] = [
+            .foregroundColor: text,
+        ]
+        if let font {
+            typing[.font] = font
+        }
+        typingAttributes = typing
+        syncLineBox()
+    }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -2921,14 +3344,14 @@ final class FindField: NSTextField {
             return true
         }
         if flags.contains(.command), !flags.contains(.shift), chars == "f" {
-            currentEditor()?.selectAll(nil)
+            selectAll(nil)
             return true
         }
         return super.performKeyEquivalent(with: event)
     }
 
     @objc func startFind(_ sender: Any?) {
-        currentEditor()?.selectAll(nil)
+        selectAll(nil)
     }
 
     @objc func findNext(_ sender: Any?) {
