@@ -1134,6 +1134,65 @@ final class KittyGraphicsTests: XCTestCase {
         XCTAssertEqual(jt_img_anim_frame_count(s.implPtr, 1), 2)
     }
 
+    /// A frame addressed with `I=` resolves that number to the internal id
+    /// before the payload is finished. Playback starts with `a=a,s=3`.
+    func testAnimFrameByImageNumber() {
+        let s = Screen(cols: 40, rows: 12, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        p.feed(apc("a=T,f=24,s=1,v=1,I=7,t=d,C=1,q=2;\(b64([255, 0, 0]))"))
+        p.feed(apc("a=a,I=7,r=1,z=10,v=1,q=2"))
+        p.feed(apc("a=f,f=24,s=1,v=1,I=7,z=10,t=d,q=2;\(b64([0, 255, 0]))"))
+        p.feed(apc("a=a,I=7,s=2,q=2"))
+        p.feed(apc("a=a,I=7,s=3,q=2"))
+        XCTAssertEqual(p.writes, [])
+        var snaps = [jt_img_snap](repeating: jt_img_snap(), count: 4)
+        let n = snaps.withUnsafeMutableBufferPointer { buf in
+            jt_img_snapshot(s.implPtr, 0, Int32(s.rows), 8, 16, buf.baseAddress!, 4)
+        }
+        XCTAssertGreaterThan(n, 0)
+        let id = snaps[0].image_id
+        XCTAssertEqual(jt_img_anim_frame_count(s.implPtr, id), 2)
+        XCTAssertEqual(jt_img_anim_current(s.implPtr, id), 1)
+        XCTAssertEqual(firstPixel(s)?.0, 255)
+        XCTAssertEqual(jt_img_anim_tick(s.implPtr, 1_000), 10)
+        XCTAssertEqual(jt_img_anim_current(s.implPtr, id), 1)
+        XCTAssertEqual(jt_img_anim_tick(s.implPtr, 1_010), 10)
+        XCTAssertEqual(jt_img_anim_current(s.implPtr, id), 2)
+        XCTAssertEqual(firstPixel(s)?.1, 255)
+    }
+
+    /// Chunked zlib frame data addressed with `I=` (`o=z`, `a=f`).
+    func testZlibChunkedFrameByImageNumber() {
+        let s = Screen(cols: 40, rows: 12, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let root = "eAHVwgENAAAAQDD9S5PDdmEtScg/wQ=="
+        let next = "eAHVwgENAAAAQDD9S5PDdnAtyjk/wQ=="
+        p.feed(apc("f=24,o=z,s=8,v=8,a=T,I=596204275,q=2,m=1;\(root)"))
+        p.feed(apc("q=2,m=0;"))
+        p.feed(apc("a=a,I=596204275,r=1,z=100,v=1,q=2"))
+        p.feed(apc("f=24,o=z,s=8,v=8,a=f,I=596204275,z=100,q=2,m=1;\(next)"))
+        p.writes.removeAll()
+        p.feed(apc("a=f,q=2,m=0;"))
+        p.feed(apc("a=a,I=596204275,s=2,q=2"))
+        p.feed(apc("a=a,I=596204275,s=3,q=2"))
+        XCTAssertEqual(p.writes, [])
+        var snaps = [jt_img_snap](repeating: jt_img_snap(), count: 4)
+        let n = snaps.withUnsafeMutableBufferPointer { buf in
+            jt_img_snapshot(s.implPtr, 0, Int32(s.rows), 8, 16, buf.baseAddress!, 4)
+        }
+        XCTAssertEqual(n, 1)
+        let id = snaps[0].image_id
+        XCTAssertEqual(jt_img_anim_frame_count(s.implPtr, id), 2)
+        XCTAssertEqual(jt_img_anim_tick(s.implPtr, 5_000), 100)
+        XCTAssertEqual(jt_img_anim_tick(s.implPtr, 5_100), 100)
+        XCTAssertEqual(jt_img_anim_current(s.implPtr, id), 2)
+        XCTAssertEqual(firstPixel(s)?.2, 255)
+    }
+
     private static func premulChan(_ c: UInt8, _ a: UInt8) -> UInt8 {
         UInt8((UInt32(c) * UInt32(a) + 127) / 255)
     }

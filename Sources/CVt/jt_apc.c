@@ -632,12 +632,7 @@ static int complete_transmit(
     uint32_t echo_I = ld->number;
     uint32_t echo_p = ld->placement_id;
 
-    if (ld->image_id && ld->number) {
-        jt_img_abort_loading(ld);
-        reply(h, echo_i, echo_I, echo_p, "EINVAL", quiet, 0);
-        return -1;
-    }
-
+    /* `a=f` stores the internal id resolved from `I` beside that number. */
     uint8_t *bytes = ld->data;
     size_t nbytes = ld->n;
     uint8_t *owned = NULL;
