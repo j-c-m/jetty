@@ -16,8 +16,6 @@ struct jt_vt_host;
 enum { JT_IMG_MAX_DIM = 10000 };
 enum { JT_IMG_MAX_BYTES = 400u * 1024u * 1024u };
 enum { JT_IMG_QUOTA = 320u * 1000u * 1000u };
-enum { JT_IMG_MAX_IMAGES = 256 };
-enum { JT_IMG_MAX_PLACEMENTS = 1024 };
 enum { JT_IMG_MAX_APC = 65536 };
 enum { JT_IMG_PARENT_CHAIN = 8 };
 enum { JT_IMG_DEFAULT_GAP_MS = 40 };
@@ -96,9 +94,11 @@ typedef struct jt_img {
 } jt_img;
 
 typedef struct jt_img_store {
-    jt_img images[JT_IMG_MAX_IMAGES];
+    jt_img *images;
     int32_t image_n;
-    jt_img_placement pl[JT_IMG_MAX_PLACEMENTS];
+    int32_t image_cap;
+    jt_img_placement *pl;
+    int32_t pl_cap;
     int32_t live_n;
     int32_t hist_n;
     int32_t virtual_n;

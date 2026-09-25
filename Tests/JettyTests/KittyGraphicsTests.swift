@@ -3,6 +3,18 @@ import Darwin
 import XCTest
 @testable import Jetty
 
+@_silgen_name("compressBound")
+private func compressBound(_ sourceLen: UInt) -> UInt
+
+@_silgen_name("compress2")
+private func compress2(
+    _ dest: UnsafeMutablePointer<UInt8>,
+    _ destLen: UnsafeMutablePointer<UInt>,
+    _ source: UnsafePointer<UInt8>,
+    _ sourceLen: UInt,
+    _ level: Int32
+) -> Int32
+
 final class KittyGraphicsTests: XCTestCase {
     private func apc(_ body: String) -> String {
         "\u{1B}_G\(body)\u{1B}\\"
@@ -564,23 +576,67 @@ final class KittyGraphicsTests: XCTestCase {
         XCTAssertNil(jt_img_find(st, 2))
     }
 
+    /// Solid RGB, zlib-wrapped.
+    private func solidZlib(width: Int, height: Int, byte: UInt8) -> [UInt8] {
+        let n = width * height * 3
+        let raw = [UInt8](repeating: byte, count: n)
+        let destLen = UnsafeMutablePointer<UInt>.allocate(capacity: 1)
+        destLen.pointee = compressBound(UInt(n))
+        defer { destLen.deallocate() }
+        var dst = [UInt8](repeating: 0, count: Int(destLen.pointee))
+        let rc: Int32 = dst.withUnsafeMutableBytes { out in
+            raw.withUnsafeBytes { src in
+                compress2(
+                    out.bindMemory(to: UInt8.self).baseAddress!,
+                    destLen,
+                    src.bindMemory(to: UInt8.self).baseAddress!,
+                    UInt(n),
+                    9
+                )
+            }
+        }
+        precondition(rc == 0 && destLen.pointee > 0)
+        return Array(dst.prefix(Int(destLen.pointee)))
+    }
+
+    private func feedChunked(
+        _ p: Parser,
+        _ bytes: [UInt8],
+        first: String
+    ) {
+        let step = 30_000
+        var off = 0
+        var lead = true
+        while off < bytes.count {
+            let end = min(off + step, bytes.count)
+            let more = end < bytes.count ? 1 : 0
+            let payload = b64(Array(bytes[off..<end]))
+            if lead {
+                p.feed(apc("\(first),m=\(more);\(payload)"))
+                lead = false
+            } else {
+                p.feed(apc("m=\(more);\(payload)"))
+            }
+            off = end
+        }
+    }
+
     func testUsageHintNMarksTransientAndEvictsFirst() {
         let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
         s.setCellPx(width: 8, height: 16)
         let p = Parser()
         p.screen = s
-        let pix = b64([1, 2, 3])
-        for i in 1...255 {
-            p.feed(apc("a=t,f=24,s=1,v=1,i=\(i),t=d,q=2,N=0;\(pix)"))
-        }
-        p.feed(apc("a=t,f=24,s=1,v=1,i=256,t=d,q=2,N=1;\(pix)"))
+        let wide = solidZlib(width: 10000, height: 4000, byte: 1)
+        feedChunked(p, wide, first: "a=t,f=24,o=z,s=10000,v=4000,i=1,t=d,q=2,N=0")
+        feedChunked(p, wide, first: "a=t,f=24,o=z,s=10000,v=4000,i=2,t=d,q=2,N=1")
         let st = jt_img_active(s.implPtr)
-        XCTAssertEqual(jt_img_find(st, 256)?.pointee.transient, 1)
+        XCTAssertEqual(jt_img_find(st, 2)?.pointee.transient, 1)
         XCTAssertEqual(jt_img_find(st, 1)?.pointee.transient, 0)
-        p.feed(apc("a=t,f=24,s=1,v=1,i=257,t=d,q=2,N=0;\(pix)"))
-        XCTAssertNil(jt_img_find(st, 256))
+        let pix = b64([9, 9, 9])
+        p.feed(apc("a=t,f=24,s=1,v=1,i=3,t=d,q=2,N=0;\(pix)"))
+        XCTAssertNil(jt_img_find(st, 2))
         XCTAssertNotNil(jt_img_find(st, 1))
-        XCTAssertNotNil(jt_img_find(st, 257))
+        XCTAssertNotNil(jt_img_find(st, 3))
     }
 
     func testVirtualIdleYnDoesNotInternGrapheme() {
@@ -612,6 +668,33 @@ final class KittyGraphicsTests: XCTestCase {
         munmap(map, size)
         close(fd)
         body()
+    }
+
+    func testShmAnimFrameChangesPixel() throws {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let red: [UInt8] = [255, 0, 0]
+        let green: [UInt8] = [0, 255, 0]
+        try withShm("/jt-an-r-\(getpid())", size: 3, rgb: red) {
+            let name = "/jt-an-r-\(getpid())"
+            p.feed(apc("f=24,s=1,v=1,a=T,I=7,q=2,t=s,S=3;\(b64(Array(name.utf8)))"))
+        }
+        p.feed(apc("a=a,I=7,r=1,z=10,v=1,q=2"))
+        try withShm("/jt-an-g-\(getpid())", size: 3, rgb: green) {
+            let name = "/jt-an-g-\(getpid())"
+            p.feed(apc("f=24,s=1,v=1,a=f,I=7,z=10,q=2,t=s,S=3;\(b64(Array(name.utf8)))"))
+        }
+        p.feed(apc("a=a,I=7,s=3,q=2"))
+        let st = jt_img_active(s.implPtr)
+        let id = jt_img_find_number(st, 7)?.pointee.id ?? 0
+        XCTAssertEqual(jt_img_anim_frame_count(s.implPtr, id), 2)
+        XCTAssertEqual(firstPixel(s)?.0, 255)
+        XCTAssertEqual(jt_img_anim_tick(s.implPtr, 1_000), 10)
+        XCTAssertEqual(jt_img_anim_tick(s.implPtr, 1_010), 10)
+        XCTAssertEqual(jt_img_anim_current(s.implPtr, id), 2)
+        XCTAssertEqual(firstPixel(s)?.1, 255)
     }
 
     func testShmRGBPutMpvStyle() throws {
@@ -1017,6 +1100,23 @@ final class KittyGraphicsTests: XCTestCase {
         let out = String(bytes: p.writes, encoding: .utf8) ?? ""
         XCTAssertTrue(out.contains("EINVAL"), out)
         XCTAssertTrue(out.contains("mutually exclusive"), out)
+    }
+
+    func testImageAndPlacementCountsFollowByteQuota() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let pix = b64([1, 2, 3])
+        for i in 1...257 {
+            p.feed(apc("a=t,f=24,s=1,v=1,i=\(i),t=d,q=2;\(pix)"))
+        }
+        p.feed(apc("a=T,f=24,s=1,v=1,i=1,C=1,q=2;\(pix)"))
+        for _ in 0..<1024 {
+            p.feed(apc("a=p,i=1,C=1,q=2"))
+        }
+        XCTAssertNotNil(jt_img_find(jt_img_active(s.implPtr), 257))
+        XCTAssertEqual(s.imgLiveN, 1025)
     }
 
     func testAnimFrameCountFollowsByteQuota() {

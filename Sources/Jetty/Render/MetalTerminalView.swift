@@ -224,7 +224,14 @@ public final class MetalTerminalView: MTKView, MTKViewDelegate {
 
     public func draw(in view: MTKView) {
         guard let renderer, let device else { return }
-        guard session.tryLockDemand() else { return }
+        guard session.tryLockDemand() else {
+            if animWake != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(16)) { [weak self] in
+                    self?.needsDisplay = true
+                }
+            }
+            return
+        }
         let cols = session.screen.cols
         let rows = session.screen.rows
         session.screen.copyPalette256(&palPacked)

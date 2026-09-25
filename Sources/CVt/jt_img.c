@@ -13,11 +13,41 @@ static int32_t pl_count(const jt_img_store *st) {
     return st->live_n + st->hist_n + st->virtual_n + st->relative_n;
 }
 
+static int ensure_images(jt_img_store *st) {
+    if (st->image_n < st->image_cap) return 1;
+    int32_t cap = st->image_cap > 0 ? st->image_cap * 2 : 8;
+    jt_img *p = (jt_img *)realloc(st->images, (size_t)cap * sizeof(jt_img));
+    if (!p) return 0;
+    st->images = p;
+    st->image_cap = cap;
+    return 1;
+}
+
+static int ensure_placements(jt_img_store *st) {
+    if (pl_count(st) < st->pl_cap) return 1;
+    int32_t cap = st->pl_cap > 0 ? st->pl_cap * 2 : 8;
+    jt_img_placement *p = (jt_img_placement *)realloc(
+        st->pl, (size_t)cap * sizeof(jt_img_placement)
+    );
+    if (!p) return 0;
+    st->pl = p;
+    st->pl_cap = cap;
+    return 1;
+}
+
 static size_t img_storage_size(const jt_img *im) {
-    size_t n = im->nbytes;
-    size_t one = (size_t)im->width * (size_t)im->height * 4;
-    if (im->frame_n > 0 && one) n += (size_t)im->frame_n * one;
-    return n;
+    size_t n = im ? im->nbytes : 0;
+    size_t one;
+    if (!im || im->frame_n <= 0) return n;
+    one = (size_t)im->width * (size_t)im->height * 4;
+    return n + one * (size_t)im->frame_n;
+}
+
+static uint8_t *img_frame_ptr(jt_img *im, uint32_t number) {
+    if (!im || number == 0) return NULL;
+    if (number == 1) return im->rgba;
+    if (number - 2 >= (uint32_t)im->frame_n) return NULL;
+    return im->frames[number - 2].rgba;
 }
 
 static void img_free(jt_img *im) {
@@ -37,13 +67,6 @@ static const uint8_t *img_display_rgba(const jt_img *im) {
         if (p) return p;
     }
     return im->rgba;
-}
-
-static uint8_t *img_frame_ptr(jt_img *im, uint32_t number) {
-    if (!im || number == 0) return NULL;
-    if (number == 1) return im->rgba;
-    if (number - 2 >= (uint32_t)im->frame_n) return NULL;
-    return im->frames[number - 2].rgba;
 }
 
 static uint32_t img_frame_count(const jt_img *im) {
@@ -178,12 +201,16 @@ void jt_img_store_init(jt_img_store *st) {
 void jt_img_store_reset(jt_img_store *st) {
     if (!st) return;
     for (int32_t i = 0; i < st->image_n; i++) img_free(&st->images[i]);
+    free(st->images);
+    free(st->pl);
     jt_img_store_init(st);
 }
 
 void jt_img_store_deinit(jt_img_store *st) {
     if (!st) return;
     for (int32_t i = 0; i < st->image_n; i++) img_free(&st->images[i]);
+    free(st->images);
+    free(st->pl);
     memset(st, 0, sizeof *st);
 }
 
@@ -263,7 +290,9 @@ jt_img *jt_img_find_number(jt_img_store *st, uint32_t number) {
 uint32_t jt_img_alloc_id(jt_img_store *st) {
     if (!st) return 1;
     uint32_t id = st->next_auto_id;
-    for (int n = 0; n < JT_IMG_MAX_IMAGES + 2; n++) {
+    int32_t tries = st->image_n + 1;
+    if (tries < 1) tries = 1;
+    for (int32_t n = 0; n < tries; n++) {
         if (id == 0) id = 2147483647u;
         if (!jt_img_find(st, id)) {
             uint32_t next = id == 0 ? 2147483647u : id - 1;
@@ -532,9 +561,9 @@ static int32_t pick_evict(const jt_img_store *st, uint32_t keep_id) {
 static int evict_for_except(jt_img_store *st, size_t need, uint32_t keep_id) {
     if (!st) return 0;
     if (need > JT_IMG_QUOTA) return 0;
-    int guard = JT_IMG_MAX_IMAGES + 2;
+    int32_t guard = st->image_n + 2;
     while (guard-- > 0) {
-        if (st->total_bytes + need <= JT_IMG_QUOTA && st->image_n < JT_IMG_MAX_IMAGES) return 1;
+        if (st->total_bytes + need <= JT_IMG_QUOTA) return 1;
         int32_t idx = pick_evict(st, keep_id);
         if (idx < 0) return 0;
         uint32_t id = st->images[idx].id;
@@ -546,7 +575,7 @@ static int evict_for_except(jt_img_store *st, size_t need, uint32_t keep_id) {
         if (im) remove_image_at(st, (int32_t)(im - st->images));
         remove_orphans(st);
     }
-    return st->total_bytes + need <= JT_IMG_QUOTA && st->image_n < JT_IMG_MAX_IMAGES;
+    return st->total_bytes + need <= JT_IMG_QUOTA;
 }
 
 static int evict_for(jt_img_store *st, size_t need) {
@@ -556,7 +585,7 @@ static int evict_for(jt_img_store *st, size_t need) {
 static int evict_bytes(jt_img_store *st, size_t need, uint32_t keep_id) {
     if (!st) return 0;
     if (need > JT_IMG_QUOTA) return 0;
-    int guard = JT_IMG_MAX_IMAGES + 2;
+    int32_t guard = st->image_n + 2;
     while (guard-- > 0) {
         if (st->total_bytes + need <= JT_IMG_QUOTA) return 1;
         int32_t idx = pick_evict(st, keep_id);
@@ -625,7 +654,7 @@ int jt_img_add(
         }
         return JT_IMG_ENOSPC;
     }
-    if (st->image_n >= JT_IMG_MAX_IMAGES) {
+    if (!ensure_images(st)) {
         free(rgba);
         return JT_IMG_ENOSPC;
     }
@@ -660,14 +689,7 @@ int jt_img_put(jt_scr *s, const jt_img_loading *ld) {
     }
     jt_img *im = jt_img_find(st, id);
     if (!im) return -1;
-    if (pl_count(st) >= JT_IMG_MAX_PLACEMENTS) {
-        static int once;
-        if (!once) {
-            once = 1;
-            fputs("jetty: kitty-graphics: too-many-placements\n", stderr);
-        }
-        return JT_IMG_ENOSPC;
-    }
+    if (!ensure_placements(st)) return JT_IMG_ENOSPC;
 
     if (ld->unicode && ld->parent_id) return JT_IMG_EVIRTUAL_REL;
 
@@ -1115,10 +1137,9 @@ int jt_img_anim_delete_frame(
     uint32_t number = frame < count ? frame : count;
     if (number == 0) number = 1;
     size_t one = (size_t)im->width * (size_t)im->height * 4;
+    if (one <= st->total_bytes) st->total_bytes -= one;
+    else st->total_bytes = 0;
     if (number == 1) {
-        if (one <= st->total_bytes) st->total_bytes -= one;
-        else st->total_bytes = 0;
-        free(im->rgba);
         jt_img_frame promoted = im->frames[0];
         if (im->frame_n > 1)
             memmove(&im->frames[0], &im->frames[1],
@@ -1133,13 +1154,12 @@ int jt_img_anim_delete_frame(
             );
             if (nf) im->frames = nf;
         }
+        free(im->rgba);
         im->rgba = promoted.rgba;
         im->nbytes = one;
         im->root_gap_ms = promoted.gap_ms;
     } else {
         int32_t idx = (int32_t)number - 2;
-        if (one <= st->total_bytes) st->total_bytes -= one;
-        else st->total_bytes = 0;
         free(im->frames[idx].rgba);
         if (idx < im->frame_n - 1)
             memmove(&im->frames[idx], &im->frames[idx + 1],
@@ -1334,13 +1354,22 @@ int jt_img_delete(
     if (d == 'f' || d == 'F') return -3;
     int upper = d >= 'A' && d <= 'Z';
     int32_t n = pl_count(st);
-    uint32_t touched[JT_IMG_MAX_IMAGES];
+    uint32_t *touched = NULL;
+    int32_t tcap = 0;
     int tn = 0;
     for (int32_t k = n - 1; k >= 0; k--) {
         if (!match_delete(&st->pl[k], s, d, i, I, p, x, y, z)) continue;
         uint32_t id = st->pl[k].image_id;
         remove_placement_at(st, k);
-        if (upper && tn < JT_IMG_MAX_IMAGES) touched[tn++] = id;
+        if (!upper) continue;
+        if (tn == tcap) {
+            int32_t nc = tcap > 0 ? tcap * 2 : 8;
+            uint32_t *grow = (uint32_t *)realloc(touched, (size_t)nc * sizeof(uint32_t));
+            if (!grow) continue;
+            touched = grow;
+            tcap = nc;
+        }
+        touched[tn++] = id;
     }
     if (d == 'i' || d == 'I') {
         if (i) {
@@ -1352,6 +1381,7 @@ int jt_img_delete(
         for (int t = 0; t < tn; t++) delete_if_unused(st, touched[t]);
         if ((d == 'I' || d == 'i') && i) delete_if_unused(st, i);
     }
+    free(touched);
     remove_orphans(st);
     jt_img_sync_live(s);
     return 0;
