@@ -21,7 +21,6 @@ enum { JT_IMG_MAX_PLACEMENTS = 1024 };
 enum { JT_IMG_MAX_APC = 65536 };
 enum { JT_IMG_PARENT_CHAIN = 8 };
 enum { JT_IMG_DEFAULT_GAP_MS = 40 };
-enum { JT_IMG_MAX_FRAMES = 256 };
 
 enum {
     JT_IMG_OK = 0,

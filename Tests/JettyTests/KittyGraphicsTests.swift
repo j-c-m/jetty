@@ -1019,6 +1019,19 @@ final class KittyGraphicsTests: XCTestCase {
         XCTAssertTrue(out.contains("mutually exclusive"), out)
     }
 
+    func testAnimFrameCountFollowsByteQuota() {
+        let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
+        s.setCellPx(width: 8, height: 16)
+        let p = Parser()
+        p.screen = s
+        let pix = b64([1, 2, 3])
+        p.feed(apc("a=T,f=24,s=1,v=1,i=1,t=d,C=1,q=2;\(pix)"))
+        for _ in 0..<257 {
+            p.feed(apc("a=f,f=24,s=1,v=1,i=1,z=10,t=d,q=2;\(pix)"))
+        }
+        XCTAssertEqual(jt_img_anim_frame_count(s.implPtr, 1), 258)
+    }
+
     func testAnimTickAdvances() {
         let s = Screen(cols: 10, rows: 4, scrollbackCapRows: 0)
         s.setCellPx(width: 8, height: 16)

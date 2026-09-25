@@ -904,10 +904,6 @@ int jt_img_anim_add_frame(
     im->has_anim = 1;
 
     if (number == count + 1) {
-        if (im->frame_n >= JT_IMG_MAX_FRAMES) {
-            free(rgba);
-            return JT_IMG_ENOSPC;
-        }
         uint32_t gap;
         if (ld->anim_gap_ms > 0) gap = (uint32_t)ld->anim_gap_ms;
         else if (ld->anim_gap_ms < 0) gap = 0;
